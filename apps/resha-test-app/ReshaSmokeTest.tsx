@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
+  NativeModules,
   Pressable,
   StyleSheet,
   Text,
@@ -23,15 +24,33 @@ import {
 const ROW_COUNT = 120;
 const BURST_STEPS = 120;
 
+type Switches = {
+  rnUiThread: boolean;
+  uiThreadRenderer: boolean;
+  uiThreadRendererWorker: boolean;
+  profile: boolean;
+};
+
 function log(message: string) {
   console.log(`[resha-smoke] ${message}`);
+}
+
+function onOff(value: boolean) {
+  return value ? 'ON' : 'OFF';
 }
 
 function Row({ index }: { index: number }) {
   const [taps, setTaps] = useState(0);
   return (
     <Pressable
-      onPress={() => setTaps(value => value + 1)}
+      onPress={event => {
+        log(
+          `press row ${index} at ${Math.round(
+            event.nativeEvent.pageX,
+          )},${Math.round(event.nativeEvent.pageY)}`,
+        );
+        setTaps(value => value + 1);
+      }}
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
       <Text style={styles.rowText}>
         row {index} — taps {taps}
@@ -46,11 +65,36 @@ export default function ReshaSmokeTest() {
   const [ticking, setTicking] = useState(false);
   const [rows, setRows] = useState(ROW_COUNT);
   const [busy, setBusy] = useState(false);
+  const [switches, setSwitches] = useState<Switches | null>(null);
+  const [switchesError, setSwitchesError] = useState<string | null>(null);
   const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     log('mounted');
     return () => log('unmounted');
+  }, []);
+
+  // Which configuration this binary was compiled with, straight from the native BuildConfig, so a
+  // screenshot is enough to tell a UI thread build from a stock Fabric one.
+  useEffect(() => {
+    const module = NativeModules.ReshaBuildConfig;
+    if (!module?.getSwitches) {
+      log('build switches unavailable: ReshaBuildConfig native module not registered');
+      setSwitchesError('native module missing');
+      return;
+    }
+    module
+      .getSwitches()
+      .then((value: Switches) => {
+        setSwitches(value);
+        log(
+          `build switches rnUiThread=${value.rnUiThread} uiThreadRenderer=${value.uiThreadRenderer} worker=${value.uiThreadRendererWorker} profile=${value.profile}`,
+        );
+      })
+      .catch((error: Error) => {
+        log(`build switches error ${error.message}`);
+        setSwitchesError(error.message);
+      });
   }, []);
 
   // 60 Hz state updates: the renderer has to keep up with a commit per frame.
@@ -110,15 +154,51 @@ export default function ReshaSmokeTest() {
     requestAnimationFrame(() => setRows(ROW_COUNT));
   }, []);
 
+  const allOn =
+    switches !== null &&
+    switches.rnUiThread &&
+    switches.uiThreadRenderer &&
+    switches.uiThreadRendererWorker;
+  const allOff =
+    switches !== null &&
+    !switches.rnUiThread &&
+    !switches.uiThreadRenderer &&
+    !switches.uiThreadRendererWorker;
+  const bannerText = switches
+    ? `UI THREAD ${onOff(switches.rnUiThread)}\nRENDERER ${onOff(
+        switches.uiThreadRenderer,
+      )}\nWORKER ${onOff(switches.uiThreadRendererWorker)}`
+    : switchesError
+      ? `SWITCHES UNAVAILABLE (${switchesError})`
+      : 'READING BUILD CONFIG…';
+  const bannerStyle = allOn
+    ? styles.bannerOn
+    : allOff
+      ? styles.bannerOff
+      : styles.bannerMixed;
+  const bannerDetail = switches
+    ? `rnUiThread=${switches.rnUiThread} uiThreadRenderer=${switches.uiThreadRenderer} uiThreadRendererWorker=${switches.uiThreadRendererWorker} profile=${switches.profile}`
+    : null;
+
   return (
     <View style={styles.container}>
+      <View style={[styles.banner, bannerStyle]}>
+        <Text style={styles.bannerText}>{bannerText}</Text>
+      </View>
+      {bannerDetail ? (
+        <Text style={styles.bannerDetail}>{bannerDetail}</Text>
+      ) : null}
+
       <Text style={styles.title}>Resha direct renderer smoke test</Text>
 
       <Text style={styles.metric}>count {count}</Text>
       <View style={styles.rowButtons}>
         <Pressable
           style={styles.button}
-          onPress={() => setCount(value => value + 1)}>
+          onPress={() => {
+            log('press +1');
+            setCount(value => value + 1);
+          }}>
           <Text style={styles.buttonText}>+1</Text>
         </Pressable>
         <Pressable style={styles.button} onPress={burst} disabled={busy}>
@@ -168,7 +248,33 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
-    paddingTop: 60,
+    paddingTop: 40,
+  },
+  banner: {
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+  bannerOn: {
+    backgroundColor: '#1a7f37',
+  },
+  bannerOff: {
+    backgroundColor: '#57606a',
+  },
+  bannerMixed: {
+    backgroundColor: '#9a6700',
+  },
+  bannerText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  bannerDetail: {
+    fontSize: 12,
+    color: '#57606a',
+    marginBottom: 8,
   },
   title: {
     fontSize: 18,

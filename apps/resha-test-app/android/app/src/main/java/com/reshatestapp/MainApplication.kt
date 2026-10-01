@@ -14,8 +14,9 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          // Reports the Resha switches this binary was compiled with, so the smoke screen can show
+          // which configuration is actually running.
+          add(ReshaBuildConfigPackage())
         },
     )
   }
