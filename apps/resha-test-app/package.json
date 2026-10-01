@@ -11,8 +11,6 @@
     "resha:materialize": "node node_modules/react-native-resha/bin/resha.js materialize",
     "resha:validate": "node node_modules/react-native-resha/bin/resha.js validate",
     "android:assemble": "cd android && ./gradlew :app:assembleDebug",
-    "android:test": "cd android && ./gradlew :packages:react-native:ReactAndroid:testDebugUnitTest",
-    "android:cpp-test": "cd android && ./gradlew :packages:react-native:ReactAndroid:UIThreadRendererCppTests",
     "ios:pods": "cd ios && bundle exec pod install"
   },
   "dependencies": {

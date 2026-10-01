@@ -90,12 +90,24 @@ Notes:
   from-source React Native build compiles Hermes and all of ReactAndroid, so this
   is the difference between minutes and tens of minutes.
 - `RN_PROFILE_UI_THREAD_RENDERER=true` turns on diagnostic timers.
-- `RN_BUILD_CPP_TESTS=true` (needs `UI_THREAD_RENDERER=true`) additionally builds
-  the C++ `UIThreadRenderer` tests:
+- `RN_BUILD_CPP_TESTS=true` (needs `UI_THREAD_RENDERER=true`) additionally
+  configures the C++ `UIThreadRenderer` suites, using the GoogleTest sources that
+  ship with the NDK. The target (`ui_thread_renderer_tests`) is an Android
+  `EXCLUDE_FROM_ALL` executable, so Gradle does not build it - build it out of the
+  CMake tree Gradle generates:
 
   ```sh
-  ./gradlew :packages:react-native:ReactAndroid:UIThreadRendererCppTests
+  ./gradlew :app:assembleDebug \
+    -PreactNativeArchitectures=arm64-v8a \
+    -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PRN_BUILD_CPP_TESTS=true
+
+  cxx=$(find node_modules/.resha/react-native/ReactAndroid/.cxx \
+    -name build.ninja -path '*arm64-v8a*' | head -1)
+  cmake --build "$(dirname "$cxx")" --target ui_thread_renderer_tests
   ```
+
+  It is an Android binary, so run it on a device or emulator (`adb push` then
+  `adb shell`), not on the host.
 
 Confirm the switch reached the build:
 
@@ -134,9 +146,12 @@ aborts during `pod install`.
 npm test
 ```
 
-`jest.config.js` maps `react-native` to the materialized tree, so the JS overrides
-(for example `Libraries/LayoutAnimation/LayoutAnimation.js`) are what the tests
-exercise.
+`jest.config.js` spreads `reshaJestConfig(__dirname)`, which maps `react-native`
+and its subpaths to the materialized tree and keeps its Flow sources
+transformable, so the JS overrides (for example
+`Libraries/LayoutAnimation/LayoutAnimation.js`) are what the tests exercise.
+`__tests__/resha.test.js` asserts exactly that: it fails if `react-native`
+resolves anywhere but `node_modules/.resha/react-native`.
 
 ## Layout
 
