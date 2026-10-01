@@ -202,6 +202,83 @@ untouched. Re-run: 16/16 in that class, 549/549 overall, which also rules out th
 alternative explanation (a deferred batch that never injects the failure) because
 those follow-up assertions pass.
 
+### App runtime on a device (smoke test)
+
+The matrix above proves the switches *compile*; whether the direct renderer
+mounts, commits and tears down is a different question, so the all-on APK was
+installed on the same connected arm64-v8a device (API 30) and exercised. The
+screen is `apps/resha-test-app/ReshaSmokeTest.tsx`, rendered by `App.tsx`: a
+counter, a 120-step `requestAnimationFrame` burst, a 60 Hz `setInterval` ticker, a
+native-driver `Animated.loop`, a 120-row `FlatList` of pressable rows and a list
+remount, each logging a `[resha-smoke]` line so a `logcat` capture says how far it
+got. That the direct path actually ran is the one thing `logcat` can prove, since
+ART only JIT-compiles a method that has executed:
+
+```
+I om.reshatestap: Compiler allocated 7347KB to compile void
+  com.facebook.react.fabric.mounting.UIThreadDirectViewApplier.applyBatchNowInternal(int,
+  com.facebook.react.fabric.mounting.SurfaceMountingManager, int[], java.lang.Object[], …)
+```
+
+Running it found three defects that no build could: two in the Metro integration,
+one in the binding.
+
+**1. Export-only subpaths did not resolve.** `withResha` rewrote
+`react-native/<subpath>` into the literal path `<rnDir>/<subpath>`, but
+`asset-registry`, `setup-env` and `react-private-interface` have no file at the
+package root — they exist only as `exports` map entries. Metro answered
+`UnableToResolveError … targetModuleName: react-native/asset-registry` and the app
+came up on a redbox; `npx react-native bundle` reproduces it without a device
+(exit 1 before the fix). `integration/metro.js` now looks the subpath up in the
+package's own `exports` map first (`exportsSubpath`) and falls back to the literal
+path, which is what the real `Libraries/**` files need. After the fix the bundle
+exits 0 at 4,109,321 bytes, with 604 modules under
+`node_modules/.resha/react-native/` and none under the pristine
+`node_modules/react-native/Libraries`. The obvious alternative — adding the
+materialized tree to `resolver.nodeModulesPaths` — is wrong and stays wrong:
+`metro-resolver` walks up from the origin module before it consults that list, so
+the pristine copy would have won the lookup silently.
+
+**2. The pre-main module was dropped.** With resolution fixed the app started but
+threw `ReferenceError: Property 'window' doesn't exist` from `AppContainer-dev.js`.
+`@react-native/metro-config` sets
+`getModulesRunBeforeMainModule: () => [require.resolve('react-native/setup-env')]`,
+and Node resolves that against the *pristine* package while every module in the
+graph now comes from `rnDir`. Metro's `getAppendScripts` emits a `__r(…)` for an
+entry only when a graph module's path equals it exactly, and drops the rest
+without a warning, so `setup-env` never ran — and neither did the environment it
+installs (`window`, the timers, the console, the HMR client). `withResha` now
+wraps the serializer and retargets any `node_modules/react-native/` path into the
+materialized tree; the bundle tail gained `__r(111)` for
+`node_modules/.resha/react-native/src/setup-env.js`, the same shape a control
+bundle built from the pristine config emits for the pristine path. Two Metro
+behaviours found only by running: exact-match pre-main entries, and a resolver
+order that silently prefers the wrong copy.
+
+**3. `stageNativeProps` used a moved-from token.** The first native-driver
+animation update killed the process: `signal 11 (SIGSEGV), code 1 (SEGV_MAPERR),
+fault addr 0x0`, frame `UIThreadRendererBinding::stageNativeProps(…)+676`
+(`BuildId 5265e16a…`), which `llvm-addr2line` resolves to
+`UIThreadRendererBinding.cpp:429`. `submitWorkerOperation` takes the token by
+value, so the `std::move(token)` above it left the local empty while the completion
+callback still read `token->surfaceId`; the fault address is `0x0` because
+`SurfaceToken::surfaceId` is the first member. The path is `Animated` native driver
+→ `FabricUIManager.synchronouslyUpdateViewOnUIThread` →
+`FabricUIManagerBinding::recordDirectNativeProps` → `recordNativeProps`, so any
+native-driver animation on a mounted view hits it. The surface id is now read
+before the move. The fork's copy of this file is byte-identical in that region, so
+the fork crashes the same way; a sweep of the remaining `std::move(token)` site
+(`submitWorkerJob`, which captures copies first) found no second instance.
+
+After the fix (`BuildId 2ec09dfa…`) the app cold-starts and stays up through the
+burst's 120 commits, the 60 Hz ticker, the list remount and touch input: `count`
+122 after two `+1` taps, rows counting their own taps, the animated box still
+moving, and no crash or `E/` line in `logcat`. Two things this did *not* measure:
+the burst takes 22.1 s for its 120 commits in this debug/dev build, and no
+pristine control was run, so that number is a baseline rather than a comparison —
+the same screen under the switches-off combo is what would say whether the direct
+path costs JS throughput.
+
 ## iOS
 
 `apps/resha-test-app/ios`, `pod install` + `xcodebuild -workspace
@@ -274,5 +351,8 @@ same working tree produced different patch *files*; `captureRnTester` now passes
   above is arm64-v8a, where the suites pass 85/85).
 - The GitHub Actions workflows themselves have not been executed (no CI runs
   available from this machine).
-- Runtime behaviour on device/simulator beyond "it builds and links": the APK was
-  not installed and the app was not launched.
+- Runtime behaviour is verified on **Android debug builds only** (see the smoke
+  test above, run with all three switches on). Nothing was run with the switches
+  off, in a release build, or on iOS, and no regression test covers the three
+  runtime defects found that way — the `stageNativeProps` move in particular is
+  still only guarded by the fix itself.
