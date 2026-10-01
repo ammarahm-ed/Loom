@@ -3,11 +3,25 @@
 //   settings.gradle:      apply from: file("../node_modules/react-native-resha/integration/android/resha.settings.gradle")
 //   settings.gradle.kts:  apply(from = file("../node_modules/react-native-resha/integration/android/resha.settings.gradle"))
 //
+// Placement matters on Gradle 9: no statement other than buildscript {},
+// pluginManagement {} and plugins {} may appear before the `plugins {}` block,
+// so apply it immediately after that block - and before
+// `autolinkLibrariesFromCommand()`, which resolves react-native.config.js's
+// reactNativePath and therefore needs the materialized tree to already exist:
+//
+//   pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+//   plugins { id("com.facebook.react.settings") }
+//   apply from: file("../node_modules/react-native-resha/integration/android/resha.settings.gradle")
+//   extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+//
 // What it does:
 //  1. runs `resha materialize` (a no-op when the stamp is current), producing
 //     <app>/node_modules/.resha/react-native = react-native + Resha overrides
 //  2. includes that tree as a composite build and substitutes the prebuilt
 //     com.facebook.react:react-android / hermes-android artifacts with it
+//
+// Set RESHA_SKIP_MATERIALIZE=1 to skip step 1 (the tree must already exist), and
+// the `reshaAppRoot` Gradle property to override <app> (= settings.rootDir/..).
 //
 // Pair it with `react { reactNativeDir = file("../node_modules/.resha/react-native") }`
 // in app/build.gradle so the RN Gradle plugin's codegen uses the same tree.
@@ -15,7 +29,23 @@
 def reshaAppRoot = settings.hasProperty("reshaAppRoot")
     ? new File(settings.reshaAppRoot)
     : settings.rootDir.parentFile
-def reshaBin = new File(buildscript.sourceFile.parentFile, "../../bin/resha.js").canonicalFile
+
+// This file normally lives at <app>/node_modules/react-native-resha/integration/android/,
+// so bin/resha.js is three levels up. Fall back to a node_modules lookup for a
+// vendored/relocated copy, and fail loudly rather than run the wrong binary.
+def reshaBinSource = buildscript.sourceFile
+def reshaBin = new File(reshaBinSource != null ? reshaBinSource.parentFile : reshaAppRoot,
+    reshaBinSource != null ? "../../bin/resha.js" : "node_modules/react-native-resha/bin/resha.js")
+    .canonicalFile
+if (!reshaBin.exists()) {
+  reshaBin = new File(reshaAppRoot, "node_modules/react-native-resha/bin/resha.js").canonicalFile
+}
+if (!reshaBin.exists()) {
+  throw new GradleException(
+      "Resha: cannot find bin/resha.js (looked next to ${reshaBinSource} and in " +
+          "${reshaAppRoot}/node_modules/react-native-resha). Reinstall react-native-resha.")
+}
+
 def reshaSkip = System.getenv("RESHA_SKIP_MATERIALIZE") == "1"
 
 if (!reshaSkip) {
