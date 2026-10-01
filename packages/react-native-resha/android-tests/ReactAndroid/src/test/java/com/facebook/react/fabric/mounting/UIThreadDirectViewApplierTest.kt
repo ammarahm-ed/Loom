@@ -96,13 +96,15 @@ class UIThreadDirectViewApplierTest {
     stateManager.onCreateView = { throw IllegalStateException("injected create failure") }
     applier.dispatchCommand(surfaceId, childTag, "mustNotRun", JavaOnlyArray.of())
 
-    org.assertj.core.api.Assertions.assertThatThrownBy {
+    // The failure is consumed by the applier and reported through the handler above: a Java
+    // exception crossing JNI into the renderer's effect loop would take the process down.
+    org.assertj.core.api.Assertions.assertThatCode {
       applier.applyBatch(
           surfaceId,
           intArrayOf(OP_CREATE, childTag, 1),
           arrayOf("RCTView", JavaOnlyMap.of()),
       )
-    }.isInstanceOf(IllegalStateException::class.java)
+    }.doesNotThrowAnyException()
 
     assertThat(failureMessages).hasSize(1)
     assertThat(failureMessages.single()).contains("CREATE", "tag $childTag")
@@ -121,13 +123,14 @@ class UIThreadDirectViewApplierTest {
     applier = failingApplier(messages)
     stateManager.onUpdateProperties = { throw IllegalStateException("props failed") }
 
-    org.assertj.core.api.Assertions.assertThatThrownBy {
+    // Failures are consumed and reported through the handler, not thrown.
+    org.assertj.core.api.Assertions.assertThatCode {
       applier.applyBatch(
           surfaceId,
           intArrayOf(OP_UPDATE_PROPS, childTag),
           arrayOf(JavaOnlyMap.of("opacity", 0.5)),
       )
-    }.isInstanceOf(IllegalStateException::class.java)
+    }.doesNotThrowAnyException()
     assertThat(messages.single()).contains("UPDATE_PROPS", "tag $childTag")
 
     setUp()
@@ -140,7 +143,8 @@ class UIThreadDirectViewApplierTest {
     )
     stateManager.onStateUpdate = { throw IllegalStateException("state failed") }
 
-    org.assertj.core.api.Assertions.assertThatThrownBy {
+    // Failures are consumed and reported through the handler, not thrown.
+    org.assertj.core.api.Assertions.assertThatCode {
       applier.applyBatch(
           surfaceId,
           intArrayOf(),
@@ -149,7 +153,7 @@ class UIThreadDirectViewApplierTest {
           intArrayOf(childTag),
           arrayOf(TestStateWrapper),
       )
-    }.isInstanceOf(IllegalStateException::class.java)
+    }.doesNotThrowAnyException()
     assertThat(stateMessages.single()).contains("STATE", "tag $childTag")
   }
 
