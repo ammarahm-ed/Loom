@@ -579,8 +579,11 @@ android {
   if (rootProject.hasProperty("ndkPath") && rootProject.properties["ndkPath"] != null) {
     ndkPath = rootProject.properties["ndkPath"].toString()
   }
-  // RNTester and ReactAndroid must resolve the same installed NDK.
-  ndkVersion = "27.2.12479018"
+  if (rootProject.hasProperty("ndkVersion") && rootProject.properties["ndkVersion"] != null) {
+    ndkVersion = rootProject.properties["ndkVersion"].toString()
+  } else {
+    ndkVersion = libs.versions.ndkVersion.get()
+  }
 
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17

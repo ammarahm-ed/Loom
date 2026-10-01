@@ -325,8 +325,11 @@ android {
   if (rootProject.hasProperty("ndkPath") && rootProject.properties["ndkPath"] != null) {
     ndkPath = rootProject.properties["ndkPath"].toString()
   }
-  // Keep the nested Hermes native build aligned with RNTester/ReactAndroid.
-  ndkVersion = "27.2.12479018"
+  if (rootProject.hasProperty("ndkVersion") && rootProject.properties["ndkVersion"] != null) {
+    ndkVersion = rootProject.properties["ndkVersion"].toString()
+  } else {
+    ndkVersion = libs.versions.ndkVersion.get()
+  }
 
   defaultConfig {
     minSdk = libs.versions.minSdk.get().toInt()
