@@ -75,7 +75,7 @@ jobs:
         run: yarn install
 
       - name: Run the unit tests
-        working-directory: rn/packages/react-native/ReactAndroid
+        working-directory: rn
         run: |
           ./gradlew :packages:react-native:ReactAndroid:testDebugUnitTest \
             $RESHA_SWITCHES \

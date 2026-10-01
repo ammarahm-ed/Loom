@@ -45,7 +45,10 @@ function overlay({monorepo, withRnTester = true, log = console.log}) {
 function captureRnTester({fork, base, log = console.log}) {
   const patch = execFileSync(
     'git',
-    ['-C', fork, 'diff', '--binary', base, '--', 'packages/rn-tester', ':!packages/rn-tester/Podfile.lock'],
+    // --full-index keeps the blob hashes at 40 chars: git abbreviates them by
+    // repository object count, so the patch would otherwise differ depending on
+    // how large the checkout is.
+    ['-C', fork, 'diff', '--binary', '--full-index', base, '--', 'packages/rn-tester', ':!packages/rn-tester/Podfile.lock'],
     {encoding: 'utf8', maxBuffer: 1 << 28},
   );
   // Include untracked new files without touching the fork's index.
@@ -58,7 +61,7 @@ function captureRnTester({fork, base, log = console.log}) {
   for (const f of untracked) {
     const r = require('child_process').spawnSync(
       'git',
-      ['-C', fork, 'diff', '--binary', '--no-index', '--', '/dev/null', f],
+      ['-C', fork, 'diff', '--binary', '--full-index', '--no-index', '--', '/dev/null', f],
       {encoding: 'utf8'},
     );
     extra += r.stdout.replace(/^(diff --git a\/)dev\/null b\//m, `$1${f} b/`);

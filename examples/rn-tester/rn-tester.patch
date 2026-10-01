@@ -1,5 +1,5 @@
 diff --git a/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj b/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj
-index 2f6e9c5ea8..5a9196a009 100644
+index 2f6e9c5ea8d241f8adf6b7b033be4a3b2f944877..5a9196a00920673d0243d0a2ed87c0bd9858e90b 100644
 --- a/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj
 +++ b/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj
 @@ -503,14 +503,10 @@
@@ -145,7 +145,7 @@ index 2f6e9c5ea8..5a9196a009 100644
  				SDKROOT = iphoneos;
  				USE_HERMES = true;
 diff --git a/packages/rn-tester/android/app/build.gradle.kts b/packages/rn-tester/android/app/build.gradle.kts
-index 971191eddd..cd2254e6a0 100644
+index 971191eddd21d2c5e522e90d6ff072e57cf95e1f..cd2254e6a047d7df11bda4cbb32c2e1dd8684898 100644
 --- a/packages/rn-tester/android/app/build.gradle.kts
 +++ b/packages/rn-tester/android/app/build.gradle.kts
 @@ -96,9 +96,8 @@ android {
@@ -172,7 +172,7 @@ index 971191eddd..cd2254e6a0 100644
      }
    }
 diff --git a/packages/rn-tester/android/app/src/main/AndroidManifest.xml b/packages/rn-tester/android/app/src/main/AndroidManifest.xml
-index a842f3a0d2..6cff604627 100644
+index a842f3a0d29136d5eede7cf4e6b9ea5ad32ffda3..6cff604627313db983f4ee6b1e1fa31491410d08 100644
 --- a/packages/rn-tester/android/app/src/main/AndroidManifest.xml
 +++ b/packages/rn-tester/android/app/src/main/AndroidManifest.xml
 @@ -89,6 +89,18 @@
@@ -196,7 +196,7 @@ index a842f3a0d2..6cff604627 100644
              android:authorities="@string/blob_provider_authority"
 diff --git a/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/NativeTextBenchmarkActivity.kt b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/NativeTextBenchmarkActivity.kt
 new file mode 100644
-index 0000000000..23c71cb318
+index 0000000000000000000000000000000000000000..23c71cb3183ed4daaf60d25c3a2678db2e3ff2ed
 --- /dev/null
 +++ b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/NativeTextBenchmarkActivity.kt
 @@ -0,0 +1,85 @@
@@ -286,7 +286,7 @@ index 0000000000..23c71cb318
 +  }
 +}
 diff --git a/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt
-index 0ae099a8f3..3d82955314 100644
+index 0ae099a8f3794f0b302fc52c2ac11a5507751488..3d82955314e7000a1fe5697b3b86c25722e3a18e 100644
 --- a/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt
 +++ b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt
 @@ -10,6 +10,7 @@ package com.facebook.react.uiapp
@@ -311,7 +311,7 @@ index 0ae099a8f3..3d82955314 100644
        }
        FBRNTesterEndToEndHelper.onCreate(activity.application)
 diff --git a/packages/rn-tester/js/RNTesterApp.ios.js b/packages/rn-tester/js/RNTesterApp.ios.js
-index 7e587ebbae..472413a6b7 100644
+index 7e587ebbaecc8bf5af34fa554c34b6732d976350..472413a6b763d0e3c9ce04d65ce501be21a25ddd 100644
 --- a/packages/rn-tester/js/RNTesterApp.ios.js
 +++ b/packages/rn-tester/js/RNTesterApp.ios.js
 @@ -18,13 +18,17 @@ import RNTesterList from './utils/RNTesterList';
@@ -340,7 +340,7 @@ index 7e587ebbae..472413a6b7 100644
 -module.exports = RNTesterApp;
 +module.exports = RNTesterRoot;
 diff --git a/packages/rn-tester/js/RNTesterAppShared.js b/packages/rn-tester/js/RNTesterAppShared.js
-index b48d430f8f..fa660ff5e9 100644
+index b48d430f8f995850e20c0913a579bd594116d2a8..fa660ff5e9543927ff9b4cbdb6e7c1e603a520b4 100644
 --- a/packages/rn-tester/js/RNTesterAppShared.js
 +++ b/packages/rn-tester/js/RNTesterAppShared.js
 @@ -59,12 +59,14 @@ type BackButton = ({onBack: () => void}) => React.Node;
@@ -378,7 +378,7 @@ index b48d430f8f..fa660ff5e9 100644
  
 diff --git a/packages/rn-tester/js/__tests__/fixtures/AsyncDirectRendererWorkerRegression.js b/packages/rn-tester/js/__tests__/fixtures/AsyncDirectRendererWorkerRegression.js
 new file mode 100644
-index 0000000000..423cdc057f
+index 0000000000000000000000000000000000000000..423cdc057f2e107db572dfcf8a55d738629a7c67
 --- /dev/null
 +++ b/packages/rn-tester/js/__tests__/fixtures/AsyncDirectRendererWorkerRegression.js
 @@ -0,0 +1,94 @@
@@ -477,7 +477,7 @@ index 0000000000..423cdc057f
 +}
 +AppRegistry.registerComponent('RNTesterApp', () => Verification);
 diff --git a/packages/rn-tester/js/components/RNTPressableRow.js b/packages/rn-tester/js/components/RNTPressableRow.js
-index a6598baea6..9251e63d20 100644
+index a6598baea65f1099087ad8711c1ed5d57241c6a6..9251e63d20f06dd07cf5bb34e93659dc01030c2c 100644
 --- a/packages/rn-tester/js/components/RNTPressableRow.js
 +++ b/packages/rn-tester/js/components/RNTPressableRow.js
 @@ -20,6 +20,9 @@ type Props = {
@@ -511,7 +511,7 @@ index a6598baea6..9251e63d20 100644
        onPressOut={onPressOut}
        accessibilityLabel={label}
 diff --git a/packages/rn-tester/js/components/RNTesterModuleList.js b/packages/rn-tester/js/components/RNTesterModuleList.js
-index 5a9220e8d6..756499dad8 100644
+index 5a9220e8d6b5fc58fa6d10ac529b0b8c50df5821..756499dad80b30dbfb98954adc4cc15dcba6db21 100644
 --- a/packages/rn-tester/js/components/RNTesterModuleList.js
 +++ b/packages/rn-tester/js/components/RNTesterModuleList.js
 @@ -29,16 +29,49 @@ function ExampleModuleRow({
@@ -570,7 +570,7 @@ index 5a9220e8d6..756499dad8 100644
    );
  }
 diff --git a/packages/rn-tester/js/examples/Image/ImageExample.js b/packages/rn-tester/js/examples/Image/ImageExample.js
-index 55d4a8e7da..1c1be2ef09 100644
+index 55d4a8e7da26f84032817ad378ca76fe5f6a5ca3..1c1be2ef09748bc8fd39129b306d0647b6ef84ea 100644
 --- a/packages/rn-tester/js/examples/Image/ImageExample.js
 +++ b/packages/rn-tester/js/examples/Image/ImageExample.js
 @@ -38,7 +38,9 @@ const IMAGE2 =
@@ -585,7 +585,7 @@ index 55d4a8e7da..1c1be2ef09 100644
  // the API 24 Android CI emulator and reachable on both platforms.
  const LARGE_JPEG =
 diff --git a/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js b/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js
-index 39b5d7c7c0..3d0c9b9f76 100644
+index 39b5d7c7c0ce12547cb338fd1a0997beb13b3ea4..3d0c9b9f766e55f99733abc62ff59b327b1cafe8 100644
 --- a/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js
 +++ b/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js
 @@ -120,14 +120,18 @@ const examples: Array<RNTesterModuleExample> = Object.keys(
@@ -615,7 +615,7 @@ index 39b5d7c7c0..3d0c9b9f76 100644
  
 diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorPureUpdateDiagnosticExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorPureUpdateDiagnosticExample.js
 new file mode 100644
-index 0000000000..b15ac9468f
+index 0000000000000000000000000000000000000000..b15ac9468f047b6bf0366279c36dfe937e10ade7
 --- /dev/null
 +++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorPureUpdateDiagnosticExample.js
 @@ -0,0 +1,114 @@
@@ -735,7 +735,7 @@ index 0000000000..b15ac9468f
 +};
 diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorStressExample.js
 new file mode 100644
-index 0000000000..e19853afba
+index 0000000000000000000000000000000000000000..e19853afba90cfb90527d3f97d02783d0220db52
 --- /dev/null
 +++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorStressExample.js
 @@ -0,0 +1,9 @@
@@ -750,7 +750,7 @@ index 0000000000..e19853afba
 +};
 diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricCommitStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricCommitStressExample.js
 new file mode 100644
-index 0000000000..f3c39166a1
+index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48203742e2
 --- /dev/null
 +++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricCommitStressExample.js
 @@ -0,0 +1,222 @@
@@ -978,7 +978,7 @@ index 0000000000..f3c39166a1
 +};
 diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricQueuedCommitStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricQueuedCommitStressExample.js
 new file mode 100644
-index 0000000000..160fc49c67
+index 0000000000000000000000000000000000000000..160fc49c6750ca93fdcf0202394346348cb1fd32
 --- /dev/null
 +++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricQueuedCommitStressExample.js
 @@ -0,0 +1,20 @@
@@ -1004,7 +1004,7 @@ index 0000000000..160fc49c67
 +};
 diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricTextStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricTextStressExample.js
 new file mode 100644
-index 0000000000..094a4ac263
+index 0000000000000000000000000000000000000000..094a4ac263dbce410e96fe4eefffdf5cd1d8c80b
 --- /dev/null
 +++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricTextStressExample.js
 @@ -0,0 +1,9 @@
@@ -1019,7 +1019,7 @@ index 0000000000..094a4ac263
 +};
 diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/TextHeavyFlatListExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/TextHeavyFlatListExample.js
 new file mode 100644
-index 0000000000..40d1299bb3
+index 0000000000000000000000000000000000000000..40d1299bb3dcf57b96fea093621bd82f339e0b74
 --- /dev/null
 +++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/TextHeavyFlatListExample.js
 @@ -0,0 +1,152 @@
@@ -1176,7 +1176,7 @@ index 0000000000..40d1299bb3
 +  Good: TextHeavyFlatListExample,
 +};
 diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js
-index 15cd8d2674..2d0d1be312 100644
+index 15cd8d2674abae24ff7bffd05e0838080094856f..2d0d1be312cc3b4b4aeaf23a60adfc2cce5dcc82 100644
 --- a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js
 +++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js
 @@ -14,3 +14,9 @@ export {default as SetStateInWrongEffectExample} from './SetStateInWrongEffectEx
@@ -1190,7 +1190,7 @@ index 15cd8d2674..2d0d1be312 100644
 +export {default as FabricTextStressExample} from './FabricTextStressExample';
 +export {default as TextHeavyFlatListExample} from './TextHeavyFlatListExample';
 diff --git a/packages/rn-tester/js/utils/RNTesterList.android.js b/packages/rn-tester/js/utils/RNTesterList.android.js
-index e3c5005ea0..b8eed372a8 100644
+index e3c5005ea002eebab381d6c94b7f9ec8e9885170..b8eed372a86996ff3cd96db8779e80b076e5abb8 100644
 --- a/packages/rn-tester/js/utils/RNTesterList.android.js
 +++ b/packages/rn-tester/js/utils/RNTesterList.android.js
 @@ -380,17 +380,11 @@ const APIs: Array<RNTesterModuleInfo> = (
