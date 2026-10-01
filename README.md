@@ -150,7 +150,7 @@ materialized tree, because an included Gradle build cannot see the app's
 | `UI_THREAD_RENDERER` | selects the independent direct JS-host → Yoga → Android view renderer (requires `RN_UI_THREAD`) |
 | `UI_THREAD_RENDERER_WORKER` | worker-owned commit preparation, UI-thread mounting (requires `UI_THREAD_RENDERER`) |
 | `RN_PROFILE_UI_THREAD_RENDERER` | diagnostic C++ and direct-mount Java timers (default off) |
-| `RN_BUILD_CPP_TESTS` | builds the C++ `UIThreadRenderer` tests (requires `UI_THREAD_RENDERER`) |
+| `RN_BUILD_CPP_TESTS` | builds the C++ `UIThreadRenderer` tests (requires `UI_THREAD_RENDERER` and `UI_THREAD_RENDERER_WORKER`) |
 
 iOS (environment variables, since `RN_UI_THREAD` is Android-only):
 

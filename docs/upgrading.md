@@ -147,28 +147,36 @@ Then run the unit and C++ tests from an upstream checkout:
 ```sh
 node packages/react-native-resha/bin/resha.js overlay --monorepo ~/Work/react-native
 
-# The JVM unit tests, which now include the files from android-tests/:
-(cd ~/Work/react-native/packages/react-native/ReactAndroid && ./gradlew testDebugUnitTest)
+# The monorepo has a single gradlew at its root, and the project path carries the
+# prefix. The JVM unit tests now include the files from android-tests/:
+(cd ~/Work/react-native && \
+  ./gradlew :packages:react-native:ReactAndroid:testDebugUnitTest \
+    -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PUI_THREAD_RENDERER_WORKER=true)
 
-# The C++ suites are a CMake target that Gradle does not build (EXCLUDE_FROM_ALL),
-# so configure the build with the tests enabled, then build the target out of the
-# CMake tree Gradle generated:
-(cd ~/Work/react-native/packages/react-native/ReactAndroid && \
-  ./gradlew :ReactAndroid:assembleDebug \
+# The C++ suites need the tests enabled. All three switches are required: the
+# publication tests use the worker API, and the CMake test block rejects a
+# worker-less build. RN_BUILD_CPP_TESTS=true attaches the test target to
+# `reactnative`, so this build produces it along with the native libraries:
+(cd ~/Work/react-native && \
+  ./gradlew :packages:react-native:ReactAndroid:assembleDebug \
     -PreactNativeArchitectures=arm64-v8a \
-    -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PRN_BUILD_CPP_TESTS=true)
+    -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true \
+    -PUI_THREAD_RENDERER_WORKER=true -PRN_BUILD_CPP_TESTS=true)
 
-cxx=$(find ~/Work/react-native/packages/react-native/ReactAndroid/.cxx \
-  -name build.ninja -path '*arm64-v8a*' | head -1)
-cmake --build "$(dirname "$cxx")" --target ui_thread_renderer_tests
+RA=~/Work/react-native/packages/react-native/ReactAndroid
+exe=$(find "$RA/build/intermediates/cxx" -type f -name ui_thread_renderer_tests | head -1)
 ```
 
-The suites are Android binaries, so run them on a device or emulator. Push the
-executable next to `libjsi.so`, `libfbjni.so` and `libc++_shared.so` from the same
-CMake output directory and run it there:
+The suites are Android binaries, so run them on a device or emulator. AGP stages
+the executable and its native dependencies (`libjsi.so`, `libfbjni.so`) under
+`build/intermediates/cxx/<buildType>/<hash>/obj/<abi>/`, not next to `build.ninja`;
+`libc++_shared.so` comes from the NDK:
 
 ```sh
-adb push "$(dirname "$cxx")/ui_thread_renderer_tests" /data/local/tmp/
+libs=$(dirname "$exe")
+adb push "$exe" /data/local/tmp/ui_thread_renderer_tests
+adb push "$libs/libjsi.so" "$libs/libfbjni.so" /data/local/tmp/
+find "$ANDROID_HOME/ndk" -name 'libc++_shared.so' -path '*arm64-v8a*' -exec adb push {} /data/local/tmp/ \;
 adb shell "cd /data/local/tmp && LD_LIBRARY_PATH=/data/local/tmp ./ui_thread_renderer_tests"
 ```
 

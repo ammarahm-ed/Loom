@@ -69,10 +69,11 @@ switches into the materialized `gradle.properties`).
 
 ### C++ suites (on a device)
 
-`ui_thread_renderer_tests` (GoogleTest from the NDK, built by the all-on
-configuration as an `EXCLUDE_FROM_ALL` CMake target) was pushed to a connected
-arm64-v8a device (API 30) together with `libjsi.so`, `libfbjni.so` and
-`libc++_shared.so`, and run there:
+`ui_thread_renderer_tests` (GoogleTest from the NDK; the CMake target is
+`EXCLUDE_FROM_ALL`, but `RN_BUILD_CPP_TESTS=true` attaches it to the `reactnative`
+target, so the all-on app build produces it) was pushed to a connected arm64-v8a
+device (API 30) together with `libjsi.so`, `libfbjni.so` and `libc++_shared.so`,
+and run there:
 
 ```
 [==========] 85 tests from 3 test suites ran. (2524 ms total)
@@ -89,6 +90,39 @@ Note for anyone re-running this: the device already had an older
 prints fork source paths. The freshly built binary, which embeds the materialized
 paths, passes 85/85 — so push to a private directory and check the binary's
 identity before drawing conclusions from a device run.
+
+The same target was then built for **x86_64** inside the pristine checkout (the
+configuration `.github/workflows/react-native-tests.yml` uses for the emulator
+job), and that run caught two things the app builds had hidden:
+
+- The suites need **all three** switches. `UIThreadRendererTest.cpp` carries no
+  preprocessor guards and drives the publication API (`publishWorkerCommit`,
+  `applyPublishedIdentities`, the submitted/mounted identity maps), which the
+  binding only declares under `#if UI_THREAD_RENDERER_WORKER`
+  (`UIThreadRendererBinding.h:280`). Building with only `RN_UI_THREAD` and
+  `UI_THREAD_RENDERER` fails with 13 `no member named …` compile errors. The CMake
+  test block now rejects that configuration up front, next to the existing
+  `UI_THREAD_RENDERER` check, so the failure reads:
+
+  ```
+  RN_BUILD_CPP_TESTS=true requires UI_THREAD_RENDERER_WORKER=true:
+  UIThreadRendererTest.cpp exercises the worker publication API.
+  ```
+
+  (`configureCMakeDebug` fails; the earlier run produced 26 `no member named`
+  errors instead.)
+
+- AGP stages the produced binary and its native dependencies under
+  `build/intermediates/cxx/<buildType>/<hash>/obj/<abi>/`, **not** next to the
+  `build.ninja` file in `.cxx`. A `find .cxx -name build.ninja` recipe can also
+  pick one of CMake's `_CMakeLTOTest-*` probe directories. The docs and the
+  workflow now locate the executable by name under `build/intermediates/cxx`,
+  which is where `libjsi.so` and `libfbjni.so` sit as well — they have to be
+  pushed with it, `libc++_shared.so` comes from the NDK.
+
+With all three switches the run is `BUILD SUCCESSFUL in 1m 30s`, and
+`build/intermediates/cxx/Debug/3n2b5027/obj/x86_64/ui_thread_renderer_tests` is an
+`ELF 64-bit LSB pie executable, x86-64 … interpreter /system/bin/linker64`.
 
 ### JVM unit tests
 
@@ -107,12 +141,16 @@ so these tests run in a full checkout, which is exactly what
 
 ```sh
 node packages/react-native-resha/bin/resha.js overlay --monorepo ~/Work/react-native
-(cd ~/Work/react-native/packages/react-native/ReactAndroid && \
+(cd ~/Work/react-native && \
   ./gradlew :packages:react-native:ReactAndroid:testDebugUnitTest \
     -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PUI_THREAD_RENDERER_WORKER=true)
 ```
 
-Two details worth keeping:
+The monorepo has a **single** `gradlew`, at the checkout root: `ReactAndroid` has
+no wrapper of its own, and the root `settings.gradle.kts` is what includes
+`:packages:react-native:ReactAndroid`.
+
+Details worth keeping:
 
 - the switches matter — the Android tests exercise the Resha code paths, so the run
   needs the same `-P` flags a device build uses;
@@ -120,6 +158,49 @@ Two details worth keeping:
   addressed with the build-name prefix:
   `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest`, not
   `:packages:react-native:ReactAndroid:testDebugUnitTest`.
+- if `ANDROID_NDK` is exported, the monorepo build fails before compiling
+  anything: the root `build.gradle.kts` does
+  `val ndkPath by extra(System.getenv("ANDROID_NDK"))` and `ReactAndroid` prefers
+  that `ndkPath` over the catalog version, so a symlinked NDK trips AGP:
+
+  ```
+  [CXX1100] android.ndkVersion is [27.1.12297006] but android.ndkPath
+  .../ndk/27.1.12297006 refers to a different version [27.2.12479018].
+  ```
+
+  Unsetting `ANDROID_NDK` for the run restores the catalog NDK, which is what CI
+  uses. (App builds never hit this: an app's root build script defines no
+  `ndkPath`.)
+
+### Result
+
+```
+86 classes, 549 tests, 0 failures, 0 errors
+BUILD SUCCESSFUL
+```
+
+(Gradle only prints a test count when something fails, so the totals come from the
+JUnit XML under `build/test-results/testDebugUnitTest`.) Overlaying
+`android-tests/**` on a pristine `v0.87.1` checkout is enough to run the Resha
+tests: nothing has to be copied out of upstream by hand.
+
+That first run was **not** green, and the failure was in the tests rather than in
+the applier. `UIThreadDirectViewApplierTest.viewManagerFailure_invalidatesSurfaceAndDoesNotReplayBatch`
+and `…propsAndStateFailuresReportTheExactFailingOperation` failed with
+`java.lang.AssertionError: Expecting code to raise a throwable`. The three
+`assertThatThrownBy { applier.applyBatch(...) }.isInstanceOf(...)` expectations in
+that file predate the fork's newest applier change, which replaced the
+`throw failure` at the end of the catch block with the documented "the failure is
+consumed here" contract — rethrowing would send a Java exception across JNI into
+the renderer's effect loop. That is the same change that moved `surfaceGeneration`
+to a `ConcurrentHashMap`, stopped copying the deferred batch arrays and let
+`OP_CREATE` retire a retained view state; `import-fork` shipped the newer
+implementation together with the older expectations. The expectations now assert
+`assertThatCode { … }.doesNotThrowAnyException()`, and the rest of both tests —
+the reported diagnostic, the tag invalidation, "no command is replayed" — is
+untouched. Re-run: 16/16 in that class, 549/549 overall, which also rules out the
+alternative explanation (a deferred batch that never injects the failure) because
+those follow-up assertions pass.
 
 ## iOS
 
@@ -173,11 +254,24 @@ baked into the generated Pods project), so each combination needs its own
   those two deltas and nothing else (95 changed files in the fork = 89 overrides +
   the dropped hermes file + 5 scratch files).
 
+Re-verified after the final import, from a pristine checkout: `resha overlay`
+into a fresh `v0.87.1` clone (`git clone --depth 1 --branch v0.87.1`, 109 MB)
+writes all 89 overrides and applies the benchmark patch cleanly — 20 rn-tester
+files, 12 modified and 8 added, on a tree with no other changes — and
+`import-fork` back out of that checkout reproduces
+`packages/react-native-resha/src/**` **byte-identically**.
+
+`rn-tester.patch` capture is deterministic as of that check. `git diff`
+abbreviates the blob hashes in its `index` lines according to how many objects
+the repository holds (10 characters in the fork, 7 in a shallow clone), so the
+same working tree produced different patch *files*; `captureRnTester` now passes
+`--full-index`, and two consecutive captures are byte-identical.
+
 ## Not verified locally
 
-- The `overlay` → `testDebugUnitTest` path inside a real
-  `facebook/react-native` checkout (needs a full monorepo clone + `yarn install`);
-  `.github/workflows/react-native-tests.yml` covers it.
+- The **emulator** leg of the C++ job: the x86_64 executable was built and checked
+  as an Android binary locally, but it was not run on an emulator (the device run
+  above is arm64-v8a, where the suites pass 85/85).
 - The GitHub Actions workflows themselves have not been executed (no CI runs
   available from this machine).
 - Runtime behaviour on device/simulator beyond "it builds and links": the APK was

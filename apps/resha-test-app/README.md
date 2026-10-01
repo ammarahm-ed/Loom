@@ -90,21 +90,29 @@ Notes:
   from-source React Native build compiles Hermes and all of ReactAndroid, so this
   is the difference between minutes and tens of minutes.
 - `RN_PROFILE_UI_THREAD_RENDERER=true` turns on diagnostic timers.
-- `RN_BUILD_CPP_TESTS=true` (needs `UI_THREAD_RENDERER=true`) additionally
-  configures the C++ `UIThreadRenderer` suites, using the GoogleTest sources that
-  ship with the NDK. The target (`ui_thread_renderer_tests`) is an Android
-  `EXCLUDE_FROM_ALL` executable, so Gradle does not build it - build it out of the
-  CMake tree Gradle generates:
+- `RN_BUILD_CPP_TESTS=true` (needs `UI_THREAD_RENDERER=true` *and*
+  `UI_THREAD_RENDERER_WORKER=true`, because the publication tests use the worker
+  API) additionally configures the C++ `UIThreadRenderer` suites, using the
+  GoogleTest sources that ship with the NDK. The target
+  (`ui_thread_renderer_tests`) is attached to the `reactnative` target, so the
+  build above produces it together with the app's native libraries:
 
   ```sh
   ./gradlew :app:assembleDebug \
     -PreactNativeArchitectures=arm64-v8a \
-    -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PRN_BUILD_CPP_TESTS=true
+    -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true \
+    -PUI_THREAD_RENDERER_WORKER=true -PRN_BUILD_CPP_TESTS=true
 
-  cxx=$(find node_modules/.resha/react-native/ReactAndroid/.cxx \
-    -name build.ninja -path '*arm64-v8a*' | head -1)
-  cmake --build "$(dirname "$cxx")" --target ui_thread_renderer_tests
+  RA=node_modules/.resha/react-native/ReactAndroid
+  exe=$(find "$RA/build/intermediates/cxx" -type f -name ui_thread_renderer_tests | head -1)
   ```
+
+  It is an Android binary, so run it on a device or emulator (`adb push` then
+  `adb shell`), not on the host. AGP stages the executable and its native
+  dependencies (`libjsi.so`, `libfbjni.so`) under
+  `build/intermediates/cxx/<buildType>/<hash>/obj/<abi>/`, not next to
+  `build.ninja`; push those, plus `libc++_shared.so` from the NDK, beside the
+  executable.
 
   It is an Android binary, so run it on a device or emulator (`adb push` then
   `adb shell`), not on the host.
