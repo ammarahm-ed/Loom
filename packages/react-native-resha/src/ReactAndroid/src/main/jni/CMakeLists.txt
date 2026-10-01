@@ -175,6 +175,16 @@ if(RN_BUILD_CPP_TESTS)
         "RN_BUILD_CPP_TESTS=true requires UI_THREAD_RENDERER=true: the direct-renderer "
         "test suites do not link against a flag-off build.")
   endif()
+  # UIThreadRendererTest.cpp drives the publication API (publishWorkerCommit,
+  # applyPublishedIdentities, the submitted/mounted identity maps) without any
+  # guard, and the binding only declares those members under
+  # UI_THREAD_RENDERER_WORKER. Without this check the configuration fails with a
+  # page of "no member named ..." compile errors instead.
+  if(NOT UI_THREAD_RENDERER_WORKER)
+    message(FATAL_ERROR
+        "RN_BUILD_CPP_TESTS=true requires UI_THREAD_RENDERER_WORKER=true: "
+        "UIThreadRendererTest.cpp exercises the worker publication API.")
+  endif()
 
   set(ANDROID_GTEST_DIR "${CMAKE_ANDROID_NDK}/sources/third_party/googletest")
   if(NOT EXISTS "${ANDROID_GTEST_DIR}/CMakeLists.txt")
