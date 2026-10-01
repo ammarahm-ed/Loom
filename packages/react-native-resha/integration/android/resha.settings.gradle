@@ -1,0 +1,44 @@
+// Resha Android integration. Apply from the app's settings.gradle(.kts):
+//
+//   settings.gradle:      apply from: file("../node_modules/react-native-resha/integration/android/resha.settings.gradle")
+//   settings.gradle.kts:  apply(from = file("../node_modules/react-native-resha/integration/android/resha.settings.gradle"))
+//
+// What it does:
+//  1. runs `resha materialize` (a no-op when the stamp is current), producing
+//     <app>/node_modules/.resha/react-native = react-native + Resha overrides
+//  2. includes that tree as a composite build and substitutes the prebuilt
+//     com.facebook.react:react-android / hermes-android artifacts with it
+//
+// Pair it with `react { reactNativeDir = file("../node_modules/.resha/react-native") }`
+// in app/build.gradle so the RN Gradle plugin's codegen uses the same tree.
+
+def reshaAppRoot = settings.hasProperty("reshaAppRoot")
+    ? new File(settings.reshaAppRoot)
+    : settings.rootDir.parentFile
+def reshaBin = new File(buildscript.sourceFile.parentFile, "../../bin/resha.js").canonicalFile
+def reshaSkip = System.getenv("RESHA_SKIP_MATERIALIZE") == "1"
+
+if (!reshaSkip) {
+  def proc = ["node", reshaBin.absolutePath, "materialize"].execute(null, reshaAppRoot)
+  def out = new StringBuilder(), err = new StringBuilder()
+  proc.waitForProcessOutput(out, err)
+  if (proc.exitValue() != 0) {
+    throw new GradleException("resha materialize failed:\n${out}${err}")
+  }
+  logger.lifecycle(out.toString().trim())
+}
+
+def reshaReactNativeDir = new File(reshaAppRoot, "node_modules/.resha/react-native")
+if (!new File(reshaReactNativeDir, ".resha-stamp.json").exists()) {
+  throw new GradleException("Resha: ${reshaReactNativeDir} is missing. Run `npx resha materialize` in ${reshaAppRoot}.")
+}
+gradle.ext.reshaReactNativeDir = reshaReactNativeDir
+
+includeBuild(reshaReactNativeDir) {
+  dependencySubstitution {
+    substitute(module("com.facebook.react:react-android")).using(project(":packages:react-native:ReactAndroid"))
+    substitute(module("com.facebook.react:react-native")).using(project(":packages:react-native:ReactAndroid"))
+    substitute(module("com.facebook.react:hermes-android")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+    substitute(module("com.facebook.react:hermes-engine")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+  }
+}

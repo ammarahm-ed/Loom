@@ -1,0 +1,1218 @@
+diff --git a/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj b/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj
+index 2f6e9c5ea8..5a9196a009 100644
+--- a/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj
++++ b/packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj
+@@ -503,14 +503,10 @@
+ 			inputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTester/Pods-RNTester-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+ 			);
+-			inputPaths = (
+-			);
+ 			name = "[CP] Embed Pods Frameworks";
+ 			outputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTester/Pods-RNTester-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+ 			);
+-			outputPaths = (
+-			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+ 			shellPath = /bin/sh;
+ 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RNTester/Pods-RNTester-frameworks.sh\"\n";
+@@ -546,14 +542,10 @@
+ 			inputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterIntegrationTests/Pods-RNTesterIntegrationTests-resources-${CONFIGURATION}-input-files.xcfilelist",
+ 			);
+-			inputPaths = (
+-			);
+ 			name = "[CP] Copy Pods Resources";
+ 			outputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterIntegrationTests/Pods-RNTesterIntegrationTests-resources-${CONFIGURATION}-output-files.xcfilelist",
+ 			);
+-			outputPaths = (
+-			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+ 			shellPath = /bin/sh;
+ 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RNTesterIntegrationTests/Pods-RNTesterIntegrationTests-resources.sh\"\n";
+@@ -567,14 +559,10 @@
+ 			inputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterUnitTests/Pods-RNTesterUnitTests-resources-${CONFIGURATION}-input-files.xcfilelist",
+ 			);
+-			inputPaths = (
+-			);
+ 			name = "[CP] Copy Pods Resources";
+ 			outputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterUnitTests/Pods-RNTesterUnitTests-resources-${CONFIGURATION}-output-files.xcfilelist",
+ 			);
+-			outputPaths = (
+-			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+ 			shellPath = /bin/sh;
+ 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RNTesterUnitTests/Pods-RNTesterUnitTests-resources.sh\"\n";
+@@ -622,14 +610,10 @@
+ 			inputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterIntegrationTests/Pods-RNTesterIntegrationTests-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+ 			);
+-			inputPaths = (
+-			);
+ 			name = "[CP] Embed Pods Frameworks";
+ 			outputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterIntegrationTests/Pods-RNTesterIntegrationTests-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+ 			);
+-			outputPaths = (
+-			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+ 			shellPath = /bin/sh;
+ 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RNTesterIntegrationTests/Pods-RNTesterIntegrationTests-frameworks.sh\"\n";
+@@ -665,14 +649,10 @@
+ 			inputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTester/Pods-RNTester-resources-${CONFIGURATION}-input-files.xcfilelist",
+ 			);
+-			inputPaths = (
+-			);
+ 			name = "[CP] Copy Pods Resources";
+ 			outputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTester/Pods-RNTester-resources-${CONFIGURATION}-output-files.xcfilelist",
+ 			);
+-			outputPaths = (
+-			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+ 			shellPath = /bin/sh;
+ 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RNTester/Pods-RNTester-resources.sh\"\n";
+@@ -708,14 +688,10 @@
+ 			inputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterUnitTests/Pods-RNTesterUnitTests-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+ 			);
+-			inputPaths = (
+-			);
+ 			name = "[CP] Embed Pods Frameworks";
+ 			outputFileListPaths = (
+ 				"${PODS_ROOT}/Target Support Files/Pods-RNTesterUnitTests/Pods-RNTesterUnitTests-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+ 			);
+-			outputPaths = (
+-			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+ 			shellPath = /bin/sh;
+ 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RNTesterUnitTests/Pods-RNTesterUnitTests-frameworks.sh\"\n";
+@@ -947,7 +923,10 @@
+ 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+ 				MTL_ENABLE_DEBUG_INFO = YES;
+ 				ONLY_ACTIVE_ARCH = YES;
+-				OTHER_CFLAGS = "$(inherited)";
++				OTHER_CFLAGS = (
++					"$(inherited)",
++					"-DRCT_REMOVE_LEGACY_ARCH=1",
++				);
+ 				OTHER_CPLUSPLUSFLAGS = (
+ 					"$(OTHER_CFLAGS)",
+ 					"-DFOLLY_NO_CONFIG",
+@@ -955,11 +934,13 @@
+ 					"-DFOLLY_USE_LIBCPP=1",
+ 					"-DFOLLY_CFG_NO_COROUTINES=1",
+ 					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
++					"-DRCT_REMOVE_LEGACY_ARCH=1",
+ 				);
+ 				OTHER_LDFLAGS = (
+ 					"-ObjC",
+ 					"-lc++",
+ 				);
++				PODFILE_DIR = "$(SRCROOT)";
+ 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../react-native";
+ 				SDKROOT = iphoneos;
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+@@ -1040,7 +1021,10 @@
+ 				);
+ 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+ 				MTL_ENABLE_DEBUG_INFO = NO;
+-				OTHER_CFLAGS = "$(inherited)";
++				OTHER_CFLAGS = (
++					"$(inherited)",
++					"-DRCT_REMOVE_LEGACY_ARCH=1",
++				);
+ 				OTHER_CPLUSPLUSFLAGS = (
+ 					"$(OTHER_CFLAGS)",
+ 					"-DFOLLY_NO_CONFIG",
+@@ -1048,11 +1032,13 @@
+ 					"-DFOLLY_USE_LIBCPP=1",
+ 					"-DFOLLY_CFG_NO_COROUTINES=1",
+ 					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
++					"-DRCT_REMOVE_LEGACY_ARCH=1",
+ 				);
+ 				OTHER_LDFLAGS = (
+ 					"-ObjC",
+ 					"-lc++",
+ 				);
++				PODFILE_DIR = "$(SRCROOT)";
+ 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../react-native";
+ 				SDKROOT = iphoneos;
+ 				USE_HERMES = true;
+diff --git a/packages/rn-tester/android/app/build.gradle.kts b/packages/rn-tester/android/app/build.gradle.kts
+index 971191eddd..cd2254e6a0 100644
+--- a/packages/rn-tester/android/app/build.gradle.kts
++++ b/packages/rn-tester/android/app/build.gradle.kts
+@@ -96,9 +96,8 @@ android {
+   if (rootProject.hasProperty("ndkPath") && rootProject.properties["ndkPath"] != null) {
+     ndkPath = rootProject.properties["ndkPath"].toString()
+   }
+-  if (rootProject.hasProperty("ndkVersion") && rootProject.properties["ndkVersion"] != null) {
+-    ndkVersion = rootProject.properties["ndkVersion"].toString()
+-  }
++  // Keep RNTester pinned to the NDK installed in the development environment.
++  ndkVersion = "27.2.12479018"
+ 
+   defaultConfig {
+     applicationId = "com.facebook.react.uiapp"
+@@ -128,7 +127,9 @@ android {
+   buildTypes {
+     release {
+       isMinifyEnabled = enableProguardInReleaseBuilds
+-      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
++      proguardFiles(
++          getDefaultProguardFile("proguard-android-optimize.txt"),
++      )
+       signingConfig = signingConfigs.getByName("debug")
+     }
+   }
+diff --git a/packages/rn-tester/android/app/src/main/AndroidManifest.xml b/packages/rn-tester/android/app/src/main/AndroidManifest.xml
+index a842f3a0d2..6cff604627 100644
+--- a/packages/rn-tester/android/app/src/main/AndroidManifest.xml
++++ b/packages/rn-tester/android/app/src/main/AndroidManifest.xml
+@@ -89,6 +89,18 @@
+             </intent-filter>
+         </activity>
+ 
++        <activity
++            android:name=".NativeTextBenchmarkActivity"
++            android:exported="true"
++            android:screenOrientation="fullSensor">
++            <intent-filter>
++                <action android:name="android.intent.action.VIEW" />
++                <category android:name="android.intent.category.DEFAULT" />
++                <category android:name="android.intent.category.BROWSABLE" />
++                <data android:host="native" android:scheme="rntester" />
++            </intent-filter>
++        </activity>
++
+         <provider
+             android:name="com.facebook.react.modules.blob.BlobProvider"
+             android:authorities="@string/blob_provider_authority"
+diff --git a/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/NativeTextBenchmarkActivity.kt b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/NativeTextBenchmarkActivity.kt
+new file mode 100644
+index 0000000000..23c71cb318
+--- /dev/null
++++ b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/NativeTextBenchmarkActivity.kt
+@@ -0,0 +1,85 @@
++package com.facebook.react.uiapp
++
++import android.app.Activity
++import android.graphics.Color
++import android.os.Bundle
++import android.os.SystemClock
++import android.util.Log
++import android.view.View
++import android.widget.GridLayout
++import android.widget.LinearLayout
++import android.widget.TextView
++
++private const val ITEM_COUNT = 180
++private const val COMMIT_COUNT = 30
++
++public class NativeTextBenchmarkActivity : Activity() {
++  private lateinit var sentinel: View
++  private lateinit var cells: Array<TextView>
++  private var nextCommit = 1
++  private var submittedAt = 0L
++  private var totalLatency = 0.0
++  private var started = false
++
++  override fun onCreate(savedInstanceState: Bundle?) {
++    super.onCreate(savedInstanceState)
++    val root = LinearLayout(this).apply {
++      orientation = LinearLayout.VERTICAL
++      setPadding(8, 8, 8, 8)
++    }
++    root.addView(TextView(this).apply {
++      text = "Native Android text commit stress"
++      textSize = 16f
++      setTextColor(Color.BLACK)
++    })
++    sentinel = View(this)
++    root.addView(sentinel, LinearLayout.LayoutParams(1, 1))
++    val grid = GridLayout(this).apply { columnCount = 10 }
++    cells = Array(ITEM_COUNT) { index ->
++      TextView(this).apply {
++        textSize = 9f
++        setTextColor(Color.WHITE)
++        gravity = android.view.Gravity.CENTER
++        layoutParams = GridLayout.LayoutParams().apply {
++          width = 58
++          height = 38
++          setMargins(2, 2, 2, 2)
++        }
++      }.also(grid::addView)
++    }
++    root.addView(grid)
++    sentinel.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> completeCommit() }
++    setContentView(root)
++    root.post {
++      started = true
++      Log.i("RNXNativeStress", "start")
++      submitCommit()
++    }
++  }
++
++  private fun submitCommit() {
++    if (!started || submittedAt != 0L) return
++    submittedAt = SystemClock.elapsedRealtimeNanos()
++    cells.forEachIndexed { index, cell ->
++      cell.text = "$nextCommit:$index"
++      cell.setBackgroundColor(if ((index + nextCommit) % 2 == 0) Color.rgb(79, 124, 172) else Color.rgb(158, 197, 171))
++    }
++    sentinel.layoutParams = sentinel.layoutParams.apply { width = 1 + (nextCommit and 1) }
++    sentinel.requestLayout()
++  }
++
++  private fun completeCommit() {
++    if (submittedAt == 0L) return
++    val latency = (SystemClock.elapsedRealtimeNanos() - submittedAt) / 1_000_000.0
++    totalLatency += latency
++    Log.i("RNXNativeStress", "commit id=$nextCommit latency=${"%.2f".format(latency)}")
++    if (nextCommit == COMMIT_COUNT) {
++      Log.i("RNXNativeStress", "end duration=${"%.2f".format(totalLatency)} commits=$COMMIT_COUNT completed=layout")
++      submittedAt = 0L
++    } else {
++      nextCommit++
++      submittedAt = 0L
++      sentinel.post(::submitCommit)
++    }
++  }
++}
+diff --git a/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt
+index 0ae099a8f3..3d82955314 100644
+--- a/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt
++++ b/packages/rn-tester/android/app/src/main/java/com/facebook/react/uiapp/RNTesterActivity.kt
+@@ -10,6 +10,7 @@ package com.facebook.react.uiapp
+ import android.content.res.Configuration
+ import android.graphics.Color
+ import android.os.Bundle
++import android.net.Uri
+ import android.view.View
+ import android.widget.FrameLayout
+ import androidx.core.graphics.drawable.toDrawable
+@@ -33,7 +34,11 @@ internal class RNTesterActivity : ReactActivity() {
+       val bundle = activity.intent?.extras
+ 
+       if (bundle != null && bundle.containsKey(PARAM_ROUTE)) {
+-        val routeUri = "rntester://example/${bundle.getString(PARAM_ROUTE)}Example"
++        val route = bundle.getString(PARAM_ROUTE).orEmpty()
++        val routeUri = if (route.startsWith("rntester://")) route else "rntester://example/$route"
++        // React Native Linking reads the launch intent's data URI. Keeping the
++        // route there makes direct RNTester screens work without UI navigation.
++        activity.intent.data = Uri.parse(routeUri)
+         initialProps = Bundle().apply { putString("exampleFromAppetizeParams", routeUri) }
+       }
+       FBRNTesterEndToEndHelper.onCreate(activity.application)
+diff --git a/packages/rn-tester/js/RNTesterApp.ios.js b/packages/rn-tester/js/RNTesterApp.ios.js
+index 7e587ebbae..472413a6b7 100644
+--- a/packages/rn-tester/js/RNTesterApp.ios.js
++++ b/packages/rn-tester/js/RNTesterApp.ios.js
+@@ -18,13 +18,17 @@ import RNTesterList from './utils/RNTesterList';
+ import * as React from 'react';
+ import {AppRegistry} from 'react-native';
+ 
++function RNTesterRoot(): React.Node {
++  return <RNTesterApp />;
++}
++
+ AppRegistry.registerComponent('SetPropertiesExampleApp', () =>
+   require('./examples/SetPropertiesExample/SetPropertiesExampleApp'),
+ );
+ AppRegistry.registerComponent('RootViewSizeFlexibilityExampleApp', () =>
+   require('./examples/RootViewSizeFlexibilityExample/RootViewSizeFlexibilityExampleApp'),
+ );
+-AppRegistry.registerComponent('RNTesterApp', () => RNTesterApp);
++AppRegistry.registerComponent('RNTesterApp', () => RNTesterRoot);
+ 
+ // Register suitable examples for snapshot tests
+ RNTesterList.Components.concat(RNTesterList.APIs).forEach(
+@@ -52,4 +56,4 @@ RNTesterList.Components.concat(RNTesterList.APIs).forEach(
+   },
+ );
+ 
+-module.exports = RNTesterApp;
++module.exports = RNTesterRoot;
+diff --git a/packages/rn-tester/js/RNTesterAppShared.js b/packages/rn-tester/js/RNTesterAppShared.js
+index b48d430f8f..fa660ff5e9 100644
+--- a/packages/rn-tester/js/RNTesterAppShared.js
++++ b/packages/rn-tester/js/RNTesterAppShared.js
+@@ -59,12 +59,14 @@ type BackButton = ({onBack: () => void}) => React.Node;
+ const RNTesterApp = ({
+   testList,
+   customBackButton,
++  exampleFromAppetizeParams,
+ }: {
+   testList?: {
+     components?: Array<RNTesterModuleInfo>,
+     apis?: Array<RNTesterModuleInfo>,
+   },
+   customBackButton?: BackButton,
++  exampleFromAppetizeParams?: string,
+ }): React.Node => {
+   const [state, dispatch] = useReducer(
+     RNTesterNavigationReducer,
+@@ -233,12 +235,15 @@ const RNTesterApp = ({
+   );
+   useEffect(() => {
+     // Initial deeplink
+-    Linking.getInitialURL()
++    (exampleFromAppetizeParams != null
++      ? Promise.resolve(exampleFromAppetizeParams)
++      : Linking.getInitialURL()
++    )
+       .then(url => url != null && handleOpenUrlRequest({url: url}))
+       .catch(_ => {});
+     const subscription = Linking.addEventListener('url', handleOpenUrlRequest);
+     return () => subscription.remove();
+-  }, [handleOpenUrlRequest]);
++  }, [exampleFromAppetizeParams, handleOpenUrlRequest]);
+ 
+   const theme = colorScheme === 'dark' ? themes.dark : themes.light;
+ 
+diff --git a/packages/rn-tester/js/__tests__/fixtures/AsyncDirectRendererWorkerRegression.js b/packages/rn-tester/js/__tests__/fixtures/AsyncDirectRendererWorkerRegression.js
+new file mode 100644
+index 0000000000..423cdc057f
+--- /dev/null
++++ b/packages/rn-tester/js/__tests__/fixtures/AsyncDirectRendererWorkerRegression.js
+@@ -0,0 +1,94 @@
++/**
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ * This source code is licensed under the MIT license found in the LICENSE file.
++ * @format
++ */
++// Standalone bundle entry for worker-mode device regression checks.
++import * as React from 'react';
++import {
++  AppRegistry,
++  Animated,
++  LayoutAnimation,
++  ScrollView,
++  Text,
++  TextInput,
++  View,
++} from 'react-native';
++function Verification() {
++  const view = React.useRef(null);
++  const opacity = React.useRef(new Animated.Value(1)).current;
++  const [step, setStep] = React.useState(0);
++  React.useEffect(() => {
++    if (step === 0) {
++      view.current.setNativeProps({style: {width: 87, opacity: 0.5}});
++      setStep(1);
++    } else if (step === 1) {
++      setTimeout(
++        () =>
++          view.current.measure((x, y, width) => {
++            console.log(
++              `RNXAsyncRegression: nativePropsRetained=${width === 87} width=${width}`,
++            );
++            view.current.setNativeProps({style: {width: null}});
++            const force =
++              global.nativeFabricUIManager.unstable_forceNextCommitSync;
++            if (typeof force === 'function') force();
++            setStep(2);
++          }),
++        50,
++      );
++    } else if (step === 2) {
++      view.current.measure((x, y, width) => {
++        console.log(
++          `RNXAsyncRegression: resetAndSync=${width === 120} width=${width}`,
++        );
++        LayoutAnimation.configureNext(
++          LayoutAnimation.Presets.easeInEaseOut,
++          () => console.log('RNXAsyncRegression: layoutAnimationSuccess'),
++          () => console.log('RNXAsyncRegression: layoutAnimationRejected'),
++        );
++        setStep(3);
++        Animated.timing(opacity, {
++          toValue: 0.2,
++          duration: 400,
++          useNativeDriver: true,
++        }).start(({finished}) =>
++          console.log(`RNXAsyncRegression: nativeAnimatedFinished=${finished}`),
++        );
++      });
++    }
++  }, [step, opacity]);
++  return (
++    <View style={{paddingTop: 80, width: 300, height: 700}}>
++      <View
++        ref={view}
++        style={{
++          width: step < 2 ? 100 : 120,
++          height: 30,
++          backgroundColor: step === 1 ? 'blue' : 'red',
++        }}
++      />
++      <Animated.View
++        style={{width: 100, height: 30, opacity, backgroundColor: 'green'}}
++      />
++      <TextInput
++        testID="async-worker-input"
++        style={{width: 250, height: 50}}
++        placeholder="Worker input"
++        onChangeText={text => console.log(`RNXAsyncRegression: input=${text}`)}
++      />
++      <ScrollView
++        testID="async-worker-scroll"
++        style={{width: 250, height: 300}}
++        onScroll={() => console.log('RNXAsyncRegression: scrollEvent')}
++        scrollEventThrottle={16}>
++        {Array.from({length: 40}, (_, i) => (
++          <Text key={i} style={{height: 30}}>
++            Worker row {i}
++          </Text>
++        ))}
++      </ScrollView>
++    </View>
++  );
++}
++AppRegistry.registerComponent('RNTesterApp', () => Verification);
+diff --git a/packages/rn-tester/js/components/RNTPressableRow.js b/packages/rn-tester/js/components/RNTPressableRow.js
+index a6598baea6..9251e63d20 100644
+--- a/packages/rn-tester/js/components/RNTPressableRow.js
++++ b/packages/rn-tester/js/components/RNTPressableRow.js
+@@ -20,6 +20,9 @@ type Props = {
+   testID?: ?string,
+   onPressIn?: ?() => unknown,
+   onPressOut?: ?() => unknown,
++  onTouchStart?: ?(event: any) => unknown,
++  onTouchEnd?: ?(event: any) => unknown,
++  onTouchCancel?: ?(event: any) => unknown,
+   children?: ?React.Node,
+   title: string,
+   description?: ?string,
+@@ -30,6 +33,9 @@ type Props = {
+ export default function RNTPressableRow({
+   onPressIn,
+   onPressOut,
++  onTouchStart,
++  onTouchEnd,
++  onTouchCancel,
+   title,
+   description,
+   onPress,
+@@ -41,6 +47,9 @@ export default function RNTPressableRow({
+   return (
+     <Pressable
+       testID={title}
++      onTouchStart={onTouchStart}
++      onTouchEnd={onTouchEnd}
++      onTouchCancel={onTouchCancel}
+       onPressIn={onPressIn}
+       onPressOut={onPressOut}
+       accessibilityLabel={label}
+diff --git a/packages/rn-tester/js/components/RNTesterModuleList.js b/packages/rn-tester/js/components/RNTesterModuleList.js
+index 5a9220e8d6..756499dad8 100644
+--- a/packages/rn-tester/js/components/RNTesterModuleList.js
++++ b/packages/rn-tester/js/components/RNTesterModuleList.js
+@@ -29,16 +29,49 @@ function ExampleModuleRow({
+       title={item.module.title}
+       description={item.module.description}
+       testID={item.module.title}
+-      onPressIn={onShowUnderlay}
+-      onPressOut={onHideUnderlay}
++      onPressIn={() => {
++        console.log('RNXTesterRow pressIn', item.module.title);
++        onShowUnderlay();
++      }}
++      onPressOut={() => {
++        console.log('RNXTesterRow pressOut', item.module.title);
++        onHideUnderlay();
++      }}
++      onTouchStart={event => {
++        console.log(
++          'RNXTesterRow touchStart',
++          item.module.title,
++          event.nativeEvent.timestamp,
++          event.nativeEvent.target,
++        );
++      }}
++      onTouchEnd={event => {
++        console.log(
++          'RNXTesterRow touchEnd',
++          item.module.title,
++          event.nativeEvent.timestamp,
++          event.nativeEvent.target,
++          event.nativeEvent.changedTouches?.length,
++          event.nativeEvent.touches?.length,
++        );
++      }}
++      onTouchCancel={event => {
++        console.log(
++          'RNXTesterRow touchCancel',
++          item.module.title,
++          event.nativeEvent.timestamp,
++          event.nativeEvent.target,
++        );
++      }}
+       accessibilityLabel={item.module.title + ' ' + item.module.description}
+-      onPress={() =>
++      onPress={() => {
++        console.log('RNXTesterRow press', item.module.title);
+         handlePress({
+           exampleType: item.exampleType,
+           key: item.key,
+           title: item.module.title,
+-        })
+-      }
++        });
++      }}
+     />
+   );
+ }
+diff --git a/packages/rn-tester/js/examples/Image/ImageExample.js b/packages/rn-tester/js/examples/Image/ImageExample.js
+index 55d4a8e7da..1c1be2ef09 100644
+--- a/packages/rn-tester/js/examples/Image/ImageExample.js
++++ b/packages/rn-tester/js/examples/Image/ImageExample.js
+@@ -38,7 +38,9 @@ const IMAGE2 =
+ const base64Icon =
+   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEsAAABLCAQAAACSR7JhAAADtUlEQVR4Ac3YA2Bj6QLH0XPT1Fzbtm29tW3btm3bfLZtv7e2ObZnms7d8Uw098tuetPzrxv8wiISrtVudrG2JXQZ4VOv+qUfmqCGGl1mqLhoA52oZlb0mrjsnhKpgeUNEs91Z0pd1kvihA3ULGVHiQO2narKSHKkEMulm9VgUyE60s1aWoMQUbpZOWE+kaqs4eLEjdIlZTcFZB0ndc1+lhB1lZrIuk5P2aib1NBpZaL+JaOGIt0ls47SKzLC7CqrlGF6RZ09HGoNy1lYl2aRSWL5GuzqWU1KafRdoRp0iOQEiDzgZPnG6DbldcomadViflnl/cL93tOoVbsOLVM2jylvdWjXolWX1hmfZbGR/wjypDjFLSZIRov09BgYmtUqPQPlQrPapecLgTIy0jMgPKtTeob2zWtrGH3xvjUkPCtNg/tm1rjwrMa+mdUkPd3hWbH0jArPGiU9ufCsNNWFZ40wpwn+62/66R2RUtoso1OB34tnLOcy7YB1fUdc9e0q3yru8PGM773vXsuZ5YIZX+5xmHwHGVvlrGPN6ZSiP1smOsMMde40wKv2VmwPPVXNut4sVpUreZiLBHi0qln/VQeI/LTMYXpsJtFiclUN+5HVZazim+Ky+7sAvxWnvjXrJFneVtLWLyPJu9K3cXLWeOlbMTlrIelbMDlrLenrjEQOtIF+fuI9xRp9ZBFp6+b6WT8RrxEpdK64BuvHgDk+vUy+b5hYk6zfyfs051gRoNO1usU12WWRWL73/MMEy9pMi9qIrR4ZpV16Rrvduxazmy1FSvuFXRkqTnE7m2kdb5U8xGjLw/spRr1uTov4uOgQE+0N/DvFrG/Jt7i/FzwxbA9kDanhf2w+t4V97G8lrT7wc08aA2QNUkuTfW/KimT01wdlfK4yEw030VfT0RtZbzjeMprNq8m8tnSTASrTLti64oBNdpmMQm0eEwvfPwRbUBywG5TzjPCsdwk3IeAXjQblLCoXnDVeoAz6SfJNk5TTzytCNZk/POtTSV40NwOFWzw86wNJRpubpXsn60NJFlHeqlYRbslqZm2jnEZ3qcSKgm0kTli3zZVS7y/iivZTweYXJ26Y+RTbV1zh3hYkgyFGSTKPfRVbRqWWVReaxYeSLarYv1Qqsmh1s95S7G+eEWK0f3jYKTbV6bOwepjfhtafsvUsqrQvrGC8YhmnO9cSCk3yuY984F1vesdHYhWJ5FvASlacshUsajFt2mUM9pqzvKGcyNJW0arTKN1GGGzQlH0tXwLDgQTurS8eIQAAAABJRU5ErkJggg==';
+ const IMAGE_PREFETCH_URL = `${IMAGE1}?r=1&t=${Date.now()}`;
+-const prefetchTask = Image.prefetch(IMAGE_PREFETCH_URL);
++// The RN Tester is also used offline. Consume the expected prefetch rejection
++// so an unavailable fixture does not surface as an unhandled promise in LogBox.
++const prefetchTask = Image.prefetch(IMAGE_PREFETCH_URL).catch(() => false);
+ // Remote JPEG (RN OSS test fixture) used by the progressive example. Trusted by
+ // the API 24 Android CI emulator and reachable on both platforms.
+ const LARGE_JPEG =
+diff --git a/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js b/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js
+index 39b5d7c7c0..3d0c9b9f76 100644
+--- a/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js
++++ b/packages/rn-tester/js/examples/Performance/PerformanceComparisonExample.js
+@@ -120,14 +120,18 @@ const examples: Array<RNTesterModuleExample> = Object.keys(
+ ).map(name => {
+   const example = performanceComparisonExamples[name];
+   return {
++    name,
+     title: example.title,
+     description: example.description,
+-    render: () => (
+-      <PerfExampleWrapper
+-        badExample={<example.Bad />}
+-        goodExample={<example.Good />}
+-      />
+-    ),
++    render: () =>
++      name.startsWith('Fabric') || name === 'TextHeavyFlatListExample' ? (
++        <example.Bad />
++      ) : (
++        <PerfExampleWrapper
++          badExample={<example.Bad />}
++          goodExample={<example.Good />}
++        />
++      ),
+   };
+ });
+ 
+diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorPureUpdateDiagnosticExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorPureUpdateDiagnosticExample.js
+new file mode 100644
+index 0000000000..b15ac9468f
+--- /dev/null
++++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorPureUpdateDiagnosticExample.js
+@@ -0,0 +1,114 @@
++/**
++ * @flow strict-local
++ * @format
++ */
++
++'use strict';
++
++import * as React from 'react';
++import {StyleSheet, Text, View} from 'react-native';
++
++const ITEM_COUNT = 180;
++const COMMIT_COUNT = 30;
++
++function FabricColorPureUpdateDiagnostic(): React.Node {
++  const [commit, setCommit] = React.useState(0);
++  const nextCommit = React.useRef(1);
++  const completedCommit = React.useRef(0);
++  const submittedAt = React.useRef({});
++  const totalLatency = React.useRef(0);
++  const timer = React.useRef<?IntervalID>(null);
++
++  React.useEffect(() => {
++    submittedAt.current[1] = global.performance.now();
++    console.log(
++      `RNXPureColor: submit id=1 t=${submittedAt.current[1].toFixed(2)}`,
++    );
++    setCommit(1);
++    return () => {
++      if (timer.current != null) clearTimeout(timer.current);
++    };
++  }, []);
++
++  // In the UI-thread renderer, completeRoot applies the native batch
++  // synchronously before React runs layout effects. This provides a per-commit
++  // completion signal without a changing onLayout sentinel or any extra host
++  // view in the committed tree.
++  React.useLayoutEffect(() => {
++    if (commit === 0 || completedCommit.current >= commit) return;
++
++    completedCommit.current = commit;
++    const completedAt = global.performance.now();
++    const submitTime = submittedAt.current[commit];
++    if (submitTime == null) return;
++    const latency = completedAt - submitTime;
++    totalLatency.current += latency;
++    console.log(
++      `RNXPureColor: commit id=${commit} submit=${submitTime.toFixed(2)} ` +
++        `complete=${completedAt.toFixed(2)} latency=${latency.toFixed(2)}`,
++    );
++
++    if (commit === COMMIT_COUNT) {
++      console.log(
++        `RNXPureColor: end duration=${totalLatency.current.toFixed(2)} ` +
++          `commits=${COMMIT_COUNT} completed=layout-effect-after-commitRoot`,
++      );
++      return;
++    }
++
++    nextCommit.current = commit + 1;
++    timer.current = setTimeout(() => {
++      const next = nextCommit.current;
++      submittedAt.current[next] = global.performance.now();
++      console.log(
++        `RNXPureColor: submit id=${next} t=${submittedAt.current[next].toFixed(2)}`,
++      );
++      setCommit(next);
++    }, 0);
++  }, [commit]);
++
++  const items = [];
++  for (let index = 0; index < ITEM_COUNT; index += 1) {
++    items.push(
++      <View
++        key={index}
++        style={[
++          styles.item,
++          {
++            backgroundColor: (index + commit) % 2 === 0 ? '#4f7cac' : '#9ec5ab',
++          },
++        ]}>
++        <Text style={styles.label}>{`${index}`}</Text>
++      </View>,
++    );
++  }
++
++  return (
++    <View style={styles.container}>
++      <Text style={styles.title}>Pure color update diagnostic</Text>
++      <View style={styles.grid}>{items}</View>
++    </View>
++  );
++}
++
++const styles = StyleSheet.create({
++  container: {flex: 1, padding: 8, backgroundColor: '#101418'},
++  title: {fontSize: 16, fontWeight: 'bold', marginBottom: 8},
++  grid: {flexDirection: 'row', flexWrap: 'wrap'},
++  item: {
++    width: 58,
++    height: 38,
++    margin: 2,
++    justifyContent: 'center',
++    alignItems: 'center',
++  },
++  label: {fontSize: 9, color: 'white'},
++});
++
++export default {
++  title: 'Fabric Pure Color Update Diagnostic',
++  description:
++    'Same 180 color-changing views without a replacing onLayout sentinel.',
++  Bad: FabricColorPureUpdateDiagnostic,
++  Good: FabricColorPureUpdateDiagnostic,
++};
+diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorStressExample.js
+new file mode 100644
+index 0000000000..e19853afba
+--- /dev/null
++++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricColorStressExample.js
+@@ -0,0 +1,9 @@
++import * as React from 'react';
++import {FabricCommitStress} from './FabricCommitStressExample';
++
++export default {
++  title: 'Fabric Color-Only Stress',
++  description: 'Same mount workload with stable text and color updates.',
++  Bad: () => <FabricCommitStress variant="color" />,
++  Good: () => <FabricCommitStress variant="color" />,
++};
+diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricCommitStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricCommitStressExample.js
+new file mode 100644
+index 0000000000..f3c39166a1
+--- /dev/null
++++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricCommitStressExample.js
+@@ -0,0 +1,222 @@
++/**
++ * @flow strict-local
++ * @format
++ */
++
++'use strict';
++
++import * as React from 'react';
++import {StyleSheet, Text, View} from 'react-native';
++
++const ITEM_COUNT = 1000;
++const COMMIT_COUNT = 30;
++
++export function FabricCommitStress({
++  variant = 'full',
++}: {
++  variant?: string,
++}): React.Node {
++  const [commit, setCommit] = React.useState(0);
++  const [result, setResult] = React.useState<?{
++    latencySum: number,
++    wall: number,
++  }>(null);
++  const resultRef = React.useRef(false);
++  const startedAt = React.useRef<?number>(null);
++  const nextCommit = React.useRef(1);
++  const completedCommit = React.useRef(0);
++  const completedCommits = React.useRef({});
++  const submittedAt = React.useRef({});
++  const totalCommitLatency = React.useRef(0);
++  const timer = React.useRef<?IntervalID>(null);
++  const renderStartedAt = global.performance.now();
++
++  React.useEffect(
++    () => () => {
++      if (timer.current != null) {
++        clearTimeout(timer.current);
++      }
++    },
++    [],
++  );
++
++  // Submit each queued update from the preceding commit's layout effect so
++  // React Native timer/display cadence does not throttle the benchmark.
++  const submitQueuedCommit = React.useCallback(() => {
++    const next = nextCommit.current++;
++    if (next > COMMIT_COUNT) {
++      return;
++    }
++    submittedAt.current[next] = global.performance.now();
++    console.log(
++      `RNXStress: submit id=${next} t=${submittedAt.current[next].toFixed(2)}`,
++    );
++    setCommit(next);
++  }, []);
++
++  // In queued mode, submit the next distinct React commit as soon as the
++  // preceding React commit has reached its layout effects. A timer here makes
++  // this benchmark wait for React Native's timer/display cadence between
++  // commits, which prevents the worker pool from ever receiving a backlog.
++  React.useLayoutEffect(() => {
++    if (variant === 'queued' && commit > 0 && commit < COMMIT_COUNT) {
++      submitQueuedCommit();
++    }
++  }, [commit, submitQueuedCommit, variant]);
++
++  const onCommitMounted = React.useCallback(
++    (mountedCommit: number) => {
++      // Finish the initial tree before timing updates. Its async mount can
++      // otherwise overlap update 1 and inflate that commit's latency.
++      if (startedAt.current == null) {
++        if (mountedCommit !== 0) {
++          return;
++        }
++        startedAt.current = global.performance.now();
++        console.log(`RNXStress: start t=${startedAt.current.toFixed(2)}`);
++        if (variant === 'queued') {
++          submitQueuedCommit();
++          return;
++        }
++        submittedAt.current[1] = global.performance.now();
++        console.log(
++          `RNXStress: submit id=1 t=${submittedAt.current[1].toFixed(2)}`,
++        );
++        setCommit(1);
++        return;
++      }
++      if (variant === 'queued') {
++        // Acknowledging the final sentinel gives the queued and synchronous
++        // builds the same end-to-end endpoint; intermediate native events can
++        // legitimately arrive after a newer sentinel has replaced them.
++        if (mountedCommit === COMMIT_COUNT && !resultRef.current) {
++          const completedAt = global.performance.now();
++          const wall = completedAt - startedAt.current;
++          resultRef.current = true;
++          console.log(
++            `RNXStress: end wall=${wall.toFixed(2)} commits=${COMMIT_COUNT} completed=mount variant=${variant}`,
++          );
++        }
++        return;
++      }
++      // Worker layout events can reach JS after a later result is ready. Count
++      // only the sentinel created by the update whose mount is being measured.
++      if (
++        mountedCommit <= 0 ||
++        mountedCommit > COMMIT_COUNT ||
++        completedCommits.current[mountedCommit]
++      ) {
++        return;
++      }
++      const commitId = mountedCommit;
++      const submitTime = submittedAt.current[commitId];
++      if (submitTime == null) {
++        return;
++      }
++      completedCommits.current[commitId] = true;
++      completedCommit.current += 1;
++      const completedAt = global.performance.now();
++      const latency = completedAt - submitTime;
++      totalCommitLatency.current += latency;
++      console.log(
++        `RNXStress: commit id=${commitId} submit=${submitTime.toFixed(2)} complete=${completedAt.toFixed(2)} latency=${latency.toFixed(2)}`,
++      );
++      if (completedCommit.current === COMMIT_COUNT) {
++        const wall = completedAt - startedAt.current;
++        const latencySum = totalCommitLatency.current;
++        resultRef.current = true;
++        setResult({latencySum, wall});
++        console.log(
++          `RNXStress: end latencySum=${latencySum.toFixed(2)} wall=${wall.toFixed(2)} commits=${COMMIT_COUNT} completed=mount variant=${variant}`,
++        );
++        return;
++      }
++      if (variant !== 'queued') {
++        nextCommit.current += 1;
++        timer.current = setTimeout(() => {
++          submittedAt.current[nextCommit.current] = global.performance.now();
++          console.log(
++            `RNXStress: submit id=${nextCommit.current} t=${submittedAt.current[nextCommit.current].toFixed(2)}`,
++          );
++          setCommit(nextCommit.current);
++        }, 0);
++      }
++    },
++    [submitQueuedCommit, variant],
++  );
++
++  const items = [];
++  for (let index = 0; index < ITEM_COUNT; index += 1) {
++    items.push(
++      <View
++        key={index}
++        style={[
++          styles.item,
++          variant === 'text'
++            ? styles.item
++            : {
++                backgroundColor:
++                  (index + commit) % 2 === 0 ? '#4f7cac' : '#9ec5ab',
++              },
++        ]}>
++        <Text style={styles.label}>
++          {variant === 'color' ? `${index}` : `${commit}:${index}`}
++        </Text>
++      </View>,
++    );
++  }
++
++  if (commit > 0) {
++    const renderEndedAt = global.performance.now();
++    console.log(
++      `RNXStress: render id=${commit} start=${renderStartedAt.toFixed(2)} end=${renderEndedAt.toFixed(2)} duration=${(renderEndedAt - renderStartedAt).toFixed(2)}`,
++    );
++  }
++
++  return (
++    <View style={styles.container}>
++      <Text style={styles.title}>Fabric commit stress</Text>
++      {result != null ? (
++        <Text
++          accessibilityLabel={`${COMMIT_COUNT} commits mounted, latency sum ${result.latencySum.toFixed(1)} ms, wall ${result.wall.toFixed(1)} ms`}
++          style={styles.result}>
++          {`${COMMIT_COUNT} commits mounted · latency sum ${result.latencySum.toFixed(1)} ms · wall ${result.wall.toFixed(1)} ms`}
++        </Text>
++      ) : null}
++      <View
++        key={`rnx-commit-sentinel-${commit}`}
++        accessibilityLabel={`rnx-commit-${commit}`}
++        onLayout={() => onCommitMounted(commit)}
++        style={{width: 1 + (commit % 2), height: 1}}
++      />
++      <View style={styles.grid}>{items}</View>
++    </View>
++  );
++}
++
++const title = 'Fabric Commit Stress';
++const description = 'Deterministic large mount and repeated commit workload.';
++
++const styles = StyleSheet.create({
++  // Keep the unfilled text-only variant legible without changing its per-item
++  // props or the benchmark workload.
++  container: {flex: 1, padding: 8, backgroundColor: '#101418'},
++  title: {fontSize: 16, fontWeight: 'bold', marginBottom: 8},
++  result: {fontSize: 12, color: 'white', marginBottom: 8},
++  grid: {flexDirection: 'row', flexWrap: 'wrap'},
++  item: {
++    width: 58,
++    height: 38,
++    margin: 2,
++    justifyContent: 'center',
++    alignItems: 'center',
++  },
++  label: {fontSize: 9, color: 'white'},
++});
++
++export default {
++  title,
++  description,
++  Bad: FabricCommitStress,
++  Good: FabricCommitStress,
++};
+diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricQueuedCommitStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricQueuedCommitStressExample.js
+new file mode 100644
+index 0000000000..160fc49c67
+--- /dev/null
++++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricQueuedCommitStressExample.js
+@@ -0,0 +1,20 @@
++/**
++ * @flow strict-local
++ * @format
++ */
++
++'use strict';
++
++import * as React from 'react';
++import {FabricCommitStress} from './FabricCommitStressExample';
++
++const title = 'Fabric Queued Commit Stress';
++const description =
++  'Submits 30 direct renderer commits without waiting for native layout acknowledgements.';
++
++export default {
++  title,
++  description,
++  Bad: () => <FabricCommitStress variant="queued" />,
++  Good: () => <FabricCommitStress variant="queued" />,
++};
+diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricTextStressExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricTextStressExample.js
+new file mode 100644
+index 0000000000..094a4ac263
+--- /dev/null
++++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/FabricTextStressExample.js
+@@ -0,0 +1,9 @@
++import * as React from 'react';
++import {FabricCommitStress} from './FabricCommitStressExample';
++
++export default {
++  title: 'Fabric Text-Only Stress',
++  description: 'Same mount workload with stable colors and text updates.',
++  Bad: () => <FabricCommitStress variant="text" />,
++  Good: () => <FabricCommitStress variant="text" />,
++};
+diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/TextHeavyFlatListExample.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/TextHeavyFlatListExample.js
+new file mode 100644
+index 0000000000..40d1299bb3
+--- /dev/null
++++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/TextHeavyFlatListExample.js
+@@ -0,0 +1,152 @@
++/**
++ * @flow strict-local
++ * @format
++ */
++
++'use strict';
++
++import * as React from 'react';
++import {FlatList, StyleSheet, Text, View} from 'react-native';
++
++const ITEM_COUNT = 600;
++const DATA = Array.from({length: ITEM_COUNT}, (_, index) => ({
++  id: String(index),
++  title: `Everyday text item ${index + 1}`,
++  body:
++    `This is plain paragraph text in a virtualized list. Item ${index + 1} ` +
++    'contains ordinary words that wrap naturally to the available width, as ' +
++    'they do in a typical feed or settings screen.',
++}));
++
++const VIEWABILITY_CONFIG = {itemVisiblePercentThreshold: 10};
++
++function TextRow({
++  item,
++}: {
++  item: {id: string, title: string, body: string},
++}): React.Node {
++  return (
++    <View style={styles.row}>
++      <Text style={styles.title}>{item.title}</Text>
++      <Text style={styles.body}>{item.body}</Text>
++    </View>
++  );
++}
++
++function TextHeavyFlatListExample(): React.Node {
++  const scrollStartedAt = React.useRef(0);
++  const lastScrollAt = React.useRef(0);
++  const scrollEventCount = React.useRef(0);
++  const largestScrollEventGap = React.useRef(0);
++  const seenItems = React.useRef(new Set<string>());
++
++  const onScrollBeginDrag = React.useCallback(() => {
++    scrollStartedAt.current = global.performance.now();
++    lastScrollAt.current = 0;
++    scrollEventCount.current = 0;
++    largestScrollEventGap.current = 0;
++    seenItems.current.clear();
++    console.log(
++      `RNXTextList: scroll-start t=${scrollStartedAt.current.toFixed(2)}`,
++    );
++  }, []);
++
++  const onScroll = React.useCallback(
++    (event: {nativeEvent: {contentOffset: {y: number}}}) => {
++      const now = global.performance.now();
++      if (lastScrollAt.current !== 0) {
++        largestScrollEventGap.current = Math.max(
++          largestScrollEventGap.current,
++          now - lastScrollAt.current,
++        );
++      }
++      lastScrollAt.current = now;
++      scrollEventCount.current += 1;
++      // Sample rather than logging each event; detailed renderer timings come
++      // from RNXRendererProfile and RNXDirectMountProfile in profiled releases.
++      if (scrollEventCount.current % 30 === 0) {
++        console.log(
++          `RNXTextList: scroll-sample events=${scrollEventCount.current} ` +
++            `offset=${event.nativeEvent.contentOffset.y.toFixed(0)} ` +
++            `maxEventGap=${largestScrollEventGap.current.toFixed(1)}ms`,
++        );
++      }
++    },
++    [],
++  );
++
++  const onViewableItemsChanged = React.useRef(
++    ({
++      changed,
++    }: {
++      changed: Array<{isViewable?: boolean, item: {id: string}}>,
++    }): void => {
++      for (const token of changed) {
++        if (token.isViewable) {
++          seenItems.current.add(token.item.id);
++        }
++      }
++    },
++  ).current;
++
++  const reportScrollEnd = React.useCallback(() => {
++    const endedAt = global.performance.now();
++    console.log(
++      `RNXTextList: scroll-end duration=${(endedAt - scrollStartedAt.current).toFixed(1)}ms ` +
++        `events=${scrollEventCount.current} uniqueItems=${seenItems.current.size} ` +
++        `maxEventGap=${largestScrollEventGap.current.toFixed(1)}ms`,
++    );
++  }, []);
++
++  return (
++    <FlatList
++      data={DATA}
++      renderItem={({item}) => <TextRow item={item} />}
++      keyExtractor={item => item.id}
++      ListHeaderComponent={
++        <View style={styles.header}>
++          <Text style={styles.headerTitle}>Text-heavy FlatList</Text>
++          <Text style={styles.headerHint}>
++            600 plain-text rows. Swipe and fling to profile text measurement and
++            mounting while rows enter the virtualized window.
++          </Text>
++        </View>
++      }
++      onScrollBeginDrag={onScrollBeginDrag}
++      onScroll={onScroll}
++      onScrollEndDrag={reportScrollEnd}
++      onMomentumScrollEnd={reportScrollEnd}
++      onViewableItemsChanged={onViewableItemsChanged}
++      viewabilityConfig={VIEWABILITY_CONFIG}
++      scrollEventThrottle={16}
++      initialNumToRender={12}
++      maxToRenderPerBatch={8}
++      windowSize={9}
++      removeClippedSubviews
++      style={styles.list}
++    />
++  );
++}
++
++const styles = StyleSheet.create({
++  list: {flex: 1, backgroundColor: '#f7f8fa'},
++  header: {paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12},
++  headerTitle: {fontSize: 18, fontWeight: '600', color: '#17212b'},
++  headerHint: {fontSize: 13, lineHeight: 18, color: '#4a5560', marginTop: 6},
++  row: {
++    paddingHorizontal: 16,
++    paddingVertical: 12,
++    borderBottomWidth: StyleSheet.hairlineWidth,
++    borderBottomColor: '#d9dee3',
++  },
++  title: {fontSize: 15, fontWeight: '500', color: '#17212b'},
++  body: {fontSize: 14, lineHeight: 20, color: '#4a5560', marginTop: 4},
++});
++
++export default {
++  title: 'Text-Heavy FlatList Scroll',
++  description:
++    'Profile plain-text preparation and row mounting during virtualized scrolling.',
++  Bad: TextHeavyFlatListExample,
++  Good: TextHeavyFlatListExample,
++};
+diff --git a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js
+index 15cd8d2674..2d0d1be312 100644
+--- a/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js
++++ b/packages/rn-tester/js/examples/Performance/performanceComparisonExamples/index.js
+@@ -14,3 +14,9 @@ export {default as SetStateInWrongEffectExample} from './SetStateInWrongEffectEx
+ export {default as RenderOffscreenContentExample} from './RenderOffscreenContentExample';
+ export {default as NotMemoizeExpensiveTaskExample} from './NotMemoizeExpensiveTaskExample';
+ export {default as EffectInRenderExample} from './EffectInRenderExample';
++export {default as FabricCommitStressExample} from './FabricCommitStressExample';
++export {default as FabricQueuedCommitStressExample} from './FabricQueuedCommitStressExample';
++export {default as FabricColorStressExample} from './FabricColorStressExample';
++export {default as FabricColorPureUpdateDiagnosticExample} from './FabricColorPureUpdateDiagnosticExample';
++export {default as FabricTextStressExample} from './FabricTextStressExample';
++export {default as TextHeavyFlatListExample} from './TextHeavyFlatListExample';
+diff --git a/packages/rn-tester/js/utils/RNTesterList.android.js b/packages/rn-tester/js/utils/RNTesterList.android.js
+index e3c5005ea0..b8eed372a8 100644
+--- a/packages/rn-tester/js/utils/RNTesterList.android.js
++++ b/packages/rn-tester/js/utils/RNTesterList.android.js
+@@ -380,17 +380,11 @@ const APIs: Array<RNTesterModuleInfo> = (
+       category: 'Basic',
+       module: require('../examples/TurboModule/TurboCxxModuleExample'),
+     },
+-    // Basic check to detect the availability of the IntersectionObserver API.
+-    // $FlowExpectedError[cannot-resolve-name]
+-    ...(typeof IntersectionObserver === 'function'
+-      ? [
+-          {
+-            key: 'IntersectionObserver',
+-            category: 'UI',
+-            module: require('../examples/IntersectionObserver/IntersectionObserverIndex'),
+-          },
+-        ]
+-      : []),
++    {
++      key: 'IntersectionObserver',
++      category: 'UI',
++      module: require('../examples/IntersectionObserver/IntersectionObserverIndex'),
++    },
+     // Basic check to detect the availability of the MutationObserver API.
+     // $FlowExpectedError[cannot-resolve-name]
+     ...(typeof MutationObserver === 'function'

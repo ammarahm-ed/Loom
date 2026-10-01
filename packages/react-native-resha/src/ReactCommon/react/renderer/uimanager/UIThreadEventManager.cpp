@@ -1,0 +1,203 @@
+/* Copyright (c) Meta Platforms, Inc. and affiliates. */
+
+#include "UIThreadEventManager.h"
+
+#include <react/renderer/core/DynamicEventPayload.h>
+
+#include <unordered_set>
+#include <utility>
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
+
+namespace facebook::react {
+
+UIThreadEventManager::UIThreadEventManager(
+    EventDispatcher::Shared eventDispatcher)
+    : eventDispatcher_(std::move(eventDispatcher)) {}
+
+UIThreadEventManager::~UIThreadEventManager() {
+  std::unordered_set<uint64_t> ownedTargets;
+  {
+    std::lock_guard lock(targetsMutex_);
+    ownedTargets.reserve(targets_.size());
+    for (const auto& entry : targets_) {
+      ownedTargets.insert(entry.first);
+    }
+    targets_.clear();
+  }
+  std::lock_guard lock(pointerCaptureMutex_);
+  for (auto iterator = pointerCaptureTargets_.begin();
+       iterator != pointerCaptureTargets_.end();) {
+    if (ownedTargets.count(iterator->second) != 0) {
+      iterator = pointerCaptureTargets_.erase(iterator);
+    } else {
+      ++iterator;
+    }
+  }
+}
+
+std::unordered_map<uint64_t, uint64_t>
+    UIThreadEventManager::pointerCaptureTargets_;
+std::mutex UIThreadEventManager::pointerCaptureMutex_;
+
+uint64_t UIThreadEventManager::key(SurfaceId surfaceId, Tag tag) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(surfaceId)) << 32) |
+      static_cast<uint32_t>(tag);
+}
+
+void UIThreadEventManager::registerTarget(
+    SurfaceId surfaceId,
+    Tag tag,
+    InstanceHandle::Shared instanceHandle) {
+  if (instanceHandle == nullptr) {
+    return;
+  }
+  auto target = std::make_shared<EventTarget>(instanceHandle, surfaceId);
+  target->setEnabled(true);
+  std::lock_guard lock(targetsMutex_);
+  targets_[key(surfaceId, tag)] = std::move(target);
+}
+
+void UIThreadEventManager::unregisterTarget(SurfaceId surfaceId, Tag tag) {
+  const auto targetKey = key(surfaceId, tag);
+  {
+    std::lock_guard lock(targetsMutex_);
+    targets_.erase(targetKey);
+  }
+  std::lock_guard captureLock(pointerCaptureMutex_);
+  for (auto iterator = pointerCaptureTargets_.begin();
+       iterator != pointerCaptureTargets_.end();) {
+    if (iterator->second == targetKey) {
+      iterator = pointerCaptureTargets_.erase(iterator);
+    } else {
+      ++iterator;
+    }
+  }
+}
+
+void UIThreadEventManager::clearSurface(SurfaceId surfaceId) {
+  std::lock_guard lock(pointerCaptureMutex_);
+  const auto surfacePrefix =
+      static_cast<uint64_t>(static_cast<uint32_t>(surfaceId)) << 32;
+  for (auto iterator = pointerCaptureTargets_.begin();
+       iterator != pointerCaptureTargets_.end();) {
+    const auto captureKey = iterator->first;
+    const auto targetKey = iterator->second;
+    if ((captureKey & 0xffffffff00000000ULL) == surfacePrefix ||
+        (targetKey & 0xffffffff00000000ULL) == surfacePrefix) {
+      iterator = pointerCaptureTargets_.erase(iterator);
+    } else {
+      ++iterator;
+    }
+  }
+}
+
+void UIThreadEventManager::setPointerCapture(
+    SurfaceId surfaceId,
+    Tag tag,
+    int32_t pointerId) {
+  std::lock_guard lock(pointerCaptureMutex_);
+  pointerCaptureTargets_[key(surfaceId, pointerId)] = key(surfaceId, tag);
+}
+
+void UIThreadEventManager::releasePointerCapture(
+    SurfaceId surfaceId,
+    Tag tag,
+    int32_t pointerId) {
+  const auto captureKey = key(surfaceId, pointerId);
+  std::lock_guard lock(pointerCaptureMutex_);
+  const auto iterator = pointerCaptureTargets_.find(captureKey);
+  if (iterator != pointerCaptureTargets_.end() &&
+      iterator->second == key(surfaceId, tag)) {
+    pointerCaptureTargets_.erase(iterator);
+  }
+}
+
+bool UIThreadEventManager::hasPointerCapture(
+    SurfaceId surfaceId,
+    Tag tag,
+    int32_t pointerId) {
+  std::lock_guard lock(pointerCaptureMutex_);
+  const auto capture = pointerCaptureTargets_.find(key(surfaceId, pointerId));
+  return capture != pointerCaptureTargets_.end() &&
+      capture->second == key(surfaceId, tag);
+}
+
+void UIThreadEventManager::dispatch(
+    SurfaceId surfaceId,
+    Tag tag,
+    const std::string& type,
+    folly::dynamic payload,
+    RawEvent::Category category,
+    bool unique,
+    HighResTimeStamp eventTimestamp,
+    bool synchronous) {
+  if (payload.isObject()) {
+    const auto* pointerId = payload.get_ptr("pointerId");
+    if (pointerId != nullptr && pointerId->isNumber()) {
+      std::lock_guard lock(pointerCaptureMutex_);
+      const auto capture = pointerCaptureTargets_.find(
+          key(surfaceId, static_cast<int32_t>(pointerId->asInt())));
+      if (capture != pointerCaptureTargets_.end()) {
+        tag = static_cast<Tag>(static_cast<uint32_t>(capture->second));
+      }
+    }
+  }
+  SharedEventTarget target;
+  {
+    std::lock_guard lock(targetsMutex_);
+    auto iterator = targets_.find(key(surfaceId, tag));
+    if (iterator == targets_.end()) {
+#if RN_PROFILE_UI_THREAD_RENDERER && defined(__ANDROID__)
+      if (type == "topTouchStart" || type == "topTouchEnd" ||
+          type == "topTouchCancel") {
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            "RNXDirectEvent",
+            "missing-target surface=%d tag=%d type=%s targets=%zu",
+            static_cast<int>(surfaceId),
+            static_cast<int>(tag),
+            type.c_str(),
+            targets_.size());
+      }
+#endif
+      return;
+    }
+    target = iterator->second;
+  }
+  if (eventDispatcher_ == nullptr) {
+    return;
+  }
+#if RN_PROFILE_UI_THREAD_RENDERER && defined(__ANDROID__)
+  if (type == "topTouchStart" || type == "topTouchEnd" ||
+      type == "topTouchCancel") {
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        "RNXDirectEvent",
+        "enqueue surface=%d tag=%d type=%s sync=%d",
+        static_cast<int>(surfaceId),
+        static_cast<int>(tag),
+        type.c_str(),
+        synchronous);
+  }
+#endif
+  RawEvent event(
+      type,
+      DynamicEventPayload::create(std::move(payload)),
+      target,
+      std::weak_ptr<const ShadowNodeFamily>{},
+      category,
+      unique,
+      eventTimestamp);
+  if (unique) {
+    eventDispatcher_->dispatchUniqueEvent(std::move(event));
+  } else {
+    eventDispatcher_->dispatchEvent(std::move(event));
+  }
+  if (synchronous) {
+    eventDispatcher_->experimental_flushSync();
+  }
+}
+
+} // namespace facebook::react
