@@ -114,9 +114,6 @@ Notes:
   `build.ninja`; push those, plus `libc++_shared.so` from the NDK, beside the
   executable.
 
-  It is an Android binary, so run it on a device or emulator (`adb push` then
-  `adb shell`), not on the host.
-
 Confirm the switch reached the build:
 
 ```sh
@@ -147,6 +144,44 @@ RCT_UI_THREAD_RENDERER_IOS=1 RCT_UI_THREAD_RENDERER_WORKER_IOS=1 xcodebuild ... 
 
 `RCT_UI_THREAD_RENDERER_WORKER_IOS=1` without `RCT_UI_THREAD_RENDERER_IOS=1`
 aborts during `pod install`.
+
+## Smoke test
+
+`App.tsx` renders `ReshaSmokeTest`, which is meant to be exercised on a device.
+It puts the three switches under load — a 120-step `requestAnimationFrame` burst,
+a 60 Hz `setInterval` ticker, a native-driver `Animated.loop`, a 120-row
+`FlatList` that can be remounted, and per-row `Pressable`s counting their own
+taps — and logs everything with a `[resha-smoke]` prefix.
+
+Its banner reads the switches from `com.facebook.react.BuildConfig`, through the
+`ReshaBuildConfig` native module (`ReshaBuildConfigModule.kt` /
+`ReshaBuildConfigPackage.kt`, registered in `MainApplication.kt`): green when all
+three are on, grey when all are off, amber when mixed, with the raw values
+underneath and the same line in `logcat` at mount. It deliberately does not read
+`gradle.properties` — the all-on build passes the switches as `-P` flags, so only
+the compiled-in values describe the binary that is actually installed.
+
+```sh
+# build one combo, install it, and let the banner say which one it is
+cd android
+./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a \
+  -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PUI_THREAD_RENDERER_WORKER=true
+adb install -r -t app/build/outputs/apk/debug/app-debug.apk
+```
+
+`adb shell input tap X Y` takes **physical** pixels and delivers them 1:1, while
+`nativeEvent.pageX/pageY` in JS are dp, so multiply by `density/160` (2.625 at
+420 dpi) to line the two up. Every press logs (`press +1`, `press row N at x,y`),
+so an injected tap can be verified from `logcat` alone:
+
+```sh
+adb logcat -c
+adb shell am start -n com.reshatestapp/.MainActivity
+adb logcat -d | grep -a resha-smoke     # mounted, build switches …, press …, burst …
+```
+
+`uiautomator dump` is not useful on this screen: the running native-driver
+animation keeps the window busy, so it returns a stale hierarchy from another app.
 
 ## Jest
 

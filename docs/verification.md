@@ -271,13 +271,62 @@ the fork crashes the same way; a sweep of the remaining `std::move(token)` site
 (`submitWorkerJob`, which captures copies first) found no second instance.
 
 After the fix (`BuildId 2ec09dfa…`) the app cold-starts and stays up through the
-burst's 120 commits, the 60 Hz ticker, the list remount and touch input: `count`
-122 after two `+1` taps, rows counting their own taps, the animated box still
-moving, and no crash or `E/` line in `logcat`. Two things this did *not* measure:
-the burst takes 22.1 s for its 120 commits in this debug/dev build, and no
-pristine control was run, so that number is a baseline rather than a comparison —
-the same screen under the switches-off combo is what would say whether the direct
-path costs JS throughput.
+burst's 120 commits, the 60 Hz ticker, the list remount and touch input: rows
+counting their own taps, `press +1` and `press row N at x,y` lines appearing in
+`logcat` for injected taps, the animated box still moving, and no crash or `E/`
+line in `logcat`. The burst takes 22.2 s for its 120 commits in this debug/dev
+build; the switches-off control in the next section times the same burst at
+14.1 s, so on this device the direct path does cost JS throughput.
+
+### Switch matrix on a device (all-off vs all-on)
+
+Fabric is not part of that matrix, because React Native 0.87 no longer lets an app
+turn it off. `ReactRootProjectPlugin` runs `checkLegacyArchProperty` and then sets
+`newArchEnabled`/`react.newArchEnabled` to `true` on every subproject ("We set the
+New Architecture properties to true for all subprojects…"), warning that
+"Setting `newArchEnabled=false` in your `gradle.properties` file is not supported
+anymore since React Native 0.82 … The application will run with the New
+Architecture enabled by default"; iOS says the same from `warn_if_new_arch_disabled`
+in `scripts/react_native_pods.rb`. A build with every Resha switch off still
+reports `"fabric":true` at startup, so the only axis an app can choose is the Resha
+trio.
+
+Each APK now says which side of that matrix it is on. `MainApplication` registers
+`ReshaBuildConfigPackage`, whose module answers `getSwitches()` from
+`com.facebook.react.BuildConfig` (the generated ReactAndroid one) with
+`rnUiThread`/`uiThreadRenderer`/`uiThreadRendererWorker`/`profile`; the smoke screen
+renders them as a banner and logs them at mount. It reads the compiled-in values on
+purpose: the all-on build passes the switches as `-P` flags, so
+`gradle.properties` never reflects them, and only the compiled `BuildConfig` knows
+what the installed binary actually is.
+
+|  | all off | all on |
+| --- | --- | --- |
+| switches | `-P…=false` (gradle.properties default) | `-PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PUI_THREAD_RENDERER_WORKER=true` |
+| APK | 62,821,929 B | 65,155,033 B |
+| `libreactnative.so` | 23,744,888 B, `18a96885…` | 26,077,992 B, `2ec09dfa…` |
+| CMake dir | `.cxx/Debug/2k6k5q13` OFF/OFF/OFF | `.cxx/Debug/6w2c6q30` ON/ON/ON |
+| banner | `UI THREAD OFF / RENDERER OFF / WORKER OFF` | `UI THREAD ON / RENDERER ON / WORKER ON` |
+| JS thread | `ReactNativeJS` pid 13054 tid 13112 | pid 11698 tid 11698 |
+| direct applier | absent from `logcat` | `applyBatchNowInternal` JIT-compiled |
+| burst, 120 commits | 14.1 s | 22.0–22.4 s |
+| crashes | none | none |
+
+Both builds mount, render the 120-row list, take injected taps and stay up; the
+difference is throughput, not correctness. On this device the all-on burst is ~1.6×
+slower because JS shares the UI thread with the committing — the trade the
+architecture makes for rendering directly. One sample for all-off and four for
+all-on, debug/dev bundle, one API 30 device: a baseline, not a benchmark.
+
+Injected input needs care, and the smoke screen now logs every press so a tap can
+be checked without reading pixels. `adb shell input tap X Y` takes physical pixels
+and is delivered 1:1; what JS sees in `nativeEvent.pageX/pageY` is dp, i.e.
+physical ÷ (density/160) = ÷2.625 at 420 dpi. Three taps confirm it: `540 1300` →
+`press row 1 at 206,495`, `540 1900` → `press row 7 at 206,724`, `300 1600` →
+`press row 4 at 114,610` (1300/2.625 = 495.2, 300/2.625 = 114.3). `uiautomator dump`
+is not usable on this screen: the running native-driver animation means the tool
+never sees an idle window, and it returns a stale hierarchy from whatever app
+dumped last.
 
 ## iOS
 
@@ -351,8 +400,8 @@ same working tree produced different patch *files*; `captureRnTester` now passes
   above is arm64-v8a, where the suites pass 85/85).
 - The GitHub Actions workflows themselves have not been executed (no CI runs
   available from this machine).
-- Runtime behaviour is verified on **Android debug builds only** (see the smoke
-  test above, run with all three switches on). Nothing was run with the switches
-  off, in a release build, or on iOS, and no regression test covers the three
-  runtime defects found that way — the `stageNativeProps` move in particular is
-  still only guarded by the fix itself.
+- Runtime behaviour is verified on **Android debug builds only** (the smoke test
+  above, run all-on and all-off). Nothing was run in a release build or on iOS, no
+  regression test covers the three runtime defects found that way — the
+  `stageNativeProps` move in particular is still only guarded by the fix itself —
+  and the all-off/all-on throughput comparison rests on a single all-off sample.
