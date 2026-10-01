@@ -411,12 +411,16 @@ std::shared_ptr<const folly::dynamic> UIThreadRendererBinding::stageNativeProps(
     return nullptr;
   auto payload = std::make_shared<const folly::dynamic>(std::move(props));
   auto sequence = ++nativePropsSequence_;
-  auto& overlay = nativePropsOverlays_[token->surfaceId][tag];
+  // Read the surface before the token is handed to the worker: the operation
+  // takes it by value, so `token` is empty from here on while the completion
+  // callback below still needs the id.
+  const auto surfaceId = token->surfaceId;
+  auto& overlay = nativePropsOverlays_[surfaceId][tag];
   if (overlay.identity != identity)
     overlay.props = folly::dynamic::object();
   for (const auto& item : payload->items())
     overlay.props[item.first] = item.second;
-  overlay.surfaceId = token->surfaceId;
+  overlay.surfaceId = surfaceId;
   overlay.identity = identity;
   overlay.sequence = sequence;
   auto rendererOwner = owner->second;
@@ -426,7 +430,7 @@ std::shared_ptr<const folly::dynamic> UIThreadRendererBinding::stageNativeProps(
         if (rendererOwner->identityOf(tag) == identity)
           rendererOwner->setNativeProps(tag, *payload);
       },
-      [this, surfaceId = token->surfaceId, tag, sequence] {
+      [this, surfaceId, tag, sequence] {
         auto surfaceIt = nativePropsOverlays_.find(surfaceId);
         if (surfaceIt == nativePropsOverlays_.end())
           return;
