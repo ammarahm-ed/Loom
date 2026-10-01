@@ -10,6 +10,7 @@
     "bin",
     "lib",
     "src",
+    "android-tests",
     "integration",
     "overrides.json"
   ],
