@@ -1,0 +1,15 @@
+pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+plugins { id("com.facebook.react.settings") }
+
+// Resha: materialize node_modules/.resha/react-native (= pristine react-native +
+// overrides) and substitute the prebuilt react-android / hermes artifacts with
+// the materialized sources. Gradle allows no other statement before the
+// `plugins {}` block, so this goes immediately after it - and before
+// autolinkLibrariesFromCommand(), which resolves react-native.config.js's
+// reactNativePath and therefore needs the materialized tree to exist.
+apply from: file("../node_modules/react-native-resha/integration/android/resha.settings.gradle")
+
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+rootProject.name = 'ReshaTestApp'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')
