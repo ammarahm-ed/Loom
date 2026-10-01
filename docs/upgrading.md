@@ -146,11 +146,35 @@ Then run the unit and C++ tests from an upstream checkout:
 
 ```sh
 node packages/react-native-resha/bin/resha.js overlay --monorepo ~/Work/react-native
-cd ~/Work/react-native/packages/react-native/ReactAndroid
-./gradlew testDebugUnitTest                       # includes the android-tests overrides
-./gradlew UIThreadRendererCppTests \
-  -PRN_BUILD_CPP_TESTS=true -PUI_THREAD_RENDERER=true -PRN_UI_THREAD=true
+
+# The JVM unit tests, which now include the files from android-tests/:
+(cd ~/Work/react-native/packages/react-native/ReactAndroid && ./gradlew testDebugUnitTest)
+
+# The C++ suites are a CMake target that Gradle does not build (EXCLUDE_FROM_ALL),
+# so configure the build with the tests enabled, then build the target out of the
+# CMake tree Gradle generated:
+(cd ~/Work/react-native/packages/react-native/ReactAndroid && \
+  ./gradlew :ReactAndroid:assembleDebug \
+    -PreactNativeArchitectures=arm64-v8a \
+    -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PRN_BUILD_CPP_TESTS=true)
+
+cxx=$(find ~/Work/react-native/packages/react-native/ReactAndroid/.cxx \
+  -name build.ninja -path '*arm64-v8a*' | head -1)
+cmake --build "$(dirname "$cxx")" --target ui_thread_renderer_tests
 ```
+
+The suites are Android binaries, so run them on a device or emulator. Push the
+executable next to `libjsi.so`, `libfbjni.so` and `libc++_shared.so` from the same
+CMake output directory and run it there:
+
+```sh
+adb push "$(dirname "$cxx")/ui_thread_renderer_tests" /data/local/tmp/
+adb shell "cd /data/local/tmp && LD_LIBRARY_PATH=/data/local/tmp ./ui_thread_renderer_tests"
+```
+
+Expect `85 tests from 3 test suites ran` and `[  PASSED  ] 85 tests` (68 from
+`UIThreadRendererTest`, 7 from `UIThreadRendererPublishTest`, 10 from
+`UIThreadRendererWorkerTest`).
 
 and smoke-test the benchmarks in `packages/rn-tester` (`NativeTextBenchmarkActivity`
 and the direct-renderer screens) from that same checkout.
