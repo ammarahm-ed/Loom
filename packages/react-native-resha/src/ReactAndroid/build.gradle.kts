@@ -802,11 +802,19 @@ react {
 // module to apply the plugin to, so it's codegenDir and reactNativeDir won't be evaluated.
 if (rootProject.name == "react-native-build-from-source") {
   rootProject.extensions.getByType(PrivateReactExtension::class.java).apply {
+    // Resha: the tree is materialized into <app>/node_modules/.resha/react-native rather
+    // than installed as <app>/node_modules/react-native, so the monorepo-relative
+    // guesses below resolve to .resha/react-native-codegen, which does not exist.
+    // Resolve the published package the way Node does (walking node_modules up to the
+    // app root), and keep upstream's guesses as the fallback.
     // We try to guess where codegen lives. Generally is inside
     // node_modules/@react-native/codegen. If the file is not existing, we
     // fallback to ../react-native-codegen (used for hello-world app).
+    val codegenFromNodeModules = findNodeModulePath(rootDir, "@react-native/codegen")
     codegenDir =
-        if (file("$rootDir/../@react-native/codegen").exists()) {
+        if (codegenFromNodeModules != null) {
+          file(codegenFromNodeModules)
+        } else if (file("$rootDir/../@react-native/codegen").exists()) {
           file("$rootDir/../@react-native/codegen")
         } else {
           file("$rootDir/../react-native-codegen")
