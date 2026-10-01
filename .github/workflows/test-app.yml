@@ -1,0 +1,193 @@
+name: test app
+
+# Builds apps/resha-test-app from the materialized sources, over the whole switch
+# matrix. This is the job that proves the out-of-tree model end to end: react-native
+# is never taken from prebuilt binaries, and every combination of the Resha
+# switches has to compile and link.
+#
+# A from-source React Native build compiles Hermes and all of ReactAndroid, so the
+# full matrix is expensive. Pushes and PRs build the `off` (stock upstream)
+# configuration; the nightly schedule and manual dispatches build every
+# combination.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: Build every switch combination
+        type: boolean
+        default: true
+
+concurrency:
+  group: test-app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # One ABI: the point is that the switched code compiles and links, not that every
+  # device ABI is packaged.
+  REACT_NATIVE_ARCHITECTURES: arm64-v8a
+  # RN 0.87's default NDK; also what libs.versions.ndkVersion resolves to.
+  NDK_VERSION: 27.1.12297006
+  CMAKE_VERSION: 3.22.1
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: off
+            switches: ''
+          - name: ui-thread
+            switches: '-PRN_UI_THREAD=true'
+          - name: ui-thread-renderer
+            switches: '-PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true'
+          - name: ui-thread-renderer-worker
+            switches: '-PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PUI_THREAD_RENDERER_WORKER=true'
+    name: android (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK and CMake
+        run: sdkmanager "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION"
+
+      - name: Install app dependencies
+        working-directory: apps/resha-test-app
+        run: npm install --no-audit --no-fund
+
+      - name: Validate and materialize
+        working-directory: apps/resha-test-app
+        run: |
+          node node_modules/react-native-resha/bin/resha.js validate
+          node node_modules/react-native-resha/bin/resha.js materialize
+
+      # Every combination must be skipped unless the matrix is requested in full.
+      - name: Skip non-default combinations on push/PR
+        id: gate
+        run: |
+          if [ "${{ matrix.name }}" = "off" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_matrix }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: pass full_matrix=true via workflow_dispatch, or wait for the nightly run."
+          fi
+
+      - name: Assemble debug APK
+        if: steps.gate.outputs.run == 'true'
+        working-directory: apps/resha-test-app/android
+        run: |
+          ./gradlew :app:assembleDebug \
+            -PreactNativeArchitectures="$REACT_NATIVE_ARCHITECTURES" \
+            ${{ matrix.switches }} \
+            --console=plain
+
+      # Proves the materialized tree (not node_modules/react-native) was built, and
+      # that the switches reached both halves of the build.
+      - name: Check the switches reached the build
+        if: steps.gate.outputs.run == 'true'
+        working-directory: apps/resha-test-app
+        run: |
+          set -eu
+          build_config=$(find node_modules/.resha/react-native/ReactAndroid/build/generated -name BuildConfig.java -path '*com/facebook/react/*' | head -1)
+          echo "BuildConfig: $build_config"
+          grep -E 'RN_UI_THREAD|UI_THREAD_RENDERER' "$build_config"
+          cmake_cache=$(find node_modules/.resha/react-native/ReactAndroid/.cxx -name CMakeCache.txt | head -1)
+          echo "CMakeCache: $cmake_cache"
+          grep -E '^(RN_UI_THREAD|UI_THREAD_RENDERER|UI_THREAD_RENDERER_WORKER):BOOL' "$cmake_cache"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          name: app-debug-${{ matrix.name }}
+          path: apps/resha-test-app/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # RN_UI_THREAD is Android-only: on iOS the JS runtime already has its own
+          # thread, so the interesting axis is the direct renderer and its worker.
+          - name: off
+            env: ''
+          - name: renderer
+            env: 'RCT_UI_THREAD_RENDERER_IOS=1'
+          - name: renderer-worker
+            env: 'RCT_UI_THREAD_RENDERER_IOS=1 RCT_UI_THREAD_RENDERER_WORKER_IOS=1'
+    name: ios (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install app dependencies
+        working-directory: apps/resha-test-app
+        run: npm install --no-audit --no-fund
+
+      - name: Validate and materialize
+        working-directory: apps/resha-test-app
+        run: |
+          node node_modules/react-native-resha/bin/resha.js validate
+          node node_modules/react-native-resha/bin/resha.js materialize
+
+      - name: Gate non-default combinations
+        id: gate
+        run: |
+          if [ "${{ matrix.name }}" = "off" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_matrix }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install pods
+        if: steps.gate.outputs.run == 'true'
+        working-directory: apps/resha-test-app/ios
+        run: |
+          bundle install
+          bundle exec pod install
+
+      # RCT_USE_PREBUILT_RNCORE=0 is forced by integration/ios/resha_pods.rb, so this
+      # really does compile React-Core from the materialized tree.
+      - name: Build for the simulator
+        if: steps.gate.outputs.run == 'true'
+        working-directory: apps/resha-test-app/ios
+        run: |
+          ${{ matrix.env }} xcodebuild \
+            -workspace ReshaTestApp.xcworkspace \
+            -scheme ReshaTestApp \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            build
