@@ -1,0 +1,42 @@
+# Dependencies. apps/resha-test-app keeps its own node_modules on purpose: the
+# integration helpers and `resha materialize` are written against <app>/node_modules.
+node_modules/
+
+# Materialized react-native + Resha overrides, built by `resha materialize`.
+.resha/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.iml
+
+# Gradle / Android
+.gradle/
+local.properties
+.cxx/
+.kotlin/
+*.hprof
+build/
+
+# CocoaPods / iOS
+Pods/
+vendor/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Metro
+.metro-health-check*
+
+# Test output
+coverage/
+reports/
