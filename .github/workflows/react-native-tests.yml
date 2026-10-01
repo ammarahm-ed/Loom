@@ -77,6 +77,11 @@ jobs:
       - name: Run the unit tests
         working-directory: rn
         run: |
+          # The monorepo root build.gradle.kts turns an exported ANDROID_NDK into an
+          # explicit ndkPath (ReactAndroid prefers it over the catalog version),
+          # which trips AGP's CXX1100 check when the SDK's NDK is symlinked. See
+          # docs/verification.md.
+          unset ANDROID_NDK || true
           ./gradlew :packages:react-native:ReactAndroid:testDebugUnitTest \
             $RESHA_SWITCHES \
             --console=plain
@@ -128,25 +133,37 @@ jobs:
         working-directory: rn
         run: yarn install
 
-      # x86_64 so the suites can run on the emulator below.
+      # x86_64 so the suites can run on the emulator below. The monorepo has a
+      # single gradlew at its root, so the build runs from there and the project
+      # path carries the prefix.
       - name: Configure and build the native libraries with the tests enabled
-        working-directory: rn/packages/react-native/ReactAndroid
+        working-directory: rn
         run: |
+          unset ANDROID_NDK || true
           ./gradlew :packages:react-native:ReactAndroid:assembleDebug \
             -PreactNativeArchitectures=x86_64 \
-            -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PRN_BUILD_CPP_TESTS=true \
+            -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true \
+            -PUI_THREAD_RENDERER_WORKER=true -PRN_BUILD_CPP_TESTS=true \
             --console=plain
 
-      # ui_thread_renderer_tests is EXCLUDE_FROM_ALL, so Gradle never builds it:
-      # build it out of the CMake tree Gradle just generated.
-      - name: Build the test executable
+      # RN_BUILD_CPP_TESTS=true attaches the CMake test target to the `reactnative`
+      # target, so the assembleDebug above already built it. AGP stages the
+      # executable and its native dependencies (libjsi, libfbjni) under
+      # build/intermediates/cxx/<buildType>/<hash>/obj/<abi>/ - not next to the
+      # build.ninja file in .cxx, where a search would also trip over CMake's
+      # _CMakeLTOTest-* probe directories - so they are located by name.
+      - name: Locate the test executable
         working-directory: rn/packages/react-native/ReactAndroid
         run: |
           set -eu
-          cxx=$(find .cxx -name build.ninja -path '*x86_64*' | head -1)
-          echo "CMake build dir: $(dirname "$cxx")"
-          cmake --build "$(dirname "$cxx")" --target ui_thread_renderer_tests
-          echo "CMAKE_BUILD_DIR=$(dirname "$cxx")" >> "$GITHUB_ENV"
+          exe=$(find build/intermediates/cxx -type f -name ui_thread_renderer_tests 2>/dev/null | head -1)
+          test -n "$exe"
+          # Absolute, because the steps that use these run from the repo root.
+          exe="$PWD/$exe"
+          echo "Test executable: $exe"
+          echo "TEST_EXE=$exe" >> "$GITHUB_ENV"
+          echo "TEST_LIB_DIR=$(dirname "$exe")" >> "$GITHUB_ENV"
+          ls -la "$(dirname "$exe")"
 
       # The suites are Android binaries, so they need a device; the emulator runs
       # the x86_64 build natively.
@@ -157,8 +174,12 @@ jobs:
           api-level: 34
           arch: x86_64
           script: |
-            adb push "$CMAKE_BUILD_DIR/ui_thread_renderer_tests" /data/local/tmp/
-            find "$ANDROID_NDK_HOME" -name 'libc++_shared.so' -path '*x86_64*' -exec adb push {} /data/local/tmp/ \;
+            adb push "$TEST_EXE" /data/local/tmp/ui_thread_renderer_tests
+            # libjsi/libfbjni are staged next to the executable;
+            # libc++_shared.so comes from the NDK.
+            adb push "$TEST_LIB_DIR/libjsi.so" "$TEST_LIB_DIR/libfbjni.so" /data/local/tmp/
+            ndk="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$NDK_VERSION}"
+            find "$ndk" -name 'libc++_shared.so' -path '*x86_64*' -exec adb push {} /data/local/tmp/ \;
             adb shell "cd /data/local/tmp && LD_LIBRARY_PATH=/data/local/tmp ./ui_thread_renderer_tests"
 
       - name: Upload the test executable
@@ -166,5 +187,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ui-thread-renderer-tests
-          path: rn/packages/react-native/ReactAndroid/.cxx/**/ui_thread_renderer_tests
+          path: |
+            rn/packages/react-native/ReactAndroid/.cxx/**/ui_thread_renderer_tests
+            rn/packages/react-native/ReactAndroid/build/intermediates/cxx/**/ui_thread_renderer_tests
           if-no-files-found: ignore
