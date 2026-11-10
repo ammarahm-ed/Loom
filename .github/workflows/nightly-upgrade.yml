@@ -1,7 +1,7 @@
 name: nightly upgrade report
 
 # Rehearses the next React Native upgrade every night and reports how many conflict
-# hunks it would cost. That number - not the raw line count in `resha status` - is
+# hunks it would cost. That number - not the raw line count in `loom status` - is
 # the real maintenance cost of carrying these overrides, so we want the trend
 # early, while there is still time to upstream a fix or shrink a patch.
 #
@@ -45,7 +45,7 @@ jobs:
         id: upgrade
         run: |
           set +e
-          node packages/react-native-resha/bin/resha.js upgrade --to "${{ steps.target.outputs.to }}" \
+          node packages/react-native-loom/bin/loom.js upgrade --to "${{ steps.target.outputs.to }}" \
             | tee upgrade-report.txt
           status=${PIPESTATUS[0]}
           echo "exit_status=$status" >> "$GITHUB_OUTPUT"
@@ -60,8 +60,8 @@ jobs:
             cat upgrade-report.txt
             echo '```'
             echo
-            echo 'Conflicts are listed above. Resolve them with `resha upgrade` locally;'
-            echo 'see docs/upgrading.md.'
+            echo 'Conflicts are listed above. Resolve them with `loom upgrade` locally;'
+            echo 'see the upgrade notes in README.md.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the conflicted tree
@@ -70,7 +70,7 @@ jobs:
         with:
           name: upgrade-conflicts
           path: |
-            packages/react-native-resha/src
+            packages/react-native-loom/src
             upgrade-report.txt
           if-no-files-found: ignore
 
@@ -79,5 +79,5 @@ jobs:
       - name: Fail when the upgrade needs work
         if: steps.upgrade.outputs.exit_status != '0'
         run: |
-          echo "::error::resha upgrade to ${{ steps.target.outputs.to }} needs manual resolution (exit ${{ steps.upgrade.outputs.exit_status }})"
+          echo "::error::loom upgrade to ${{ steps.target.outputs.to }} needs manual resolution (exit ${{ steps.upgrade.outputs.exit_status }})"
           exit 1

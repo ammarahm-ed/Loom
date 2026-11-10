@@ -254,7 +254,7 @@ index 0000000000000000000000000000000000000000..23c71cb3183ed4daaf60d25c3a2678db
 +    setContentView(root)
 +    root.post {
 +      started = true
-+      Log.i("RNXNativeStress", "start")
++      Log.i("LoomNativeStress", "start")
 +      submitCommit()
 +    }
 +  }
@@ -274,9 +274,9 @@ index 0000000000000000000000000000000000000000..23c71cb3183ed4daaf60d25c3a2678db
 +    if (submittedAt == 0L) return
 +    val latency = (SystemClock.elapsedRealtimeNanos() - submittedAt) / 1_000_000.0
 +    totalLatency += latency
-+    Log.i("RNXNativeStress", "commit id=$nextCommit latency=${"%.2f".format(latency)}")
++    Log.i("LoomNativeStress", "commit id=$nextCommit latency=${"%.2f".format(latency)}")
 +    if (nextCommit == COMMIT_COUNT) {
-+      Log.i("RNXNativeStress", "end duration=${"%.2f".format(totalLatency)} commits=$COMMIT_COUNT completed=layout")
++      Log.i("LoomNativeStress", "end duration=${"%.2f".format(totalLatency)} commits=$COMMIT_COUNT completed=layout")
 +      submittedAt = 0L
 +    } else {
 +      nextCommit++
@@ -411,7 +411,7 @@ index 0000000000000000000000000000000000000000..423cdc057f2e107db572dfcf8a55d738
 +        () =>
 +          view.current.measure((x, y, width) => {
 +            console.log(
-+              `RNXAsyncRegression: nativePropsRetained=${width === 87} width=${width}`,
++              `LoomAsyncRegression: nativePropsRetained=${width === 87} width=${width}`,
 +            );
 +            view.current.setNativeProps({style: {width: null}});
 +            const force =
@@ -424,12 +424,12 @@ index 0000000000000000000000000000000000000000..423cdc057f2e107db572dfcf8a55d738
 +    } else if (step === 2) {
 +      view.current.measure((x, y, width) => {
 +        console.log(
-+          `RNXAsyncRegression: resetAndSync=${width === 120} width=${width}`,
++          `LoomAsyncRegression: resetAndSync=${width === 120} width=${width}`,
 +        );
 +        LayoutAnimation.configureNext(
 +          LayoutAnimation.Presets.easeInEaseOut,
-+          () => console.log('RNXAsyncRegression: layoutAnimationSuccess'),
-+          () => console.log('RNXAsyncRegression: layoutAnimationRejected'),
++          () => console.log('LoomAsyncRegression: layoutAnimationSuccess'),
++          () => console.log('LoomAsyncRegression: layoutAnimationRejected'),
 +        );
 +        setStep(3);
 +        Animated.timing(opacity, {
@@ -437,7 +437,7 @@ index 0000000000000000000000000000000000000000..423cdc057f2e107db572dfcf8a55d738
 +          duration: 400,
 +          useNativeDriver: true,
 +        }).start(({finished}) =>
-+          console.log(`RNXAsyncRegression: nativeAnimatedFinished=${finished}`),
++          console.log(`LoomAsyncRegression: nativeAnimatedFinished=${finished}`),
 +        );
 +      });
 +    }
@@ -459,12 +459,12 @@ index 0000000000000000000000000000000000000000..423cdc057f2e107db572dfcf8a55d738
 +        testID="async-worker-input"
 +        style={{width: 250, height: 50}}
 +        placeholder="Worker input"
-+        onChangeText={text => console.log(`RNXAsyncRegression: input=${text}`)}
++        onChangeText={text => console.log(`LoomAsyncRegression: input=${text}`)}
 +      />
 +      <ScrollView
 +        testID="async-worker-scroll"
 +        style={{width: 250, height: 300}}
-+        onScroll={() => console.log('RNXAsyncRegression: scrollEvent')}
++        onScroll={() => console.log('LoomAsyncRegression: scrollEvent')}
 +        scrollEventThrottle={16}>
 +        {Array.from({length: 40}, (_, i) => (
 +          <Text key={i} style={{height: 30}}>
@@ -521,16 +521,16 @@ index 5a9220e8d6b5fc58fa6d10ac529b0b8c50df5821..756499dad80b30dbfb98954adc4cc15d
 -      onPressIn={onShowUnderlay}
 -      onPressOut={onHideUnderlay}
 +      onPressIn={() => {
-+        console.log('RNXTesterRow pressIn', item.module.title);
++        console.log('LoomTesterRow pressIn', item.module.title);
 +        onShowUnderlay();
 +      }}
 +      onPressOut={() => {
-+        console.log('RNXTesterRow pressOut', item.module.title);
++        console.log('LoomTesterRow pressOut', item.module.title);
 +        onHideUnderlay();
 +      }}
 +      onTouchStart={event => {
 +        console.log(
-+          'RNXTesterRow touchStart',
++          'LoomTesterRow touchStart',
 +          item.module.title,
 +          event.nativeEvent.timestamp,
 +          event.nativeEvent.target,
@@ -538,7 +538,7 @@ index 5a9220e8d6b5fc58fa6d10ac529b0b8c50df5821..756499dad80b30dbfb98954adc4cc15d
 +      }}
 +      onTouchEnd={event => {
 +        console.log(
-+          'RNXTesterRow touchEnd',
++          'LoomTesterRow touchEnd',
 +          item.module.title,
 +          event.nativeEvent.timestamp,
 +          event.nativeEvent.target,
@@ -548,7 +548,7 @@ index 5a9220e8d6b5fc58fa6d10ac529b0b8c50df5821..756499dad80b30dbfb98954adc4cc15d
 +      }}
 +      onTouchCancel={event => {
 +        console.log(
-+          'RNXTesterRow touchCancel',
++          'LoomTesterRow touchCancel',
 +          item.module.title,
 +          event.nativeEvent.timestamp,
 +          event.nativeEvent.target,
@@ -557,7 +557,7 @@ index 5a9220e8d6b5fc58fa6d10ac529b0b8c50df5821..756499dad80b30dbfb98954adc4cc15d
        accessibilityLabel={item.module.title + ' ' + item.module.description}
 -      onPress={() =>
 +      onPress={() => {
-+        console.log('RNXTesterRow press', item.module.title);
++        console.log('LoomTesterRow press', item.module.title);
          handlePress({
            exampleType: item.exampleType,
            key: item.key,
@@ -643,7 +643,7 @@ index 0000000000000000000000000000000000000000..b15ac9468f047b6bf0366279c36dfe93
 +  React.useEffect(() => {
 +    submittedAt.current[1] = global.performance.now();
 +    console.log(
-+      `RNXPureColor: submit id=1 t=${submittedAt.current[1].toFixed(2)}`,
++      `LoomPureColor: submit id=1 t=${submittedAt.current[1].toFixed(2)}`,
 +    );
 +    setCommit(1);
 +    return () => {
@@ -665,13 +665,13 @@ index 0000000000000000000000000000000000000000..b15ac9468f047b6bf0366279c36dfe93
 +    const latency = completedAt - submitTime;
 +    totalLatency.current += latency;
 +    console.log(
-+      `RNXPureColor: commit id=${commit} submit=${submitTime.toFixed(2)} ` +
++      `LoomPureColor: commit id=${commit} submit=${submitTime.toFixed(2)} ` +
 +        `complete=${completedAt.toFixed(2)} latency=${latency.toFixed(2)}`,
 +    );
 +
 +    if (commit === COMMIT_COUNT) {
 +      console.log(
-+        `RNXPureColor: end duration=${totalLatency.current.toFixed(2)} ` +
++        `LoomPureColor: end duration=${totalLatency.current.toFixed(2)} ` +
 +          `commits=${COMMIT_COUNT} completed=layout-effect-after-commitRoot`,
 +      );
 +      return;
@@ -682,7 +682,7 @@ index 0000000000000000000000000000000000000000..b15ac9468f047b6bf0366279c36dfe93
 +      const next = nextCommit.current;
 +      submittedAt.current[next] = global.performance.now();
 +      console.log(
-+        `RNXPureColor: submit id=${next} t=${submittedAt.current[next].toFixed(2)}`,
++        `LoomPureColor: submit id=${next} t=${submittedAt.current[next].toFixed(2)}`,
 +      );
 +      setCommit(next);
 +    }, 0);
@@ -805,7 +805,7 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +    }
 +    submittedAt.current[next] = global.performance.now();
 +    console.log(
-+      `RNXStress: submit id=${next} t=${submittedAt.current[next].toFixed(2)}`,
++      `LoomStress: submit id=${next} t=${submittedAt.current[next].toFixed(2)}`,
 +    );
 +    setCommit(next);
 +  }, []);
@@ -829,14 +829,14 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +          return;
 +        }
 +        startedAt.current = global.performance.now();
-+        console.log(`RNXStress: start t=${startedAt.current.toFixed(2)}`);
++        console.log(`LoomStress: start t=${startedAt.current.toFixed(2)}`);
 +        if (variant === 'queued') {
 +          submitQueuedCommit();
 +          return;
 +        }
 +        submittedAt.current[1] = global.performance.now();
 +        console.log(
-+          `RNXStress: submit id=1 t=${submittedAt.current[1].toFixed(2)}`,
++          `LoomStress: submit id=1 t=${submittedAt.current[1].toFixed(2)}`,
 +        );
 +        setCommit(1);
 +        return;
@@ -850,7 +850,7 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +          const wall = completedAt - startedAt.current;
 +          resultRef.current = true;
 +          console.log(
-+            `RNXStress: end wall=${wall.toFixed(2)} commits=${COMMIT_COUNT} completed=mount variant=${variant}`,
++            `LoomStress: end wall=${wall.toFixed(2)} commits=${COMMIT_COUNT} completed=mount variant=${variant}`,
 +          );
 +        }
 +        return;
@@ -875,7 +875,7 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +      const latency = completedAt - submitTime;
 +      totalCommitLatency.current += latency;
 +      console.log(
-+        `RNXStress: commit id=${commitId} submit=${submitTime.toFixed(2)} complete=${completedAt.toFixed(2)} latency=${latency.toFixed(2)}`,
++        `LoomStress: commit id=${commitId} submit=${submitTime.toFixed(2)} complete=${completedAt.toFixed(2)} latency=${latency.toFixed(2)}`,
 +      );
 +      if (completedCommit.current === COMMIT_COUNT) {
 +        const wall = completedAt - startedAt.current;
@@ -883,7 +883,7 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +        resultRef.current = true;
 +        setResult({latencySum, wall});
 +        console.log(
-+          `RNXStress: end latencySum=${latencySum.toFixed(2)} wall=${wall.toFixed(2)} commits=${COMMIT_COUNT} completed=mount variant=${variant}`,
++          `LoomStress: end latencySum=${latencySum.toFixed(2)} wall=${wall.toFixed(2)} commits=${COMMIT_COUNT} completed=mount variant=${variant}`,
 +        );
 +        return;
 +      }
@@ -892,7 +892,7 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +        timer.current = setTimeout(() => {
 +          submittedAt.current[nextCommit.current] = global.performance.now();
 +          console.log(
-+            `RNXStress: submit id=${nextCommit.current} t=${submittedAt.current[nextCommit.current].toFixed(2)}`,
++            `LoomStress: submit id=${nextCommit.current} t=${submittedAt.current[nextCommit.current].toFixed(2)}`,
 +          );
 +          setCommit(nextCommit.current);
 +        }, 0);
@@ -925,7 +925,7 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +  if (commit > 0) {
 +    const renderEndedAt = global.performance.now();
 +    console.log(
-+      `RNXStress: render id=${commit} start=${renderStartedAt.toFixed(2)} end=${renderEndedAt.toFixed(2)} duration=${(renderEndedAt - renderStartedAt).toFixed(2)}`,
++      `LoomStress: render id=${commit} start=${renderStartedAt.toFixed(2)} end=${renderEndedAt.toFixed(2)} duration=${(renderEndedAt - renderStartedAt).toFixed(2)}`,
 +    );
 +  }
 +
@@ -940,8 +940,8 @@ index 0000000000000000000000000000000000000000..f3c39166a111c6d63a1a6a7e6cd4da48
 +        </Text>
 +      ) : null}
 +      <View
-+        key={`rnx-commit-sentinel-${commit}`}
-+        accessibilityLabel={`rnx-commit-${commit}`}
++        key={`loom-commit-sentinel-${commit}`}
++        accessibilityLabel={`loom-commit-${commit}`}
 +        onLayout={() => onCommitMounted(commit)}
 +        style={{width: 1 + (commit % 2), height: 1}}
 +      />
@@ -994,7 +994,7 @@ index 0000000000000000000000000000000000000000..160fc49c6750ca93fdcf020239434634
 +
 +const title = 'Fabric Queued Commit Stress';
 +const description =
-+  'Submits 30 direct renderer commits without waiting for native layout acknowledgements.';
++  'Submits 30 Loom renderer commits without waiting for native layout acknowledgements.';
 +
 +export default {
 +  title,
@@ -1072,7 +1072,7 @@ index 0000000000000000000000000000000000000000..40d1299bb3dcf57b96fea093621bd82f
 +    largestScrollEventGap.current = 0;
 +    seenItems.current.clear();
 +    console.log(
-+      `RNXTextList: scroll-start t=${scrollStartedAt.current.toFixed(2)}`,
++      `LoomTextList: scroll-start t=${scrollStartedAt.current.toFixed(2)}`,
 +    );
 +  }, []);
 +
@@ -1088,10 +1088,10 @@ index 0000000000000000000000000000000000000000..40d1299bb3dcf57b96fea093621bd82f
 +      lastScrollAt.current = now;
 +      scrollEventCount.current += 1;
 +      // Sample rather than logging each event; detailed renderer timings come
-+      // from RNXRendererProfile and RNXDirectMountProfile in profiled releases.
++      // from LoomRendererProfile and LoomDirectMountProfile in profiled releases.
 +      if (scrollEventCount.current % 30 === 0) {
 +        console.log(
-+          `RNXTextList: scroll-sample events=${scrollEventCount.current} ` +
++          `LoomTextList: scroll-sample events=${scrollEventCount.current} ` +
 +            `offset=${event.nativeEvent.contentOffset.y.toFixed(0)} ` +
 +            `maxEventGap=${largestScrollEventGap.current.toFixed(1)}ms`,
 +        );
@@ -1117,7 +1117,7 @@ index 0000000000000000000000000000000000000000..40d1299bb3dcf57b96fea093621bd82f
 +  const reportScrollEnd = React.useCallback(() => {
 +    const endedAt = global.performance.now();
 +    console.log(
-+      `RNXTextList: scroll-end duration=${(endedAt - scrollStartedAt.current).toFixed(1)}ms ` +
++      `LoomTextList: scroll-end duration=${(endedAt - scrollStartedAt.current).toFixed(1)}ms ` +
 +        `events=${scrollEventCount.current} uniqueItems=${seenItems.current.size} ` +
 +        `maxEventGap=${largestScrollEventGap.current.toFixed(1)}ms`,
 +    );

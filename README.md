@@ -1,29 +1,35 @@
-# react-native-resha
+<p align="center"><img src="brand/png/loom-social-preview.png" alt="react-native-loom: the machine behind the Fabric" width="640"></p>
 
-Resha's UI-thread / direct-renderer work for React Native, maintained **out of
-tree**: a package that layers explicit, hash-tracked, 3-way-mergeable overrides
-on top of the **unmodified `react-native` from npm**, instead of a fork of
-`facebook/react-native`.
+# react-native-loom
 
-Taking an upstream fix is then a version bump plus `resha upgrade`, not a fork
+**The machine behind the Fabric.** Loom is a React Native distribution with its
+own renderer: React's output is woven straight into native views, with
+JavaScript on the main thread like a native app (instant updates, synchronous
+native lists) or on its own thread, and compile-time switches to choose.
+
+It is maintained **out of tree**: a package that layers explicit, hash-tracked,
+3-way-mergeable overrides on top of the **unmodified `react-native` from npm**,
+instead of a fork of `facebook/react-native`.
+
+Taking an upstream fix is then a version bump plus `loom upgrade`, not a fork
 rebase.
 
 ## How it works
 
-`packages/react-native-resha/overrides.json` lists every file Resha touches:
+`packages/react-native-loom/overrides.json` lists every file Loom touches:
 
 | type | meaning |
 |---|---|
-| `patch` | a full copy of an upstream file with Resha edits, derived from the pristine npm file whose sha256 is recorded as `baseHash` |
-| `platform` | a Resha-only file that does not exist upstream |
-| `delete` | an upstream file Resha removes (none today) |
+| `patch` | a full copy of an upstream file with Loom edits, derived from the pristine npm file whose sha256 is recorded as `baseHash` |
+| `platform` | a Loom-only file that does not exist upstream |
+| `delete` | an upstream file Loom removes (none today) |
 | `test` | an Android unit test that npm does not ship; kept for CI, never materialized |
 
-`resha materialize` compiles those into `node_modules/.resha/react-native`: a
+`loom materialize` compiles those into `node_modules/.loom/react-native`: a
 copy of the pristine `node_modules/react-native` with the overrides applied,
-plus a `.resha-stamp.json` that makes the step a no-op while it is current.
+plus a `.loom-stamp.json` that makes the step a no-op while it is current.
 `node_modules/react-native` is never modified — it stays the 3-way merge base
-and the tree `resha validate` hashes against.
+and the tree `loom validate` hashes against.
 
 Materialize refuses to run when validation fails: the installed RN version is
 not the one the overrides target, an upstream file no longer matches its
@@ -40,9 +46,9 @@ files.
 ## Install
 
 ```sh
-yarn add react-native-resha
+yarn add react-native-loom
 # or
-npm install react-native-resha
+npm install react-native-loom
 ```
 
 RN can no longer come from prebuilt binaries on either platform: the overrides
@@ -56,16 +62,16 @@ is already true for the fork today.
 `android/settings.gradle`:
 
 ```groovy
-apply from: file("../node_modules/react-native-resha/integration/android/resha.settings.gradle")
+apply from: file("../node_modules/react-native-loom/integration/android/loom.settings.gradle")
 ```
 
 `android/settings.gradle.kts`:
 
 ```kotlin
-apply(from = file("../node_modules/react-native-resha/integration/android/resha.settings.gradle"))
+apply(from = file("../node_modules/react-native-loom/integration/android/loom.settings.gradle"))
 ```
 
-That runs `resha materialize`, includes the materialized tree as a composite
+That runs `loom materialize`, includes the materialized tree as a composite
 build, and substitutes `react-android` / `react-native` →
 `:packages:react-native:ReactAndroid` and `hermes-android` / `hermes-engine` →
 `:packages:react-native:ReactAndroid:hermes-engine`.
@@ -74,7 +80,7 @@ build, and substitutes `react-android` / `react-native` →
 
 ```groovy
 react {
-  reactNativeDir = file("../node_modules/.resha/react-native")
+  reactNativeDir = file("../node_modules/.loom/react-native")
 }
 ```
 
@@ -84,17 +90,17 @@ react {
 line:
 
 ```ruby
-require_relative '../node_modules/react-native-resha/integration/ios/resha_pods'
-require File.join(Resha.react_native_path(__dir__), 'scripts/react_native_pods')
+require_relative '../node_modules/react-native-loom/integration/ios/loom_pods'
+require File.join(Loom.react_native_path(__dir__), 'scripts/react_native_pods')
 
 # ...
 use_react_native!(
-  :path => Resha.react_native_path(__dir__),
+  :path => Loom.react_native_path(__dir__),
   # ...existing options...
 )
 ```
 
-`Resha.react_native_path(__dir__)` materializes the tree and returns its path.
+`Loom.react_native_path(__dir__)` materializes the tree and returns its path.
 It also forces `RCT_USE_PREBUILT_RNCORE=0`, because prebuilt RN core binaries
 cannot contain the overrides.
 
@@ -104,7 +110,7 @@ cannot contain the overrides.
 
 ```js
 module.exports = {
-  reactNativePath: './node_modules/.resha/react-native',
+  reactNativePath: './node_modules/.loom/react-native',
   // ...project/dependencies as usual...
 };
 ```
@@ -113,9 +119,9 @@ module.exports = {
 
 ```js
 const {getDefaultConfig, mergeConfig} = require('@react-native/metro-config');
-const {withResha} = require('react-native-resha/integration/metro');
+const {withLoom} = require('react-native-loom/integration/metro');
 
-module.exports = withResha(
+module.exports = withLoom(
   mergeConfig(getDefaultConfig(__dirname), {
     // ...your config...
   }),
@@ -123,106 +129,126 @@ module.exports = withResha(
 );
 ```
 
-`withResha` materializes if needed and maps `react-native` and `react-native/*`
+`withLoom` materializes if needed and maps `react-native` and `react-native/*`
 to the materialized tree, so JS overrides such as `LayoutAnimation.js` are what
 gets bundled.
 
 ### Jest
 
 ```js
-const {reshaJestModuleNameMapper} = require('react-native-resha/integration/metro');
+const {loomJestModuleNameMapper} = require('react-native-loom/integration/metro');
 
 module.exports = {
   preset: 'react-native',
-  moduleNameMapper: reshaJestModuleNameMapper(__dirname),
+  moduleNameMapper: loomJestModuleNameMapper(__dirname),
 };
 ```
 
 ## Compile-time switches
 
-Android (`android/gradle.properties`; `resha materialize` copies these into the
+Android (`android/gradle.properties`; `loom materialize` copies these into the
 materialized tree, because an included Gradle build cannot see the app's
-`gradle.properties`, and `-P` on the command line still wins):
+`gradle.properties`, and `-P<name>=<value>` on the command line still wins).
+With none set, the build is stock React Native:
 
-| switch | effect |
-|---|---|
-| `RN_UI_THREAD` | RN's JavaScript runtime and native modules queue run on the UI thread |
-| `UI_THREAD_RENDERER` | selects the independent direct JS-host → Yoga → Android view renderer (requires `RN_UI_THREAD`) |
-| `UI_THREAD_RENDERER_WORKER` | worker-owned commit preparation, UI-thread mounting (requires `UI_THREAD_RENDERER`) |
-| `RN_PROFILE_UI_THREAD_RENDERER` | diagnostic C++ and direct-mount Java timers (default off) |
-| `RN_BUILD_CPP_TESTS` | builds the C++ `UIThreadRenderer` tests (requires `UI_THREAD_RENDERER` and `UI_THREAD_RENDERER_WORKER`) |
+| switch | values | effect |
+|---|---|---|
+| `loom.renderer` | `fabric` (default) \| `loom` | which renderer draws the app |
+| `loom.js` | `background` (default) \| `main` | JavaScript on its own thread, or on the Android main thread like a native app |
+| `loom.worker` | `true` \| `false` (default) | Loom commit preparation (layout, text, diff) on a worker thread; requires `loom.renderer=loom`, and is required with `loom.js=background` |
+| `loom.profile` | `true` \| `false` (default) | diagnostic C++ and mount timers |
+| `loom.cppTests` | `true` \| `false` (default) | builds the C++ Loom renderer tests |
 
-iOS (environment variables, since `RN_UI_THREAD` is Android-only):
+The usual configurations:
+
+```properties
+# JavaScript on the main thread: instant updates, synchronous native lists
+loom.renderer=loom
+loom.js=main
+loom.worker=true
+
+# JavaScript on its own thread: busy JavaScript never blocks frames
+loom.renderer=loom
+loom.js=background
+loom.worker=true
+```
+
+Debug builds also report main-thread blocks longer than 50 ms, with the cause
+and sampled stacks, in the JS console (`adb shell setprop
+debug.loom.jank_budget_ms N` to change the budget, `debug.loom.jank 0` to turn
+it off).
+
+iOS (environment variables; `loom.js=main` is Android-only):
 
 | variable | effect |
 |---|---|
-| `RCT_UI_THREAD_RENDERER_IOS=1` | selects the direct renderer |
-| `RCT_UI_THREAD_RENDERER_WORKER_IOS=1` | worker-owned commit preparation (requires the above) |
+| `RCT_LOOM_RENDERER_IOS=1` | selects the Loom renderer |
+| `RCT_LOOM_WORKER_IOS=1` | worker-owned commit preparation (requires the above) |
 
 ## CLI
 
 App commands (run from the app root):
 
 ```
-resha materialize [--force] [--out <dir>]   build node_modules/.resha/react-native
-resha validate                              check overrides against installed react-native
+loom materialize [--force] [--out <dir>]   build node_modules/.loom/react-native
+loom validate                              check overrides against installed react-native
 ```
 
 Maintainer commands (run in this repo):
 
 ```
-resha status                                overrides by area, lines carried
-resha diff [path-substring...]              unified diff of patches vs upstream
-resha add <rn-relative-path> [--area a]     start overriding an upstream file
-resha add --platform <rn-relative-path>     register a new Resha-only file
-resha upgrade --to <version>                3-way merge overrides onto a new RN
-resha overlay --monorepo <dir>              write overrides (+ Android tests, rn-tester
+loom status                                overrides by area, lines carried
+loom diff [path-substring...]              unified diff of patches vs upstream
+loom add <rn-relative-path> [--area a]     start overriding an upstream file
+loom add --platform <rn-relative-path>     register a new Loom-only file
+loom upgrade --to <version>                3-way merge overrides onto a new RN
+loom overlay --monorepo <dir>              write overrides (+ Android tests, rn-tester
                                             benchmarks) into a react-native checkout
-resha import-fork --fork <dir> --base <sha> capture a checkout's working tree back into
+loom import-fork --fork <dir> --base <sha> capture a checkout's working tree back into
                                             overrides (inverse of overlay)
 ```
 
 `--upstream <dir>` uses that react-native package instead of fetching one from npm.
 
-`resha status` is the headline metric for shrinking the patch surface; see
-[docs/plan.md](docs/plan.md) phase 2.
+`loom status` is the headline metric for shrinking the patch surface.
 
 ## Repository layout
 
 ```
 package.json                     workspace root (workspaces: packages/*)
-packages/react-native-resha/     the published package
+packages/react-native-loom/     the published package
   overrides.json                 upstream {package, version} + one entry per file
   src/                           full-file overrides, mirroring react-native package paths
   android-tests/                 ReactAndroid/src/test/** (npm does not ship these)
-  bin/resha.js                   CLI
+  bin/loom.js                   CLI
   lib/                           manifest, materialize, validate, upgrade, import-fork,
                                  overlay, status/diff
-  integration/                   android/resha.settings.gradle, ios/resha_pods.rb, metro.js
-apps/resha-test-app/             RN 0.87.1 app wired through the integrations
+  integration/                   android/loom.settings.gradle, ios/loom_pods.rb, metro.js
+apps/loom-test-app/             RN 0.89 test app wired through the integrations, plus
+                                 the benchmark harness (bench/)
 examples/rn-tester/              benchmark screens + NativeTextBenchmarkActivity patch
-docs/                            plan and runbooks
+brand/                           logo, lockups, social preview (generate.py)
+.local/                          git-ignored scratch: notes, benchmark output
 ```
 
-`apps/resha-test-app` is deliberately **not** a workspace member: it keeps its own
-`node_modules`, which is what `resha materialize` and the integration helpers
+`apps/loom-test-app` is deliberately **not** a workspace member: it keeps its own
+`node_modules`, which is what `loom materialize` and the integration helpers
 assume. Install it from its own directory (see its README).
 
 ## Developing against a react-native checkout
 
 ```sh
-node packages/react-native-resha/bin/resha.js overlay --monorepo ~/Work/react-native
+node packages/react-native-loom/bin/loom.js overlay --monorepo ~/Work/react-native
 # ...hack in rn-tester...
-node packages/react-native-resha/bin/resha.js import-fork --fork ~/Work/react-native --base v0.87.1
-node packages/react-native-resha/bin/resha.js validate
+node packages/react-native-loom/bin/loom.js import-fork --fork ~/Work/react-native --base v0.89.0-rc.0
+node packages/react-native-loom/bin/loom.js validate
 ```
 
 `overlay` → `import-fork` is a lossless round trip on a clean checkout at the
-upstream tag. See [docs/upgrading.md](docs/upgrading.md) for the upgrade runbook
-and [docs/plan.md](docs/plan.md) for the migration plan.
+upstream tag.
 
 ## License
 
-MIT. Files under `packages/react-native-resha/src/` are derived from
+MIT. Files under `packages/react-native-loom/src/` are derived from
 react-native (MIT, Meta Platforms, Inc. and affiliates); see
 [LICENSE](LICENSE).

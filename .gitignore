@@ -1,9 +1,9 @@
-# Dependencies. apps/resha-test-app keeps its own node_modules on purpose: the
-# integration helpers and `resha materialize` are written against <app>/node_modules.
+# Dependencies. apps/loom-test-app keeps its own node_modules on purpose: the
+# integration helpers and `loom materialize` are written against <app>/node_modules.
 node_modules/
 
-# Materialized react-native + Resha overrides, built by `resha materialize`.
-.resha/
+# Materialized react-native + Loom overrides, built by `loom materialize`.
+.loom/
 
 # Logs
 *.log
@@ -40,3 +40,5 @@ xcuserdata/
 # Test output
 coverage/
 reports/
+# Local scratch: docs, notes, logo explorations, benchmark output. Never committed.
+.local/

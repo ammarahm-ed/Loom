@@ -1,0 +1,74 @@
+// Loom Android integration. Apply from the app's settings.gradle(.kts):
+//
+//   settings.gradle:      apply from: file("../node_modules/react-native-loom/integration/android/loom.settings.gradle")
+//   settings.gradle.kts:  apply(from = file("../node_modules/react-native-loom/integration/android/loom.settings.gradle"))
+//
+// Placement matters on Gradle 9: no statement other than buildscript {},
+// pluginManagement {} and plugins {} may appear before the `plugins {}` block,
+// so apply it immediately after that block - and before
+// `autolinkLibrariesFromCommand()`, which resolves react-native.config.js's
+// reactNativePath and therefore needs the materialized tree to already exist:
+//
+//   pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+//   plugins { id("com.facebook.react.settings") }
+//   apply from: file("../node_modules/react-native-loom/integration/android/loom.settings.gradle")
+//   extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+//
+// What it does:
+//  1. runs `loom materialize` (a no-op when the stamp is current), producing
+//     <app>/node_modules/.loom/react-native = react-native + Loom overrides
+//  2. includes that tree as a composite build and substitutes the prebuilt
+//     com.facebook.react:react-android / hermes-android artifacts with it
+//
+// Set LOOM_SKIP_MATERIALIZE=1 to skip step 1 (the tree must already exist), and
+// the `loomAppRoot` Gradle property to override <app> (= settings.rootDir/..).
+//
+// Pair it with `react { reactNativeDir = file("../node_modules/.loom/react-native") }`
+// in app/build.gradle so the RN Gradle plugin's codegen uses the same tree.
+
+def loomAppRoot = settings.hasProperty("loomAppRoot")
+    ? new File(settings.loomAppRoot)
+    : settings.rootDir.parentFile
+
+// This file normally lives at <app>/node_modules/react-native-loom/integration/android/,
+// so bin/loom.js is three levels up. Fall back to a node_modules lookup for a
+// vendored/relocated copy, and fail loudly rather than run the wrong binary.
+def loomBinSource = buildscript.sourceFile
+def loomBin = new File(loomBinSource != null ? loomBinSource.parentFile : loomAppRoot,
+    loomBinSource != null ? "../../bin/loom.js" : "node_modules/react-native-loom/bin/loom.js")
+    .canonicalFile
+if (!loomBin.exists()) {
+  loomBin = new File(loomAppRoot, "node_modules/react-native-loom/bin/loom.js").canonicalFile
+}
+if (!loomBin.exists()) {
+  throw new GradleException(
+      "Loom: cannot find bin/loom.js (looked next to ${loomBinSource} and in " +
+          "${loomAppRoot}/node_modules/react-native-loom). Reinstall react-native-loom.")
+}
+
+def loomSkip = System.getenv("LOOM_SKIP_MATERIALIZE") == "1"
+
+if (!loomSkip) {
+  def proc = ["node", loomBin.absolutePath, "materialize"].execute(null, loomAppRoot)
+  def out = new StringBuilder(), err = new StringBuilder()
+  proc.waitForProcessOutput(out, err)
+  if (proc.exitValue() != 0) {
+    throw new GradleException("loom materialize failed:\n${out}${err}")
+  }
+  logger.lifecycle(out.toString().trim())
+}
+
+def loomReactNativeDir = new File(loomAppRoot, "node_modules/.loom/react-native")
+if (!new File(loomReactNativeDir, ".loom-stamp.json").exists()) {
+  throw new GradleException("Loom: ${loomReactNativeDir} is missing. Run `npx loom materialize` in ${loomAppRoot}.")
+}
+gradle.ext.loomReactNativeDir = loomReactNativeDir
+
+includeBuild(loomReactNativeDir) {
+  dependencySubstitution {
+    substitute(module("com.facebook.react:react-android")).using(project(":packages:react-native:ReactAndroid"))
+    substitute(module("com.facebook.react:react-native")).using(project(":packages:react-native:ReactAndroid"))
+    substitute(module("com.facebook.react:hermes-android")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+    substitute(module("com.facebook.react:hermes-engine")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+  }
+}

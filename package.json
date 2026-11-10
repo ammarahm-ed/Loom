@@ -1,16 +1,16 @@
 {
-  "name": "react-native-resha-workspace",
+  "name": "react-native-loom-workspace",
   "version": "0.0.0",
   "private": true,
-  "description": "Workspace root for react-native-resha, the out-of-tree UI-thread direct renderer for React Native.",
+  "description": "Workspace root for react-native-loom, the out-of-tree UI-thread Loom renderer for React Native.",
   "license": "MIT",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "validate": "node packages/react-native-resha/bin/resha.js validate",
-    "status": "node packages/react-native-resha/bin/resha.js status",
-    "diff": "node packages/react-native-resha/bin/resha.js diff"
+    "validate": "node packages/react-native-loom/bin/loom.js validate",
+    "status": "node packages/react-native-loom/bin/loom.js status",
+    "diff": "node packages/react-native-loom/bin/loom.js diff"
   },
   "engines": {
     "node": ">=20"

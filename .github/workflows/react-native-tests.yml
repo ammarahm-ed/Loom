@@ -1,12 +1,12 @@
 name: react-native tests
 
-# Runs Resha's Android unit tests and C++ suites inside a real
+# Runs Loom's Android unit tests and C++ suites inside a real
 # facebook/react-native checkout at the upstream tag. That checkout is where
 # `android-tests/ReactAndroid/src/test/**` can live: npm does not publish
 # ReactAndroid/src/test/**, so those tests are kept for CI and are never
-# materialized into node_modules/.resha.
+# materialized into node_modules/.loom.
 #
-# `resha overlay` writes every override - plus the android-tests and the rn-tester
+# `loom overlay` writes every override - plus the android-tests and the rn-tester
 # benchmark patch - into that checkout, which is also the day-to-day dev loop.
 
 on:
@@ -23,12 +23,12 @@ concurrency:
 
 env:
   # Must match overrides.json > upstream.version.
-  RN_TAG: v0.87.1
+  RN_TAG: v0.89.0-rc.0
   NDK_VERSION: 27.1.12297006
   CMAKE_VERSION: 3.22.1
-  # The Android tests exercise the Resha code paths, so they run with the same
+  # The Android tests exercise the Loom code paths, so they run with the same
   # switches a device build uses. ReactAndroid reads them through findProperty().
-  RESHA_SWITCHES: -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true -PUI_THREAD_RENDERER_WORKER=true
+  LOOM_SWITCHES: -Ploom.js=main -Ploom.renderer=loom -Ploom.worker=true
 
 jobs:
   android-unit-tests:
@@ -56,15 +56,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: facebook/react-native
-          ref: v0.87.1
+          ref: v0.89.0-rc.0
           path: rn
           fetch-depth: 1
 
-      - name: Install the resha workspace
+      - name: Install the loom workspace
         run: yarn install --frozen-lockfile
 
       - name: Overlay the overrides (and the Android tests) into the checkout
-        run: node packages/react-native-resha/bin/resha.js overlay --monorepo rn
+        run: node packages/react-native-loom/bin/loom.js overlay --monorepo rn
 
       # Mirrors React Native's own contributor flow: install the monorepo's
       # dependencies, then run the ReactAndroid unit tests, which now include the
@@ -80,10 +80,10 @@ jobs:
           # The monorepo root build.gradle.kts turns an exported ANDROID_NDK into an
           # explicit ndkPath (ReactAndroid prefers it over the catalog version),
           # which trips AGP's CXX1100 check when the SDK's NDK is symlinked. See
-          # docs/verification.md.
+          # the test app README.
           unset ANDROID_NDK || true
           ./gradlew :packages:react-native:ReactAndroid:testDebugUnitTest \
-            $RESHA_SWITCHES \
+            $LOOM_SWITCHES \
             --console=plain
 
       - name: Upload test reports
@@ -95,7 +95,7 @@ jobs:
           if-no-files-found: ignore
 
   cpp-tests:
-    name: UIThreadRenderer C++ tests
+    name: LoomRenderer C++ tests
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -119,15 +119,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: facebook/react-native
-          ref: v0.87.1
+          ref: v0.89.0-rc.0
           path: rn
           fetch-depth: 1
 
-      - name: Install the resha workspace
+      - name: Install the loom workspace
         run: yarn install --frozen-lockfile
 
       - name: Overlay the overrides into the checkout
-        run: node packages/react-native-resha/bin/resha.js overlay --monorepo rn --no-rn-tester
+        run: node packages/react-native-loom/bin/loom.js overlay --monorepo rn --no-rn-tester
 
       - name: Install react-native's dependencies
         working-directory: rn
@@ -142,11 +142,11 @@ jobs:
           unset ANDROID_NDK || true
           ./gradlew :packages:react-native:ReactAndroid:assembleDebug \
             -PreactNativeArchitectures=x86_64 \
-            -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true \
-            -PUI_THREAD_RENDERER_WORKER=true -PRN_BUILD_CPP_TESTS=true \
+            -Ploom.js=main -Ploom.renderer=loom \
+            -Ploom.worker=true -Ploom.cppTests=true \
             --console=plain
 
-      # RN_BUILD_CPP_TESTS=true attaches the CMake test target to the `reactnative`
+      # LOOM_BUILD_CPP_TESTS=true attaches the CMake test target to the `reactnative`
       # target, so the assembleDebug above already built it. AGP stages the
       # executable and its native dependencies (libjsi, libfbjni) under
       # build/intermediates/cxx/<buildType>/<hash>/obj/<abi>/ - not next to the
