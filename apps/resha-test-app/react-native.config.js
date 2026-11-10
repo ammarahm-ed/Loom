@@ -7,6 +7,8 @@
  * Paths here are resolved relative to the app root (the directory holding this
  * file), not to the current working directory.
  */
-module.exports = {
-  reactNativePath: './node_modules/.resha/react-native',
-};
+module.exports =
+  // RESHA_BENCH_STOCK=1: the stock baseline build for the benchmarks (bench/run.js).
+  process.env.RESHA_BENCH_STOCK === '1'
+    ? {}
+    : {reactNativePath: './node_modules/.resha/react-native'};

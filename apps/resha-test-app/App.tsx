@@ -10,15 +10,17 @@
 
 import { StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import Bench from './Bench';
 import ReshaSmokeTest from './ReshaSmokeTest';
 
-function App() {
+// `scenario` comes from the launch intent (see MainActivity) when bench/run.js drives the app.
+function App({ scenario }: { scenario?: string }) {
   const isDarkMode = useColorScheme() === 'dark';
 
   return (
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <ReshaSmokeTest />
+      {scenario ? <Bench scenario={scenario} /> : <ReshaSmokeTest />}
     </SafeAreaProvider>
   );
 }

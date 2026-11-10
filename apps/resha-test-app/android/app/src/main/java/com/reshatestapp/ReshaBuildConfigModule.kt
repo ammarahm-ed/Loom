@@ -23,15 +23,23 @@ class ReshaBuildConfigModule(reactContext: ReactApplicationContext) :
   @ReactMethod
   fun getSwitches(promise: Promise) {
     val switches = Arguments.createMap()
-    switches.putBoolean("rnUiThread", com.facebook.react.BuildConfig.RN_UI_THREAD)
-    switches.putBoolean("uiThreadRenderer", com.facebook.react.BuildConfig.UI_THREAD_RENDERER)
-    switches.putBoolean(
-        "uiThreadRendererWorker",
-        com.facebook.react.BuildConfig.UI_THREAD_RENDERER_WORKER,
-    )
-    switches.putBoolean("profile", com.facebook.react.BuildConfig.RN_PROFILE_UI_THREAD_RENDERER)
+    switches.putBoolean("rnUiThread", flag("RN_UI_THREAD"))
+    switches.putBoolean("uiThreadRenderer", flag("UI_THREAD_RENDERER"))
+    switches.putBoolean("uiThreadRendererWorker", flag("UI_THREAD_RENDERER_WORKER"))
+    switches.putBoolean("profile", flag("RN_PROFILE_UI_THREAD_RENDERER"))
+    // Stock react-android has none of these fields: that is how the benchmark's baseline build,
+    // which uses the prebuilt artifacts from Maven, tells itself apart from an all-off Resha build.
+    switches.putBoolean("stock", !hasFlag("RN_UI_THREAD"))
     promise.resolve(switches)
   }
+
+  // Read reflectively so the same app source compiles against stock React Native too.
+  private fun field(name: String) =
+      runCatching { com.facebook.react.BuildConfig::class.java.getField(name) }.getOrNull()
+
+  private fun hasFlag(name: String) = field(name) != null
+
+  private fun flag(name: String) = field(name)?.getBoolean(null) ?: false
 
   companion object {
     const val NAME = "ReshaBuildConfig"

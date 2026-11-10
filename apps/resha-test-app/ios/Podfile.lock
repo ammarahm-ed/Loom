@@ -2122,8 +2122,8 @@ SPEC CHECKSUMS:
   React-cxxstableapi: 1e0ad8a5ecb7f2f5440c012798cf20bec6341c1f
   React-debug: 29aa97d57c16460e2e3f1b6afcefe00ef53abb13
   React-defaultsnativemodule: 744aabb46a113c36f23a369d2fbfdf1f32ac60d5
-  React-domnativemodule: 9924198c32915d5f4af59662f8c2b22db0f64aa4
-  React-Fabric: 4bfebd8204339046415eb9c36c0c9751f9a8e868
+  React-domnativemodule: a73fd5dd59e9be6eb5847ff5316e419932ea2236
+  React-Fabric: 7b95f8051928141aad3cf79a994584ab43479e4a
   React-FabricComponents: 9bef0745225c25f7154c02384e92e51887aef45e
   React-FabricImage: bf74a20c1726b9d8eff47536ba4e2d035e8ab79d
   React-featureflags: 866378cc267ae180f84ed28c4ce357d125ceb23e
@@ -2158,7 +2158,7 @@ SPEC CHECKSUMS:
   React-RCTAnimation: 1be4b85fcc26d56729a8e1039bd13a3647885198
   React-RCTAppDelegate: 865a36db27ffc6ba23f9eb1d4b875b8d5dae031f
   React-RCTBlob: d3c04917fba73c17a4342130fe7a6888a8aa7a75
-  React-RCTFabric: 4b8439cda442ad7a9a062b7586f08ad8263a3288
+  React-RCTFabric: 14d9544e688b4eb442090300078c85c3768d337c
   React-RCTFBReactNativeSpec: e9163dfc3c99616651c0299e244fc64536fcc580
   React-RCTImage: d4c50e514ac980a8de9df421170337163eea2c06
   React-RCTLinking: 03c8a8b4b1546031467b31908906aa68913dfeb2
@@ -2170,7 +2170,7 @@ SPEC CHECKSUMS:
   React-rendererconsistency: e46cf371df99765250b34b7ccbc74294cbca201a
   React-renderercss: 423a66c42dff6c9b8f84c5d07fb4acfbd8563968
   React-rendererdebug: 4b01100e84f83e114f8c336a8fd6e532d2f89903
-  React-RuntimeApple: b2bdfb2ad42c962da9ac47dae49a318d17e36875
+  React-RuntimeApple: 7d869cf734f95f7f3ea47e708a5e33f85a809b22
   React-RuntimeCore: 7093239a4ef806e9a45714471613fa92555b9943
   React-runtimeexecutor: b14b814cf1561cc045f22d193fe153621db56896
   React-RuntimeHermes: b296f8243e99de0f4877cf8b089a93e057d621fa

@@ -13,7 +13,9 @@ react {
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     //   Resha: build against the materialized tree (pristine react-native + overrides).
     //   node_modules/react-native stays untouched as the merge base for `resha validate`.
-    reactNativeDir = file("../../node_modules/.resha/react-native")
+    reactNativeDir = file(System.getenv("RESHA_BENCH_STOCK") == "1"
+        ? "../../node_modules/react-native"
+        : "../../node_modules/.resha/react-native")
     //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
     // codegenDir = file("../../node_modules/@react-native/codegen")
     //   The cli.js file which is the React Native CLI entrypoint. Default is ../../node_modules/react-native/cli.js
@@ -86,6 +88,17 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // `-PbenchVariant=stock|off|on` gives each benchmark build its own application id, so all
+        // three can be installed side by side and measured in interleaved rounds.
+        if (project.hasProperty("benchVariant")) {
+            applicationIdSuffix ".bench.${project.property("benchVariant")}"
+        }
+        // `-PbenchTunedFlags=true` turns on the stock text and recycling feature flags that the
+        // direct renderer always uses (see MainApplication), for a like-for-like stock baseline.
+        buildConfigField "boolean", "BENCH_TUNED_FLAGS", String.valueOf(project.findProperty("benchTunedFlags") == "true")
+    }
+    buildFeatures {
+        buildConfig true
     }
     signingConfigs {
         debug {
@@ -112,6 +125,9 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // Installs the baseline profile shipped in the APK (React Native's rules from ReactAndroid
+    // plus anything the app adds) on sideloaded and non-Play installs. Play applies it without this.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

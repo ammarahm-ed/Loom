@@ -7,7 +7,12 @@ plugins { id("com.facebook.react.settings") }
 // `plugins {}` block, so this goes immediately after it - and before
 // autolinkLibrariesFromCommand(), which resolves react-native.config.js's
 // reactNativePath and therefore needs the materialized tree to exist.
-apply from: file("../node_modules/react-native-resha/integration/android/resha.settings.gradle")
+//
+// RESHA_BENCH_STOCK=1 leaves Resha out entirely and builds against the prebuilt react-android and
+// hermes-android from Maven: the baseline the benchmarks (bench/run.js) compare against.
+if (System.getenv("RESHA_BENCH_STOCK") != "1") {
+  apply from: file("../node_modules/react-native-resha/integration/android/resha.settings.gradle")
+}
 
 extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
 rootProject.name = 'ReshaTestApp'

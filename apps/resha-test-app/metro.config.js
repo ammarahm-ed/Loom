@@ -13,7 +13,8 @@ const {withResha} = require('react-native-resha/integration/metro');
  */
 const config = {};
 
-module.exports = withResha(
-  mergeConfig(getDefaultConfig(__dirname), config),
-  __dirname,
-);
+const merged = mergeConfig(getDefaultConfig(__dirname), config);
+
+// RESHA_BENCH_STOCK=1 bundles stock react-native: the benchmark baseline (bench/run.js).
+module.exports =
+  process.env.RESHA_BENCH_STOCK === '1' ? merged : withResha(merged, __dirname);
