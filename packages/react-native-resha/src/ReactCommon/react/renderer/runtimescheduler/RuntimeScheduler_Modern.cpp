@@ -10,10 +10,12 @@
 #include <ReactCommon/RuntimeExecutorSyncUIThreadUtils.h>
 #include <cxxreact/TraceSection.h>
 #include <jsinspector-modern/tracing/EventLoopReporter.h>
-#include <react/featureflags/ReactNativeFeatureFlags.h>
+#include <react/performance/timeline/PerformanceEntryReporter.h>
 #include <react/renderer/consistency/ScopedShadowTreeRevisionLock.h>
 #include <react/timing/primitives.h>
 #include <react/utils/OnScopeExit.h>
+#include "JankReporter.h"
+#include "RuntimeSchedulerFrameCallbackScope.h"
 
 #include <atomic>
 #include <thread>
@@ -34,6 +36,11 @@ int64_t durationToMilliseconds(HighResDuration duration) {
 }
 
 #if RN_UI_THREAD
+// How long non-urgent work may run in one Looper message before React is asked to yield.
+// A 60 Hz frame is 16.7 ms.
+constexpr HighResDuration kLoopSliceYield = HighResDuration::fromMilliseconds(5);
+constexpr HighResDuration kLoopSliceMinimum = HighResDuration::fromMilliseconds(1);
+
 /*
  * React Native X: the runtime executing on this thread right now, if any.
  *
@@ -208,8 +215,34 @@ bool RuntimeScheduler_Modern::getShouldYield() noexcept {
 
   std::shared_lock lock(schedulingMutex_);
 
-  return syncTaskRequests_ > 0 ||
-      (!taskQueue_.empty() && taskQueue_.top().get() != currentTask_);
+  if (syncTaskRequests_ > 0 ||
+      (!taskQueue_.empty() && taskQueue_.top().get() != currentTask_)) {
+    return true;
+  }
+#if RN_UI_THREAD
+  // React Native X: RN gives React the native scheduler, which until now only
+  // asked a transition render to yield for a higher-priority task, never for
+  // time. With JavaScript on the UI thread, a large transition then holds the
+  // Looper (and so the next frame) until it is finished. Ask non-urgent work to
+  // yield once it has used its slice. Urgent work (immediate and user-blocking
+  // priorities, synchronous requests) is never asked to.
+  if (currentTask_ != nullptr &&
+      currentPriority_ >= SchedulerPriority::NormalPriority) {
+    if ((now_() - loopSliceStart_) >= kLoopSliceYield) {
+      timeSliceYielded_ = true;
+      return true;
+    }
+    // The deadline rule needs a millisecond of progress first, so a slice that starts right
+    // before a vsync still renders something instead of yielding forever.
+    if ((now_() - loopSliceStart_) >= kLoopSliceMinimum &&
+        FrameClock::nextVsyncIsNear()) {
+      timeSliceYielded_ = true;
+      yieldedForFrame_ = true;
+      return true;
+    }
+  }
+#endif // RN_UI_THREAD
+  return false;
 }
 
 void RuntimeScheduler_Modern::cancelTask(Task& task) noexcept {
@@ -258,11 +291,28 @@ void RuntimeScheduler_Modern::executeNowOnTheSameThread(
     // instead. If no runtime has been observed on this thread yet there is
     // nothing to execute against, so fall through to the posted path.
     if (auto* runtime = runtimeForThread; runtime != nullptr) {
-      return executeTask(*runtime, task, true);
+      // A full event loop tick, not a bare task: the work JavaScript queues
+      // while handling the request (React schedules a discrete event's render
+      // as a microtask) must run before this returns. A bare task left it
+      // waiting for whatever task the loop ran next, e.g. a Pressable timer
+      // 130 ms later, which defeats delivering the event synchronously.
+      runEventLoopTick(*runtime, task);
+      bool shouldScheduleEventLoop = false;
+      {
+        std::unique_lock lock(schedulingMutex_);
+        if (!taskQueue_.empty() && !isEventLoopScheduled_) {
+          isEventLoopScheduled_ = true;
+          shouldScheduleEventLoop = true;
+        }
+      }
+      if (shouldScheduleEventLoop) {
+        scheduleEventLoop();
+      }
+      return;
     }
   }
 #else
-  static thread_local jsi::Runtime* runtimePtr = nullptr;
+  static constinit thread_local jsi::Runtime* runtimePtr = nullptr;
 
   if (runtimePtr != nullptr) {
     // Protecting against re-entry into `executeNowOnTheSameThread` from within
@@ -320,6 +370,11 @@ void RuntimeScheduler_Modern::scheduleRenderingUpdate(
   pendingRenderingUpdates_.push(renderingUpdate);
 }
 
+void RuntimeScheduler_Modern::setRenderingUpdateListener(
+    std::function<void()> listener) {
+  renderingUpdateListener_ = std::move(listener);
+}
+
 void RuntimeScheduler_Modern::setShadowTreeRevisionConsistencyManager(
     ShadowTreeRevisionConsistencyManager*
         shadowTreeRevisionConsistencyManager) {
@@ -340,6 +395,11 @@ void RuntimeScheduler_Modern::setIntersectionObserverDelegate(
     RuntimeSchedulerIntersectionObserverDelegate*
         intersectionObserverDelegate) {
   intersectionObserverDelegate_ = intersectionObserverDelegate;
+}
+
+void RuntimeScheduler_Modern::setResizeObserverDelegate(
+    RuntimeSchedulerResizeObserverDelegate* resizeObserverDelegate) {
+  resizeObserverDelegate_ = resizeObserverDelegate;
 }
 
 #pragma mark - Private
@@ -375,6 +435,19 @@ void RuntimeScheduler_Modern::scheduleTask(std::shared_ptr<Task> task) {
 }
 
 void RuntimeScheduler_Modern::scheduleEventLoop() {
+#if RN_UI_THREAD
+  // React Native X: during Choreographer's animation phase the loop is run by
+  // the FrameCallbackScope when it closes (still before this frame's
+  // traversal) instead of through a posted message, which would queue behind
+  // the traversal's sync barrier and push the resulting commit a frame later.
+  if (auto* scope = FrameCallbackScope::current();
+      scope != nullptr && currentRuntimeOnThread == nullptr &&
+      runtimeForThread != nullptr) {
+    auto* runtime = runtimeForThread;
+    scope->kick = [this, runtime] { runEventLoop(*runtime); };
+    return;
+  }
+#endif // RN_UI_THREAD
   runtimeExecutor_([this](jsi::Runtime& runtime) { runEventLoop(runtime); });
 }
 
@@ -388,10 +461,66 @@ void RuntimeScheduler_Modern::runEventLoop(jsi::Runtime& runtime) {
   // correctly if a synchronous task is scheduled.
   // Unit test normalTaskYieldsToSynchronousAccessAndResumes covers this
   // scenario.
+#if RN_UI_THREAD
+  loopSliceStart_ = now_();
+  timeSliceYielded_ = false;
+  yieldedForFrame_ = false;
+  const bool isContinuation = continuationPending_;
+  continuationPending_ = false;
+#endif // RN_UI_THREAD
   auto topPriorityTask = selectTask();
+#if RN_UI_THREAD
+  // A continuation that would start inside the frame's reserved time does not start: it would
+  // only run a millisecond and yield again, holding the Looper in front of the frame callback.
+  // Only when continuations are held past the vsync: with an immediate re-post this check would
+  // spin, re-posting itself until the vsync passes whenever no traversal barrier holds it back.
+  if (FrameClock::kDeferContinuationPastVsync && isContinuation && topPriorityTask &&
+      topPriorityTask->priority >= SchedulerPriority::NormalPriority &&
+      FrameClock::nextVsyncIsNear()) {
+    {
+      std::unique_lock lock(schedulingMutex_);
+      isEventLoopScheduled_ = true;
+    }
+    continuationPending_ = true;
+    std::function<void()> repost = [this] {
+      runtimeExecutor_([this](jsi::Runtime& rt) { runEventLoop(rt); });
+    };
+    if (!FrameClock::postAfterNextFrame(repost)) {
+      repost();
+    }
+    return;
+  }
+#endif // RN_UI_THREAD
   while (topPriorityTask && syncTaskRequests_ == 0) {
     runEventLoopTick(runtime, *topPriorityTask);
     topPriorityTask = selectTask();
+#if RN_UI_THREAD
+    // React Native X: upstream drains the whole queue inside one message, which
+    // was fine on a dedicated JS thread. Here it keeps a pending frame waiting
+    // until every queued task (a React render split into continuations, say) is
+    // done. After a slice, hand the Looper back by re-posting the loop; the frame
+    // callback or input then runs before the next slice. Only non-urgent tasks
+    // are deferred, and a task is never split.
+    if (topPriorityTask && timeSliceYielded_ &&
+        topPriorityTask->priority >= SchedulerPriority::NormalPriority) {
+      timeSliceYielded_ = false;
+      {
+        std::unique_lock lock(schedulingMutex_);
+        isEventLoopScheduled_ = true;
+      }
+      continuationPending_ = true;
+      std::function<void()> repost = [this] {
+        runtimeExecutor_([this](jsi::Runtime& rt) { runEventLoop(rt); });
+      };
+      // A slice that ran out of time continues at once (the frame is not close). One that
+      // yielded for the frame waits until after it: an immediate re-post would be dequeued
+      // ahead of the vsync's frame callback and delay it.
+      if (!(yieldedForFrame_ && FrameClock::postAfterNextFrame(repost))) {
+        repost();
+      }
+      break;
+    }
+#endif // RN_UI_THREAD
   }
 
   currentPriority_ = previousPriority;
@@ -438,12 +567,23 @@ void RuntimeScheduler_Modern::runEventLoopTick(
   currentTask_ = &task;
   currentPriority_ = task.priority;
 
+#if RN_JANK_REPORTER
+  // React Native X (debug builds only): a report about an earlier slow task is
+  // logged here, at the start of a later one, never in the middle of the slow
+  // task itself.
+  jank::Reporter::instance().flushPending(runtime);
+  jank::Reporter::instance().beginTask();
+#endif
+
   auto taskStartTime = now_();
   lastYieldingOpportunity_ = taskStartTime;
   longestPeriodWithoutYieldingOpportunity_ = HighResDuration::zero();
 
   auto didUserCallbackTimeout = task.expirationTime <= taskStartTime;
   executeTask(runtime, task, didUserCallbackTimeout);
+#if RN_JANK_REPORTER
+  const auto jankTaskEnd = now_();
+#endif
 
   // "Perform a microtask checkpoint" step.
   performMicrotaskCheckpoint(runtime);
@@ -453,7 +593,18 @@ void RuntimeScheduler_Modern::runEventLoopTick(
   reportLongTasks(task, taskStartTime, taskEndTime);
 
   // "Update the rendering" step.
-  updateRendering(taskEndTime);
+  updateRendering(runtime, taskEndTime);
+
+#if RN_JANK_REPORTER
+  {
+    const auto renderEnd = now_();
+    jank::TaskTimes times;
+    times.taskMs = (jankTaskEnd - taskStartTime).toNanoseconds() / 1e6;
+    times.microtaskMs = (taskEndTime - jankTaskEnd).toNanoseconds() / 1e6;
+    times.renderingMs = (renderEnd - taskEndTime).toNanoseconds() / 1e6;
+    jank::Reporter::instance().endTask(times);
+  }
+#endif
 
   currentTask_ = nullptr;
 }
@@ -463,7 +614,9 @@ void RuntimeScheduler_Modern::runEventLoopTick(
  * event loop. See
  * https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering.
  */
-void RuntimeScheduler_Modern::updateRendering(HighResTimeStamp taskEndTime) {
+void RuntimeScheduler_Modern::updateRendering(
+    jsi::Runtime& runtime,
+    HighResTimeStamp taskEndTime) {
   TraceSection s("RuntimeScheduler::updateRendering");
 
   // This is the integration of the Event Timing API in the Event Loop.
@@ -472,6 +625,28 @@ void RuntimeScheduler_Modern::updateRendering(HighResTimeStamp taskEndTime) {
   if (eventTimingDelegate != nullptr) {
     eventTimingDelegate->dispatchPendingEventTimingEntries(
         taskEndTime, surfaceIdsWithPendingRenderingUpdates_);
+  }
+
+  // This is the integration of the Resize Observer API in the Event Loop. See
+  // https://w3c.github.io/csswg-drafts/resize-observer/#broadcast-resize-notifications-h
+  // The delegate runs the spec's depth-bounded gather/broadcast loop
+  // internally; this call site stays a single invocation per tick.
+  if (resizeObserverDelegate_ != nullptr) {
+    // This delivers the observations to JS synchronously, so it is outside the
+    // error boundary of `executeTask`. Report the error without going through
+    // `handleTaskError`: we are already inside the "update the rendering" step,
+    // so clearing the queues here would drop the pending rendering updates this
+    // step is about to drain, and a throwing observer callback would abort the
+    // remaining steps below.
+    try {
+      resizeObserverDelegate_->runResizeObservations(runtime);
+    } catch (jsi::JSError& error) {
+      onTaskError_(runtime, error);
+    } catch (std::exception& ex) {
+      jsi::JSError error(
+          runtime, std::string("Non-JS exception: ") + ex.what());
+      onTaskError_(runtime, error);
+    }
   }
 
   // This is the integration of the Intersection Observer API in the Event Loop.
@@ -489,6 +664,19 @@ void RuntimeScheduler_Modern::updateRendering(HighResTimeStamp taskEndTime) {
       pendingRenderingUpdate();
     }
     pendingRenderingUpdates_.pop();
+  }
+
+  // Resha (animation fast lane): the rendering-update phase is over, so this
+  // frame's animated writes are complete. Folding them here makes every JS task
+  // that animated something a flush point, which is what keeps a JS-driven
+  // animation on the UI thread instead of one worker job per prop write. A
+  // failure must not take the task loop down with it: the flush reports its own
+  // surface failures.
+  if (renderingUpdateListener_ != nullptr) {
+    try {
+      renderingUpdateListener_();
+    } catch (...) {
+    }
   }
 }
 
@@ -516,7 +704,7 @@ void RuntimeScheduler_Modern::executeTask(
   } catch (jsi::JSError& error) {
     handleTaskError(runtime, error);
   } catch (std::exception& ex) {
-    jsi::JSError error(runtime, std::string("Non-js exception: ") + ex.what());
+    jsi::JSError error(runtime, std::string("Non-JS exception: ") + ex.what());
     handleTaskError(runtime, error);
   }
 }
@@ -556,7 +744,7 @@ void RuntimeScheduler_Modern::performMicrotaskCheckpoint(
       handleTaskError(runtime, error);
     } catch (std::exception& ex) {
       jsi::JSError error(
-          runtime, std::string("Non-js exception: ") + ex.what());
+          runtime, std::string("Non-JS exception: ") + ex.what());
       handleTaskError(runtime, error);
     }
     retries++;
@@ -576,8 +764,19 @@ void RuntimeScheduler_Modern::reportLongTasks(
     return;
   }
 
+#if RN_JANK_REPORTER
+  // React Native X (debug): DevTools' long-task entries use the jank budget so
+  // the performance panel and the console report agree.
+  const auto longTaskThreshold = HighResDuration::fromMilliseconds(
+      jank::Reporter::instance().enabled()
+          ? jank::Reporter::instance().budgetMs()
+          : 50);
+  if (longestPeriodWithoutYieldingOpportunity_ >= longTaskThreshold ||
+      (endTime - startTime) >= longTaskThreshold) {
+#else
   if (longestPeriodWithoutYieldingOpportunity_ >=
       LONG_TASK_DURATION_THRESHOLD) {
+#endif
     auto duration = endTime - startTime;
     reporter->reportLongTask(startTime, duration);
   }
@@ -586,17 +785,17 @@ void RuntimeScheduler_Modern::reportLongTasks(
 void RuntimeScheduler_Modern::handleTaskError(
     jsi::Runtime& runtime,
     jsi::JSError& error) {
-  if (ReactNativeFeatureFlags::enableRuntimeSchedulerQueueClearingOnError()) {
-    clearQueues();
-  }
+  clearQueues();
 
   onTaskError_(runtime, error);
 }
 
 void RuntimeScheduler_Modern::clearQueues() {
+  // Destroyed after the lock is released: task destructors may schedule work.
+  decltype(taskQueue_) drainedTasks;
   {
     std::unique_lock lock(schedulingMutex_);
-    taskQueue_ = {};
+    drainedTasks.swap(taskQueue_);
     isEventLoopScheduled_ = false;
   }
 

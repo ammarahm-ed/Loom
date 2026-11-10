@@ -80,6 +80,13 @@ internal class FabricUIManagerBinding : HybridClassBase() {
 
   external fun recordDirectNativeProps(tag: Int, props: NativeMap)
 
+  /**
+   * Resha animation fast lane: applies the animation props collected since the last flush. Called
+   * from [FabricUIManager]'s pre-draw frame callback, which runs after the Native Animated module's
+   * own frame callback and before the mount traversal of the same vsync.
+   */
+  external fun flushDirectAnimationFrame()
+
   external fun driveCxxAnimations()
 
   external fun driveAnimationBackend(frameTimeNanos: Long)
@@ -98,6 +105,7 @@ internal class FabricUIManagerBinding : HybridClassBase() {
       eventTimestamp: Long,
       synchronous: Boolean,
   )
+  external fun pullAndExecuteTransaction(surfaceId: Int)
 
   external fun mergeReactRevision(surfaceId: Int)
 

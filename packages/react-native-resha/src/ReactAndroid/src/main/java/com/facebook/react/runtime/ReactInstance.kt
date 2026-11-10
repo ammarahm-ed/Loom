@@ -187,7 +187,7 @@ internal class ReactInstance(
 
     val reactPackages: MutableList<ReactPackage> = ArrayList<ReactPackage>()
     reactPackages.add(
-        CoreReactPackage(context.devSupportManager, context.defaultHardwareBackBtnHandler)
+        CoreReactPackage(context.devSupportManager, context.defaultHardwareBackBtnHandler),
     )
     if (useDevSupport) {
       reactPackages.add(DebugCorePackage())
@@ -305,7 +305,7 @@ internal class ReactInstance(
   }
 
   private inner class ReactJsExceptionHandlerImpl(
-      private val queueThreadExceptionHandler: QueueThreadExceptionHandler
+      private val queueThreadExceptionHandler: QueueThreadExceptionHandler,
   ) : ReactJsExceptionHandler {
 
     override fun reportJsException(errorMap: ProcessedError) {
@@ -313,7 +313,7 @@ internal class ReactInstance(
       try {
         val exceptionsManager =
             checkNotNull(
-                getNativeModule<NativeExceptionsManagerSpec>(NativeExceptionsManagerSpec.NAME)
+                getNativeModule<NativeExceptionsManagerSpec>(NativeExceptionsManagerSpec.NAME),
             )
         exceptionsManager.reportException(data)
       } catch (e: Exception) {
@@ -338,10 +338,6 @@ internal class ReactInstance(
             loadJSBundleFromFile(fileName, sourceURL)
           }
 
-          override fun loadSplitBundleFromFile(fileName: String, sourceURL: String) {
-            loadJSBundleFromFile(fileName, sourceURL)
-          }
-
           override fun loadScriptFromAssets(
               assetManager: AssetManager,
               assetURL: String,
@@ -354,7 +350,7 @@ internal class ReactInstance(
           override fun setSourceURLs(deviceURL: String, remoteURL: String) {
             context.sourceURL = deviceURL
           }
-        }
+        },
     )
     Systrace.endSection(Systrace.TRACE_TAG_REACT)
   }
@@ -415,7 +411,7 @@ internal class ReactInstance(
       ReactSoftExceptionLogger.logSoftException(
           TAG,
           IllegalViewOperationException(
-              "surfaceView's is NOT equal to View.NO_ID before calling startSurface."
+              "surfaceView's is NOT equal to View.NO_ID before calling startSurface.",
           ),
       )
       view.id = View.NO_ID
@@ -492,7 +488,7 @@ internal class ReactInstance(
       ReactSoftExceptionLogger.logSoftException(
           TAG,
           ReactNoCrashSoftException(
-              "Native method handleMemoryPressureJs is called earlier than librninstance.so got ready."
+              "Native method handleMemoryPressureJs is called earlier than librninstance.so got ready.",
           ),
       )
     }

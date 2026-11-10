@@ -105,6 +105,26 @@ function materialize({projectRoot, force = false, out, log = console.log}) {
     fs.appendFileSync(gp, `\n# Resha switches copied from android/gradle.properties by \`resha materialize\`\n${lines.join('\n')}\n`);
   }
   fs.writeFileSync(path.join(tmp, STAMP), JSON.stringify(stamp, null, 2) + '\n');
+  // Refresh sources without throwing away Gradle outputs, downloaded native
+  // dependencies or CMake caches. These remain at the same absolute paths
+  // after the swap; Gradle/CMake invalidate outputs when their inputs change.
+  // Move instead of copying so large build trees stay cheap to retain, even
+  // with --force (which refreshes overrides, not generated build artifacts).
+  for (const relative of [
+    '.gradle',
+    'build',
+    'ReactAndroid/build',
+    'ReactAndroid/.cxx',
+    'ReactAndroid/hermes-engine/build',
+    'ReactAndroid/hermes-engine/.cxx',
+  ]) {
+    const cached = path.join(dest, relative);
+    if (!fs.existsSync(cached)) continue;
+    const target = path.join(tmp, relative);
+    fs.mkdirSync(path.dirname(target), {recursive: true});
+    fs.rmSync(target, {recursive: true, force: true});
+    fs.renameSync(cached, target);
+  }
   fs.rmSync(dest, {recursive: true, force: true});
   fs.renameSync(tmp, dest);
   log(

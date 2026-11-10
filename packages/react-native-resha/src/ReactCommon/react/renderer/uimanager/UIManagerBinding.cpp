@@ -11,13 +11,17 @@
 #endif
 
 #include <cxxreact/TraceSection.h>
+#include <react/renderer/runtimescheduler/JankReporter.h>
 #include <glog/logging.h>
 #include <jsi/JSIDynamic.h>
 #include <react/debug/react_native_assert.h>
 #include <react/renderer/components/view/PointerEvent.h>
 #include <react/renderer/core/LayoutableShadowNode.h>
+#include <react/renderer/core/ShadowNode.h>
 #include <react/renderer/dom/DOM.h>
+#include <react/renderer/runtimescheduler/RuntimeScheduler.h>
 #include <react/renderer/runtimescheduler/RuntimeSchedulerBinding.h>
+#include <react/renderer/uimanager/consistency/ShadowTreeRevisionProvider.h>
 #include <react/renderer/uimanager/primitives.h>
 
 #include <utility>
@@ -42,7 +46,28 @@ void UIManagerBinding::createAndInstallIfNeeded(
     auto object = jsi::Object::createFromHostObject(runtime, uiManagerBinding);
     runtime.global().setProperty(
         runtime, uiManagerModuleName, std::move(object));
+
+    // Tag this thread (the JS runtime thread) as the one allowed to propagate
+    // runtime shadow-node reference updates during Fabric commit. The flag is
+    // thread_local, so it must be set on the JS thread; installing the binding
+    // is guaranteed to run there and to happen before any JS-driven commit.
+    ShadowNode::setUseRuntimeShadowNodeReferenceUpdateOnThread(true);
   }
+
+#if UI_THREAD_RENDERER_WORKER
+  // Resha animation fast lane: the flush has to run at the end of every JS task
+  // (docs/resha/animation-fast-lane-design.md §5.2), so hook it onto the
+  // scheduler this runtime already uses. It is installed here, and not next to
+  // the scheduler binding itself, because this translation unit already
+  // compiles against the UI thread renderer while the runtime-scheduler target
+  // has no graphics platform headers on its include path.
+  if (auto runtimeSchedulerBinding = RuntimeSchedulerBinding::getBinding(runtime)) {
+    if (auto runtimeScheduler = runtimeSchedulerBinding->getRuntimeScheduler()) {
+      runtimeScheduler->setRenderingUpdateListener(
+          &UIThreadRendererBinding::flushAnimationFrames);
+    }
+  }
+#endif
 }
 
 std::shared_ptr<UIManagerBinding> UIManagerBinding::getBinding(
@@ -160,6 +185,10 @@ void UIManagerBinding::dispatchEventToJS(
     }
   }
 
+#if RN_JANK_REPORTER
+  // React Native X (debug): name the event for the main-thread jank report.
+  jank::Reporter::setCause(jank::Cause::Event, type.c_str());
+#endif
   currentEventPriority_ = priority;
   if (eventHandler_) {
     eventHandler_->call(

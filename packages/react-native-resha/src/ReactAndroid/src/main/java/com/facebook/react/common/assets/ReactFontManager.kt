@@ -11,10 +11,12 @@ import android.content.Context
 import android.content.res.AssetManager
 import android.graphics.Typeface
 import android.os.Build
+import android.util.Log
 import android.util.SparseArray
 import androidx.core.content.res.ResourcesCompat
 import com.facebook.react.BuildConfig
 import com.facebook.react.common.ReactConstants
+import com.facebook.react.common.build.ReactBuildConfig
 
 /**
  * Responsible for loading and caching Typeface objects.
@@ -92,7 +94,7 @@ public class ReactFontManager {
    *
    * ReactFontManager.getInstance().addCustomFont(this, "Srisakdi", R.font.srisakdi);
    */
-  public fun addCustomFont(context: Context, fontFamily: String, fontId: Int): Unit {
+  public fun addCustomFont(context: Context, fontFamily: String, fontId: Int) {
     addCustomFont(fontFamily, ResourcesCompat.getFont(context, fontId))
   }
 
@@ -173,6 +175,8 @@ public class ReactFontManager {
     private val EXTENSIONS = arrayOf("", "_bold", "_italic", "_bold_italic")
     private val FILE_EXTENSIONS = arrayOf(".ttf", ".otf")
     private const val FONTS_ASSET_PATH = "fonts/"
+    // Android's default font family.
+    private const val DEFAULT_FAMILY = "sans-serif"
 
     private val _instance = ReactFontManager()
 
@@ -195,7 +199,16 @@ public class ReactFontManager {
           }
         }
       }
-      return Typeface.create(fontFamilyName, style)
+
+      val typeface = Typeface.create(fontFamilyName, style)
+      // Like RCTLogInfo on iOS, only log in debug builds.
+      if (ReactBuildConfig.DEBUG) {
+        // Typeface.create returns the default typeface for unknown family names.
+        if (fontFamilyName != DEFAULT_FAMILY && typeface == Typeface.defaultFromStyle(style)) {
+          Log.i(ReactConstants.TAG, "Unrecognized font family '$fontFamilyName'")
+        }
+      }
+      return typeface
     }
   }
 

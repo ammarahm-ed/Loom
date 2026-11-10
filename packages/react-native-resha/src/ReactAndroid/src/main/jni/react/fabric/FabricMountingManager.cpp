@@ -15,12 +15,15 @@
 #include <android/log.h>
 #endif
 
+#include "AnimatedPropBufferEncoder.h"
 #include "EventEmitterWrapper.h"
 #include "MountItem.h"
 #include "StateWrapperImpl.h"
 
 #include <cxxreact/TraceSection.h>
+#include <react/debug/react_native_assert.h>
 #include <react/featureflags/ReactNativeFeatureFlags.h>
+#include <react/jni/ReadableNativeArray.h>
 #include <react/jni/ReadableNativeMap.h>
 #include <react/jni/ReadableNativeArray.h>
 #include <react/common/mapbuffer/JReadableMapBuffer.h>
@@ -41,11 +44,32 @@
 
 #include <algorithm>
 #include <bit>
+#include <limits>
+#include <unordered_map>
+#include <array>
+#include <bit>
 #include <cfenv>
 #include <cmath>
+#include <string_view>
 #include <vector>
 
 namespace facebook::react {
+
+void logDirectRendererJavaException(
+    const char* operation,
+    const jni::JniException& error) {
+  // The renderer fails a surface with only the exception's message; log the Java stack while it
+  // is still available, so a failure can be traced to the Java frame that threw.
+  static const auto log = jni::findClassStatic("android/util/Log");
+  static const auto getStackTraceString =
+      log->getStaticMethod<jstring(jni::JThrowable::javaobject)>("getStackTraceString");
+  __android_log_print(
+      ANDROID_LOG_ERROR,
+      "ReshaDirect",
+      "%s failed: %s",
+      operation,
+      getStackTraceString(log, error.getThrowable().get())->toStdString().c_str());
+}
 
 #if UI_THREAD_RENDERER
 namespace {
@@ -70,6 +94,149 @@ class DirectGenericStateData final {
 
 } // namespace
 
+namespace {
+
+/*
+ * React Native X: props for the direct renderer's create and update operations,
+ * encoded as ints instead of one ReadableNativeMap per view.
+ *
+ * Java read every ReadableNativeMap back through JNI (key array, then a value
+ * array), which cost several microseconds per view and dominated applying a
+ * large update on the UI thread. The encoded form crosses JNI once per batch:
+ * Java rebuilds plain JavaOnlyMap/JavaOnlyArray objects from it
+ * (DirectPropsTable.kt), so view managers still receive a ReadableMap.
+ *
+ * Layout of one value in `data`:
+ *   0 null | 1 false | 2 true | 3 int32 value | 4 double hi lo
+ *   5 string <string index> | 6 map <count> (<key string index> <value>)*
+ *   7 array <count> <value>*
+ * `offsets[objectSlot]` is where the map for that object slot starts, -1 when
+ * the slot carries a Java object instead. Strings, keys included, are sent once
+ * per batch.
+ */
+class DirectPropsEncoder {
+ public:
+  explicit DirectPropsEncoder(size_t objectCount) : offsets_(objectCount, -1) {}
+
+  bool encode(const folly::dynamic& props, size_t objectSlot) {
+    const auto start = data_.size();
+    offsets_[objectSlot] = static_cast<jint>(start);
+    if (props.isObject() && writeValue(props, 0)) {
+      return true;
+    }
+    data_.resize(start);
+    offsets_[objectSlot] = -1;
+    return false;
+  }
+
+  bool empty() const {
+    return data_.empty();
+  }
+
+  jni::local_ref<jobject> toJava() const {
+    static auto tableClass = jni::findClassStatic(
+        "com/facebook/react/fabric/mounting/DirectPropsTable");
+    static auto constructor = tableClass->getConstructor<jobject(
+        jintArray, jintArray, jni::jtypeArray<jstring>)>();
+    auto env = jni::Environment::current();
+    auto offsets = env->NewIntArray(static_cast<jsize>(offsets_.size()));
+    env->SetIntArrayRegion(
+        offsets, 0, static_cast<jsize>(offsets_.size()), offsets_.data());
+    auto data = env->NewIntArray(static_cast<jsize>(data_.size()));
+    env->SetIntArrayRegion(
+        data, 0, static_cast<jsize>(data_.size()), data_.data());
+    auto strings = jni::JArrayClass<jstring>::newArray(strings_.size());
+    for (size_t index = 0; index < strings_.size(); ++index) {
+      strings->setElement(index, jni::make_jstring(strings_[index]).get());
+    }
+    auto table = tableClass->newObject(constructor, offsets, data, strings.get());
+    env->DeleteLocalRef(offsets);
+    env->DeleteLocalRef(data);
+    return table;
+  }
+
+ private:
+  static constexpr int kMaxDepth = 32;
+
+  jint stringIndex(const std::string& value) {
+    auto [it, inserted] =
+        stringIds_.try_emplace(value, static_cast<jint>(strings_.size()));
+    if (inserted) {
+      strings_.push_back(value);
+    }
+    return it->second;
+  }
+
+  bool writeValue(const folly::dynamic& value, int depth) {
+    if (depth > kMaxDepth) {
+      return false;
+    }
+    switch (value.type()) {
+      case folly::dynamic::NULLT:
+        data_.push_back(0);
+        return true;
+      case folly::dynamic::BOOL:
+        data_.push_back(value.getBool() ? 2 : 1);
+        return true;
+      case folly::dynamic::INT64: {
+        const auto number = value.getInt();
+        if (number >= std::numeric_limits<jint>::min() &&
+            number <= std::numeric_limits<jint>::max()) {
+          data_.push_back(3);
+          data_.push_back(static_cast<jint>(number));
+        } else {
+          writeDouble(static_cast<double>(number));
+        }
+        return true;
+      }
+      case folly::dynamic::DOUBLE:
+        writeDouble(value.getDouble());
+        return true;
+      case folly::dynamic::STRING:
+        data_.push_back(5);
+        data_.push_back(stringIndex(value.getString()));
+        return true;
+      case folly::dynamic::OBJECT:
+        data_.push_back(6);
+        data_.push_back(static_cast<jint>(value.size()));
+        for (const auto& [key, item] : value.items()) {
+          if (!key.isString()) {
+            return false;
+          }
+          data_.push_back(stringIndex(key.getString()));
+          if (!writeValue(item, depth + 1)) {
+            return false;
+          }
+        }
+        return true;
+      case folly::dynamic::ARRAY:
+        data_.push_back(7);
+        data_.push_back(static_cast<jint>(value.size()));
+        for (const auto& item : value) {
+          if (!writeValue(item, depth + 1)) {
+            return false;
+          }
+        }
+        return true;
+    }
+    return false;
+  }
+
+  void writeDouble(double number) {
+    const auto bits = std::bit_cast<int64_t>(number);
+    data_.push_back(4);
+    data_.push_back(static_cast<jint>(bits >> 32));
+    data_.push_back(static_cast<jint>(bits & 0xffffffff));
+  }
+
+  std::vector<jint> offsets_;
+  std::vector<jint> data_;
+  std::vector<std::string> strings_;
+  std::unordered_map<std::string, jint> stringIds_;
+};
+
+} // namespace
+
 void FabricMountingManager::directApplyBatch(
     SurfaceId surfaceId,
     UIThreadDirectMountBatch batch) {
@@ -86,7 +253,8 @@ void FabricMountingManager::directApplyBatch(
       jintArray,
       jni::jtypeArray<jobject>,
       jintArray,
-      jboolean)>("uiThreadDirectApplyBatch");
+      jboolean,
+      jni::alias_ref<jobject>)>("uiThreadDirectApplyBatch");
 
   std::vector<PendingDirectState> states;
   {
@@ -102,6 +270,7 @@ void FabricMountingManager::directApplyBatch(
   instructions.reserve(batch.instructionCount);
   auto objects = jni::JArrayClass<jobject>::newArray(batch.objectCount);
   size_t objectIndex = 0;
+  DirectPropsEncoder propsEncoder(batch.objectCount);
   const auto opcode = [](DirectMountOpcode value) {
     return static_cast<jint>(value);
   };
@@ -124,8 +293,12 @@ void FabricMountingManager::directApplyBatch(
             objects->setElement(objectIndex++, name.get());
             auto props = std::move(typed.props);
             if (!props.isObject()) props = folly::dynamic::object();
-            auto map = ReadableNativeMap::newObjectCxxArgs(std::move(props));
-            objects->setElement(objectIndex++, map.get());
+            if (propsEncoder.encode(props, objectIndex)) {
+              objectIndex++;
+            } else {
+              auto map = ReadableNativeMap::newObjectCxxArgs(std::move(props));
+              objects->setElement(objectIndex++, map.get());
+            }
           } else if constexpr (std::is_same_v<T, DirectUpdatePropsOperation>) {
             instructions.insert(
                 instructions.end(),
@@ -133,8 +306,12 @@ void FabricMountingManager::directApplyBatch(
                  static_cast<jint>(typed.tag)});
             auto props = std::move(typed.props);
             if (!props.isObject()) props = folly::dynamic::object();
-            auto map = ReadableNativeMap::newObjectCxxArgs(std::move(props));
-            objects->setElement(objectIndex++, map.get());
+            if (propsEncoder.encode(props, objectIndex)) {
+              objectIndex++;
+            } else {
+              auto map = ReadableNativeMap::newObjectCxxArgs(std::move(props));
+              objects->setElement(objectIndex++, map.get());
+            }
           } else if constexpr (
               std::is_same_v<T, DirectInsertOperation> ||
               std::is_same_v<T, DirectRemoveOperation>) {
@@ -239,21 +416,29 @@ void FabricMountingManager::directApplyBatch(
         static_cast<jsize>(stateTags.size()),
         stateTags.data());
   }
+  jni::local_ref<jobject> propsTable =
+      propsEncoder.empty() ? nullptr : propsEncoder.toJava();
 #if RN_PROFILE_UI_THREAD_RENDERER
   const auto profileEncoded = std::chrono::steady_clock::now();
 #endif
-  method(
-      javaUIManager_,
-      static_cast<jint>(surfaceId),
-      ints,
-      objects.get(),
-      mapBufferBatch,
-      stateTagsArray,
-      stateWrappers.get(),
-      preparedTextTagsArray,
-      preparedTextLayouts.get(),
-      phaseOffsetsArray,
-      static_cast<jboolean>(batch.requiresTagReplacement));
+  try {
+    method(
+        javaUIManager_,
+        static_cast<jint>(surfaceId),
+        ints,
+        objects.get(),
+        mapBufferBatch,
+        stateTagsArray,
+        stateWrappers.get(),
+        preparedTextTagsArray,
+        preparedTextLayouts.get(),
+        phaseOffsetsArray,
+        static_cast<jboolean>(batch.requiresTagReplacement),
+        propsTable);
+  } catch (const jni::JniException& error) {
+    logDirectRendererJavaException("applyBatch", error);
+    throw;
+  }
 #if RN_PROFILE_UI_THREAD_RENDERER
   const auto profileReturned = std::chrono::steady_clock::now();
 #endif
@@ -367,8 +552,7 @@ void FabricMountingManager::directUpdateState(
     pendingDirectStates_[surfaceId].push_back(
         {tag, state->getMapBuffer(), nullptr, nullptr});
   } else {
-    auto javaStateWrapper = StateWrapperImpl::newObjectJavaArgs();
-    cthis(javaStateWrapper)->setState(state);
+    auto javaStateWrapper = StateWrapperImpl::newObjectCxxArgs(state);
     pendingDirectStates_[surfaceId].push_back(
         {tag, std::nullopt, jni::make_global(javaStateWrapper), nullptr});
   }
@@ -470,7 +654,11 @@ FabricMountingManager::~FabricMountingManager() {
 void FabricMountingManager::onSurfaceStart(SurfaceId surfaceId) {
   std::lock_guard lock(allocatedViewsMutex_);
   allocatedViewRegistry_.emplace(
-      surfaceId, std::unordered_set<Tag>({surfaceId}));
+      surfaceId,
+      std::unordered_map<Tag, AllocatedView>{
+          {surfaceId,
+           {.preallocatedProps = nullptr,
+            .state = AllocatedViewState::Mounted}}});
 }
 
 void FabricMountingManager::onSurfaceStop(SurfaceId surfaceId) {
@@ -479,6 +667,13 @@ void FabricMountingManager::onSurfaceStop(SurfaceId surfaceId) {
 #if UI_THREAD_RENDERER
   pendingDirectStates_.erase(surfaceId);
 #endif
+}
+
+void FabricMountingManager::onTransactionAvailable(SurfaceId surfaceId) {
+  static auto onTransactionAvailable =
+      JFabricUIManager::javaClassStatic()->getMethod<void(jint)>(
+          "onTransactionAvailable");
+  onTransactionAvailable(javaUIManager_, surfaceId);
 }
 
 bool FabricMountingManager::isViewAllocated(SurfaceId surfaceId, Tag tag) {
@@ -496,7 +691,7 @@ namespace {
 // List of layout-only props extracted from ViewProps.kt used to filter out
 // component props from Props 1.5 to validate the Props 2.0 output
 inline bool isLayoutOnlyProp(const std::string& propName) {
-  static const std::vector<std::string> layoutOnlyProps = {
+  static constexpr std::array<std::string_view, 46> layoutOnlyProps = {
       // Flexbox Alignment
       "alignItems",
       "alignSelf",
@@ -561,8 +756,10 @@ inline bool isLayoutOnlyProp(const std::string& propName) {
       // Other
       "collapsable",
   };
-  return std::find(layoutOnlyProps.begin(), layoutOnlyProps.end(), propName) !=
-      layoutOnlyProps.end();
+  return std::find(
+             layoutOnlyProps.begin(),
+             layoutOnlyProps.end(),
+             std::string_view{propName}) != layoutOnlyProps.end();
 }
 #endif
 
@@ -731,6 +928,11 @@ inline float scale(Float value, Float pointScaleFactor) {
   return result;
 }
 
+bool shouldDiffInsertPropsAgainstPreallocatedProps() {
+  return ReactNativeFeatureFlags::enableAccumulatedUpdatesInRawPropsAndroid() &&
+      ReactNativeFeatureFlags::enablePreallocatedPropsDiffOnInsertAndroid();
+}
+
 jni::local_ref<jobject> getProps(
     const ShadowView& oldShadowView,
     const ShadowView& newShadowView) {
@@ -780,22 +982,23 @@ jni::local_ref<jobject> getProps(
 }
 
 struct InstructionBuffer {
-  JNIEnv* env;
-  jintArray ints;
+  InstructionBuffer(int intsSize, int objectsSize)
+      : objects(jni::JArrayClass<jobject>::newArray(objectsSize)) {
+    ints.reserve(intsSize);
+  }
+
+  std::vector<jint> ints;
   jni::local_ref<jni::JArrayClass<jobject>> objects;
 
-  int intsPosition = 0;
   int objectsPosition = 0;
 
   inline void writeInt(int value) {
-    env->SetIntArrayRegion(ints, intsPosition, 1, &value);
-    intsPosition += 1;
+    ints.push_back(value);
   }
 
   template <size_t N>
   inline void writeIntArray(const std::array<int, N>& buffer) {
-    env->SetIntArrayRegion(ints, intsPosition, N, buffer.data());
-    intsPosition += N;
+    ints.insert(ints.end(), buffer.begin(), buffer.end());
   }
 
   inline void writeObject(jobject obj) {
@@ -844,9 +1047,8 @@ inline void writeCreateMountItem(
   // lifetime of the Java object
   jni::local_ref<StateWrapperImpl::JavaPart> javaStateWrapper = nullptr;
   if (mountItem.newChildShadowView.state != nullptr) {
-    javaStateWrapper = StateWrapperImpl::newObjectJavaArgs();
-    StateWrapperImpl* cStateWrapper = cthis(javaStateWrapper);
-    cStateWrapper->setState(mountItem.newChildShadowView.state);
+    javaStateWrapper =
+        StateWrapperImpl::newObjectCxxArgs(mountItem.newChildShadowView.state);
   }
 
   // Do not hold a reference to javaEventEmitter from the C++ side.
@@ -907,9 +1109,7 @@ inline void writeUpdateStateMountItem(
   // lifetime of the Java object
   jni::local_ref<StateWrapperImpl::JavaPart> javaStateWrapper = nullptr;
   if (state != nullptr) {
-    javaStateWrapper = StateWrapperImpl::newObjectJavaArgs();
-    StateWrapperImpl* cStateWrapper = cthis(javaStateWrapper);
-    cStateWrapper->setState(state);
+    javaStateWrapper = StateWrapperImpl::newObjectCxxArgs(state);
   }
 
   buffer.writeObject(
@@ -997,7 +1197,8 @@ inline void writeUpdateOverflowInsetMountItem(
 } // namespace
 
 void FabricMountingManager::executeMount(
-    const MountingTransaction& transaction) {
+    const MountingTransaction& transaction,
+    bool synchronous) {
   TraceSection section("FabricMountingManager::executeMount");
 
   std::scoped_lock lock(commitMutex_);
@@ -1011,6 +1212,8 @@ void FabricMountingManager::executeMount(
 
   bool maintainMutationOrder =
       ReactNativeFeatureFlags::disableMountItemReorderingAndroid();
+  bool updateViewsOnDensityChange =
+      ReactNativeFeatureFlags::fixTextLayoutOnPixelDensityChange();
 
   auto revisionNumber = telemetry.getRevisionNumber();
 
@@ -1027,12 +1230,12 @@ void FabricMountingManager::executeMount(
     std::lock_guard allocatedViewsLock(allocatedViewsMutex_);
 
     auto allocatedViewsIterator = allocatedViewRegistry_.find(surfaceId);
-    auto defaultAllocatedViews = std::unordered_set<Tag>{};
+    auto defaultAllocatedViews = std::unordered_map<Tag, AllocatedView>{};
     // Do not remove `defaultAllocatedViews` or initialize
-    // `std::unordered_set<Tag>{}` inline in below ternary expression - if falsy
-    // operand is a value type, the compiler will decide the expression to be a
-    // value type, an unnecessary (sometimes expensive) copy will happen as a
-    // result.
+    // `std::unordered_map<Tag, AllocatedView>{}` inline in below ternary
+    // expression - if falsy operand is a value type, the compiler will decide
+    // the expression to be a value type, an unnecessary (sometimes expensive)
+    // copy will happen as a result.
     auto& allocatedViewTags =
         allocatedViewsIterator != allocatedViewRegistry_.end()
         ? allocatedViewsIterator->second
@@ -1052,13 +1255,18 @@ void FabricMountingManager::executeMount(
       bool isVirtual = mutation.mutatedViewIsVirtual();
       switch (mutationType) {
         case ShadowViewMutation::Create: {
-          bool shouldCreateView =
-              !allocatedViewTags.contains(newChildShadowView.tag);
+          auto [allocatedView, shouldCreateView] =
+              allocatedViewTags.try_emplace(
+                  newChildShadowView.tag,
+                  AllocatedView{
+                      .preallocatedProps = nullptr,
+                      .state = AllocatedViewState::Mounted});
 
           if (shouldCreateView) {
             cppCommonMountItems.push_back(
                 CppMountItem::CreateMountItem(newChildShadowView));
-            allocatedViewTags.insert(newChildShadowView.tag);
+          } else {
+            allocatedView->second.state = AllocatedViewState::Mounted;
           }
           break;
         }
@@ -1100,12 +1308,19 @@ void FabricMountingManager::executeMount(
                       CppMountItem::UpdateStateMountItem(newChildShadowView));
             }
 
+            bool pointScaleChanged = updateViewsOnDensityChange &&
+                oldChildShadowView.layoutMetrics.pointScaleFactor !=
+                    newChildShadowView.layoutMetrics.pointScaleFactor;
+
             // Padding: padding mountItems must be executed before layout props
             // are updated in the view. This is necessary to ensure that events
             // (resulting from layout changes) are dispatched with the correct
             // padding information.
             if (oldChildShadowView.layoutMetrics.contentInsets !=
-                newChildShadowView.layoutMetrics.contentInsets) {
+                    newChildShadowView.layoutMetrics.contentInsets ||
+                (pointScaleChanged &&
+                 newChildShadowView.layoutMetrics.contentInsets !=
+                     EdgeInsets::ZERO)) {
               (maintainMutationOrder ? cppCommonMountItems
                                      : cppUpdatePaddingMountItems)
                   .push_back(
@@ -1125,8 +1340,11 @@ void FabricMountingManager::executeMount(
             // children of the current view. The layout of current view may not
             // change, and we separate this part from layout mount items to not
             // pack too much data there.
-            if ((oldChildShadowView.layoutMetrics.overflowInset !=
-                 newChildShadowView.layoutMetrics.overflowInset)) {
+            if (oldChildShadowView.layoutMetrics.overflowInset !=
+                    newChildShadowView.layoutMetrics.overflowInset ||
+                (pointScaleChanged &&
+                 newChildShadowView.layoutMetrics.overflowInset !=
+                     EdgeInsets::ZERO)) {
               (maintainMutationOrder ? cppCommonMountItems
                                      : cppUpdateOverflowInsetMountItems)
                   .push_back(
@@ -1152,19 +1370,35 @@ void FabricMountingManager::executeMount(
                 CppMountItem::InsertMountItem(
                     parentTag, newChildShadowView, index));
 
-            bool shouldCreateView =
-                !allocatedViewTags.contains(newChildShadowView.tag);
+            auto allocatedView = allocatedViewTags.find(newChildShadowView.tag);
+            bool shouldCreateView = allocatedView == allocatedViewTags.end();
             if (ReactNativeFeatureFlags::
                     enableAccumulatedUpdatesInRawPropsAndroid()) {
               if (shouldCreateView) {
                 LOG(ERROR) << "Emitting insert for unallocated view "
                            << newChildShadowView.tag;
               }
-              (maintainMutationOrder ? cppCommonMountItems
-                                     : cppUpdatePropsMountItems)
-                  .push_back(
-                      CppMountItem::UpdatePropsMountItem(
-                          {}, newChildShadowView));
+              if (shouldCreateView ||
+                  !shouldDiffInsertPropsAgainstPreallocatedProps()) {
+                (maintainMutationOrder ? cppCommonMountItems
+                                       : cppUpdatePropsMountItems)
+                    .push_back(
+                        CppMountItem::UpdatePropsMountItem(
+                            {}, newChildShadowView));
+              } else if (auto& preallocatedProps =
+                             allocatedView->second.preallocatedProps;
+                         preallocatedProps != nullptr) {
+                if (preallocatedProps != newChildShadowView.props) {
+                  auto preallocatedShadowView = newChildShadowView;
+                  preallocatedShadowView.props = preallocatedProps;
+                  (maintainMutationOrder ? cppCommonMountItems
+                                         : cppUpdatePropsMountItems)
+                      .push_back(
+                          CppMountItem::UpdatePropsMountItem(
+                              preallocatedShadowView, newChildShadowView));
+                }
+                preallocatedProps = nullptr;
+              }
             } else {
               if (shouldCreateView) {
                 LOG(ERROR) << "Emitting insert for unallocated view "
@@ -1259,7 +1493,8 @@ void FabricMountingManager::executeMount(
                                           jlong,
                                           jlong,
                                           jlong,
-                                          jint)>("scheduleMountItem");
+                                          jint,
+                                          jboolean)>("scheduleMountItem");
 
   if (batchMountItemIntsSize == 0) {
     auto finishTransactionEndTime = telemetryTimePointNow();
@@ -1274,17 +1509,14 @@ void FabricMountingManager::executeMount(
         telemetryTimePointToMilliseconds(telemetry.getLayoutEndTime()),
         telemetryTimePointToMilliseconds(finishTransactionStartTime),
         telemetryTimePointToMilliseconds(finishTransactionEndTime),
-        telemetry.getAffectedLayoutNodesCount());
+        telemetry.getAffectedLayoutNodesCount(),
+        static_cast<jboolean>(synchronous));
     return;
   }
 
   // Allocate the intBuffer and object array, now that we know exact sizes
   // necessary
-  InstructionBuffer buffer = {
-      .env = env,
-      .ints = env->NewIntArray(batchMountItemIntsSize),
-      .objects = jni::JArrayClass<jobject>::newArray(batchMountItemObjectsSize),
-  };
+  InstructionBuffer buffer(batchMountItemIntsSize, batchMountItemObjectsSize);
 
   // Fill in arrays
   int prevMountItemType = -1;
@@ -1414,6 +1646,13 @@ void FabricMountingManager::executeMount(
     }
   }
 
+  // Copy the ints to Java in a single JNI call, rather than one per write
+  react_native_assert(
+      static_cast<int>(buffer.ints.size()) == batchMountItemIntsSize);
+  jintArray ints = env->NewIntArray(static_cast<jsize>(buffer.ints.size()));
+  env->SetIntArrayRegion(
+      ints, 0, static_cast<jsize>(buffer.ints.size()), buffer.ints.data());
+
   static auto createMountItemsIntBufferBatchContainer =
       JFabricUIManager::javaClassStatic()
           ->getMethod<jni::alias_ref<JMountItem>(
@@ -1424,7 +1663,7 @@ void FabricMountingManager::executeMount(
       surfaceId,
       // If there are no items, we pass a nullptr instead of passing the
       // object through the JNI
-      batchMountItemIntsSize > 0 ? buffer.ints : nullptr,
+      batchMountItemIntsSize > 0 ? ints : nullptr,
       batchMountItemObjectsSize > 0 ? buffer.objects.get() : nullptr,
       revisionNumber);
 
@@ -1441,21 +1680,49 @@ void FabricMountingManager::executeMount(
       telemetryTimePointToMilliseconds(telemetry.getLayoutEndTime()),
       telemetryTimePointToMilliseconds(finishTransactionStartTime),
       telemetryTimePointToMilliseconds(finishTransactionEndTime),
-      telemetry.getAffectedLayoutNodesCount());
+      telemetry.getAffectedLayoutNodesCount(),
+      static_cast<jboolean>(synchronous));
 
-  env->DeleteLocalRef(buffer.ints);
+  env->DeleteLocalRef(ints);
 }
 
 void FabricMountingManager::drainPreallocateViewsQueue() {
+  std::vector<QueuedView> queuedViews;
   std::vector<ShadowView> shadowViews;
 
   {
     std::lock_guard lock(preallocateMutex_);
-    std::swap(shadowViews, preallocatedViewsQueue_);
+    std::swap(queuedViews, preallocatedViewsQueue_);
+  }
+
+  bool pullModel =
+      ReactNativeFeatureFlags::enableMountingCoordinatorPullModelAndroid();
+  {
+    std::lock_guard allocatedViewsLock(allocatedViewsMutex_);
+    for (auto& [shadowView, family] : queuedViews) {
+      if (pullModel && family.expired()) {
+        continue;
+      }
+      auto allocatedViewsIterator =
+          allocatedViewRegistry_.find(shadowView.surfaceId);
+      if (allocatedViewsIterator != allocatedViewRegistry_.end() &&
+          allocatedViewsIterator->second
+              .emplace(
+                  shadowView.tag,
+                  AllocatedView{
+                      .preallocatedProps =
+                          shouldDiffInsertPropsAgainstPreallocatedProps()
+                          ? shadowView.props
+                          : nullptr,
+                      .state = AllocatedViewState::Preallocated})
+              .second) {
+        shadowViews.push_back(std::move(shadowView));
+      }
+    }
   }
 
   for (const auto& shadowView : shadowViews) {
-    preallocateShadowView(shadowView);
+    preallocateRegisteredView(shadowView);
   }
 }
 
@@ -1463,6 +1730,12 @@ void FabricMountingManager::destroyUnmountedShadowNode(
     const ShadowNodeFamily& family) {
   auto tag = family.getTag();
   auto surfaceId = family.getSurfaceId();
+  bool pullModel =
+      ReactNativeFeatureFlags::enableMountingCoordinatorPullModelAndroid();
+
+  if (!pullModel && family.hasBeenMounted()) {
+    return;
+  }
 
   // Remove from allocatedViewRegistry so that executeMount does not skip
   // the Create mount item for this tag. Without this, if the view was
@@ -1473,7 +1746,20 @@ void FabricMountingManager::destroyUnmountedShadowNode(
   {
     std::lock_guard allocatedViewsLock(allocatedViewsMutex_);
     auto allocatedViewsIterator = allocatedViewRegistry_.find(surfaceId);
-    if (allocatedViewsIterator != allocatedViewRegistry_.end()) {
+    if (pullModel) {
+      if (allocatedViewsIterator == allocatedViewRegistry_.end()) {
+        return;
+      }
+      auto allocatedView = allocatedViewsIterator->second.find(tag);
+      // In the pull model, a committed family can have a preallocated view that
+      // no mount created (its Create and Delete were never pulled), and a
+      // mounted view's family can be destroyed before its Delete is pulled.
+      if (allocatedView == allocatedViewsIterator->second.end() ||
+          allocatedView->second.state != AllocatedViewState::Preallocated) {
+        return;
+      }
+      allocatedViewsIterator->second.erase(allocatedView);
+    } else if (allocatedViewsIterator != allocatedViewRegistry_.end()) {
       allocatedViewsIterator->second.erase(tag);
     }
   }
@@ -1504,28 +1790,16 @@ bool FabricMountingManager::maybePreallocateShadowNode(
 
   {
     std::lock_guard lock(preallocateMutex_);
-    preallocatedViewsQueue_.push_back(std::move(shadowView));
+    preallocatedViewsQueue_.push_back(
+        {.shadowView = std::move(shadowView),
+         .family = shadowNode.getFamilyShared()});
   }
   return true;
 }
 
-void FabricMountingManager::preallocateShadowView(
+void FabricMountingManager::preallocateRegisteredView(
     const ShadowView& shadowView) {
-  TraceSection section("FabricMountingManager::preallocateShadowView");
-
-  {
-    std::lock_guard lock(allocatedViewsMutex_);
-    auto allocatedViewsIterator =
-        allocatedViewRegistry_.find(shadowView.surfaceId);
-    if (allocatedViewsIterator == allocatedViewRegistry_.end()) {
-      return;
-    }
-    const auto [_, inserted] =
-        allocatedViewsIterator->second.insert(shadowView.tag);
-    if (!inserted) {
-      return;
-    }
-  }
+  TraceSection section("FabricMountingManager::preallocateRegisteredView");
 
   bool isLayoutableShadowNode = shadowView.layoutMetrics != EmptyLayoutMetrics;
 
@@ -1545,9 +1819,7 @@ void FabricMountingManager::preallocateShadowView(
   bool preventPassingStateWrapperForText =
       strcmp(shadowView.componentName, "Paragraph") == 0;
   if (shadowView.state != nullptr && !preventPassingStateWrapperForText) {
-    javaStateWrapper = StateWrapperImpl::newObjectJavaArgs();
-    StateWrapperImpl* cStateWrapper = cthis(javaStateWrapper);
-    cStateWrapper->setState(shadowView.state);
+    javaStateWrapper = StateWrapperImpl::newObjectCxxArgs(shadowView.state);
   }
 
   jni::local_ref<jobject> props = getProps({}, shadowView);
@@ -1680,6 +1952,34 @@ void FabricMountingManager::synchronouslyUpdateViewOnUIThread(
   auto propsMap = reinterpret_cast<ReadableMap::javaobject>(
       ReadableNativeMap::newObjectCxxArgs(props).release());
   synchronouslyUpdateViewOnUIThreadJNI(javaUIManager_, viewTag, propsMap);
+}
+
+void FabricMountingManager::synchronouslyUpdateAnimatedProps(
+    const std::unordered_map<Tag, AnimatedProps>& updates) {
+  TraceSection s(
+      "FabricMountingManager::synchronouslyUpdateAnimatedProps",
+      "viewCount",
+      updates.size());
+  static auto synchronouslyUpdateViewBatchJNI =
+      JFabricUIManager::javaClassStatic()
+          ->getMethod<void(jintArray, jdoubleArray, jni::jtypeArray<jobject>)>(
+              "synchronouslyUpdateViewBatch");
+  auto buffer = encodeAnimatedProps(updates);
+  auto ints = jni::JArrayInt::newArray(buffer.ints.size());
+  ints->setRegion(
+      0, static_cast<jsize>(buffer.ints.size()), buffer.ints.data());
+  auto doubles = jni::JArrayDouble::newArray(buffer.doubles.size());
+  doubles->setRegion(
+      0, static_cast<jsize>(buffer.doubles.size()), buffer.doubles.data());
+  auto rawProps = jni::JArrayClass<jobject>::newArray(buffer.rawProps.size());
+  for (size_t i = 0; i < buffer.rawProps.size(); i++) {
+    rawProps->setElement(
+        i,
+        ReadableNativeMap::newObjectCxxArgs(std::move(buffer.rawProps[i]))
+            .get());
+  }
+  synchronouslyUpdateViewBatchJNI(
+      javaUIManager_, ints.get(), doubles.get(), rawProps.get());
 }
 
 void FabricMountingManager::captureViewSnapshot(Tag tag, SurfaceId surfaceId) {

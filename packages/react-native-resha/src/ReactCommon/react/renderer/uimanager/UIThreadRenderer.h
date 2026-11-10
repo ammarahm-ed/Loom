@@ -102,6 +102,55 @@ enum class UIThreadStyleKey : uint8_t {
  *
  * Threading: all methods run on the JS/UI thread, inside a React commit.
  */
+/**
+ * How the animation fast lane treats one animated prop key
+ * (`docs/resha/animation-fast-lane-design.md` §3.2).
+ *
+ * Paint keys are applied to the native view by the host and folded into the
+ * renderer with no style rebuild, no Yoga and no diff. Layout keys change the
+ * box, so they need Yoga and take one incremental commit per frame. Text keys
+ * drive font shaping and text measurement and always take the ordinary commit
+ * path.
+ */
+enum class AnimatedPropClass {
+  Paint,
+  Layout,
+  Text,
+};
+
+/**
+ * Classifies one hoisted (top-level) prop key. Anything not recognised is
+ * layout: an unknown key takes the ordinary patch-props-and-commit path rather
+ * than being folded blind.
+ */
+AnimatedPropClass classifyAnimatedPropKey(const std::string& key);
+
+/**
+ * One animation frame's props, split by class. Keep this type distinct from
+ * animationbackend/AnimatedProps.h's facebook::react::AnimatedProps: sharing
+ * that name violates the ODR and can select the backend's constructor at link
+ * time, leaving the lane's dynamic objects null.
+ */
+struct ClassifiedAnimatedProps {
+  folly::dynamic paint{folly::dynamic::object()};
+  folly::dynamic layout{folly::dynamic::object()};
+  /**
+   * True when any key of the payload is a text key. Such a payload has to go
+   * through the normal commit path whole; the split is then unused.
+   */
+  bool text{false};
+
+  bool empty() const {
+    return paint.empty() && layout.empty() && !text;
+  }
+};
+
+/**
+ * Splits an animated props payload into the three classes, hoisting a nested
+ * `style` first so the classification sees the keys the host sees.
+ */
+ClassifiedAnimatedProps classifyAnimatedProps(const folly::dynamic& props);
+
 class UIThreadRenderer final {
  public:
   struct TextMeasurement {
@@ -293,6 +342,29 @@ class UIThreadRenderer final {
       const std::vector<std::pair<Tag, folly::dynamic>>& patches);
   bool hasSameInstanceHandle(Tag tag, const InstanceHandle::Shared& handle)
       const;
+
+  /**
+   * Folds paint-class animated props into their nodes: one merged prop write
+   * per tag, deliberately without the style rebuild, the text invalidation and
+   * the batch emission a normal commit does, because the host has already
+   * applied those values to the native views (design §3.2).
+   *
+   * Only legal while this renderer owns the computation, which every caller
+   * guarantees by running inside a job.
+   */
+  void foldPaintProps(
+      const std::vector<std::pair<Tag, folly::dynamic>>& patches);
+
+  /**
+   * Applies one animation frame. The paint half is folded; the layout half goes
+   * through `patchProps` and then ONE commit for the whole frame, whatever the
+   * number of animated nodes (design §5.2). Layout keys are never sent to a
+   * native view directly: a view's frame comes only from a Yoga layout
+   * operation.
+   */
+  void applyAnimationFrame(
+      const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+      const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches);
 
   void dispatchCommand(
       Tag tag,

@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <future>
 #include <limits>
+#include <react/renderer/runtimescheduler/JankReporter.h>
+#include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
 #include <shared_mutex>
 #include <unordered_set>
 
@@ -168,17 +170,47 @@ UIThreadRendererBinding::UIThreadRendererBinding(
     throw std::logic_error(
         "Direct worker renderer requires a platform UI executor");
   worker_ = std::make_unique<UIThreadRendererWorker>(
-      [weakLifetime, uiExecutor = std::move(uiExecutor)] {
+      [weakLifetime, uiExecutor] {
         uiExecutor([weakLifetime] {
           if (auto lifetime = weakLifetime.lock()) {
             // Result application can stop/restart a surface synchronously. The
             // runtime owns this binding throughout the callback; no registry
             // lock is held across UI effects.
-            if (auto* binding = lifetime->binding)
+            if (auto* binding = lifetime->binding) {
+              if (!UIThreadRendererWorker::kJavaScriptOnUIThread)
+                binding->refreshCanMeasureTextOnWorker();
               binding->worker_->applyReady();
+            }
           }
         });
       });
+  if (!UIThreadRendererWorker::kJavaScriptOnUIThread) {
+    // JS runs off the UI thread, where the Java text-capability query is not
+    // allowed; seed the cached answer from the UI thread before the first commit
+    // needs it.
+    uiExecutor([weakLifetime] {
+      if (auto lifetime = weakLifetime.lock()) {
+        if (auto* binding = lifetime->binding)
+          binding->refreshCanMeasureTextOnWorker();
+      }
+    });
+  }
+#endif
+#if UI_THREAD_RENDERER_WORKER && RN_UI_THREAD
+  // React Native X: when timers and requestAnimationFrame callbacks have run in
+  // the frame's animation phase, apply whatever they committed now, so the
+  // traversal that follows draws it instead of the next frame. A synchronous
+  // commit waits for the worker; the UI thread is also the JS thread here, so
+  // nothing can wait on it in turn.
+  FrameCallbackScope::afterFrameCallbacks() = [weakLifetime = std::weak_ptr<Lifetime>(lifetime_)] {
+    if (auto lifetime = weakLifetime.lock()) {
+      if (auto* binding = lifetime->binding) {
+        // Bounded: a commit that is still computing lands next frame rather
+        // than delaying this one.
+        binding->worker_->synchronizeFor(kFrameDrainBudget);
+      }
+    }
+  };
 #endif
   std::lock_guard lock(registryMutex());
   liveBindings().emplace(this, lifetime_);
@@ -227,6 +259,9 @@ UIThreadRendererBinding::~UIThreadRendererBinding() {
   for (auto& [surface, token] : surfaceTokens_)
     token->active = false;
   worker_->shutdown();
+#if RN_UI_THREAD
+  FrameCallbackScope::afterFrameCallbacks() = {};
+#endif
 #endif
   {
     std::lock_guard lock(registryMutex());
@@ -306,7 +341,15 @@ void UIThreadRendererBinding::setPointScaleFactor(float pointScaleFactor) {
 
 void UIThreadRendererBinding::applyPointScaleFactor(float pointScaleFactor) {
 #if UI_THREAD_RENDERER_WORKER
-  for (auto& entry : renderers_) {
+  // Density and font scale changes can change what the platform text path
+  // supports; this is the UI thread, where the answer may be asked.
+  refreshCanMeasureTextOnWorker();
+  std::vector<std::pair<SurfaceId, std::shared_ptr<UIThreadRenderer>>> owners;
+  {
+    std::lock_guard state(stateMutex_);
+    owners.assign(renderers_.begin(), renderers_.end());
+  }
+  for (auto& entry : owners) {
     auto owner = entry.second;
     submitWorkerOperation(
         tokenFor(entry.first), [owner, pointScaleFactor] {
@@ -383,6 +426,8 @@ void UIThreadRendererBinding::recordNativeProps(Tag tag, folly::dynamic props) {
          binding->replayingNativeProps_ &&
          props == *binding->replayingNativeProps_))
       continue;
+    // The UI thread reaches this while JS may be writing the same maps.
+    std::lock_guard state(binding->stateMutex_);
     auto tokenIt = binding->mountedTokens_.find(tag);
     if (tokenIt == binding->mountedTokens_.end() || !tokenIt->second->active)
       continue;
@@ -390,8 +435,30 @@ void UIThreadRendererBinding::recordNativeProps(Tag tag, folly::dynamic props) {
     auto owner = binding->renderers_.find(token->surfaceId);
     if (owner == binding->renderers_.end())
       continue;
-    auto identity = binding->mountedIdentities_.at(tag);
-    binding->stageNativeProps(tag, identity, token, std::move(props));
+    // A non-throwing lookup on purpose. An overlay can outlive the identity it
+    // was staged for, and the previous `mountedIdentities_.at(tag)` threw
+    // `std::out_of_range` out of a JNI frame (`std::terminate`) when the two
+    // maps disagreed (design §2, candidate C1). A tag with no identity is
+    // simply dropped.
+    auto identityIt = binding->mountedIdentities_.find(tag);
+    if (identityIt == binding->mountedIdentities_.end())
+      continue;
+    auto classified = classifyAnimatedProps(props);
+    if (classified.text || owner->second->isTextNode(tag)) {
+      // Font and text keys drive measurement, and any key on a paragraph or raw
+      // text node can, which the synchronous lane must not do: the whole payload
+      // keeps the ordinary per-call path (design §3.2, "Text").
+      binding->stageNativeProps(tag, identityIt->second, token, std::move(props));
+      return;
+    }
+    // The platform's synchronous update has already put these values on the
+    // view, so this call only folds them into the frame being collected.
+    binding->writeAnimatedProps(
+        token->surfaceId,
+        tag,
+        identityIt->second,
+        std::move(classified),
+        /*applyPaintToView=*/false);
     return;
   }
 #else
@@ -406,6 +473,7 @@ std::shared_ptr<const folly::dynamic> UIThreadRendererBinding::stageNativeProps(
     uint64_t identity,
     std::shared_ptr<SurfaceToken> token,
     folly::dynamic props) {
+  std::unique_lock state(stateMutex_);
   auto owner = renderers_.find(token->surfaceId);
   if (owner == renderers_.end() || !token->active)
     return nullptr;
@@ -424,6 +492,7 @@ std::shared_ptr<const folly::dynamic> UIThreadRendererBinding::stageNativeProps(
   overlay.identity = identity;
   overlay.sequence = sequence;
   auto rendererOwner = owner->second;
+  state.unlock();
   submitWorkerOperation(
       std::move(token),
       [rendererOwner, tag, identity, payload] {
@@ -431,6 +500,7 @@ std::shared_ptr<const folly::dynamic> UIThreadRendererBinding::stageNativeProps(
           rendererOwner->setNativeProps(tag, *payload);
       },
       [this, surfaceId, tag, sequence] {
+        std::lock_guard state(stateMutex_);
         auto surfaceIt = nativePropsOverlays_.find(surfaceId);
         if (surfaceIt == nativePropsOverlays_.end())
           return;
@@ -441,11 +511,413 @@ std::shared_ptr<const folly::dynamic> UIThreadRendererBinding::stageNativeProps(
   return payload;
 }
 
+// ---------------------------------------------------------------------------
+// Animation fast lane (docs/resha/animation-fast-lane-design.md).
+//
+// Every animated prop write lands here instead of becoming its own worker job:
+// writes are coalesced per frame and per tag, paint keys reach the native view
+// immediately, and one flush per frame either borrows the renderer while the
+// worker is idle or joins the single animation job the surface may have queued.
+// ---------------------------------------------------------------------------
+
+namespace {
+// The synchronous lane may borrow the renderer only while its measured cost
+// stays inside the frame budget (design §5.7). 2 ms is the documented default
+// for a 120 Hz display; a surface that exceeds it for three frames in a row
+// hands its layout work to the coalesced async job instead, and returns to the
+// synchronous lane only after a probe measures it calm again.
+constexpr double kAnimationLaneBudgetMicros = 2000.0;
+constexpr int kAnimationLaneOverBudgetFrames = 3;
+constexpr int kAnimationLaneProbeFrames = 30;
+
+void mergePatchesInto(
+    std::unordered_map<Tag, folly::dynamic>& target,
+    const std::vector<std::pair<Tag, folly::dynamic>>& patches) {
+  for (const auto& entry : patches) {
+    auto& merged = target[entry.first];
+    if (!merged.isObject())
+      merged = folly::dynamic::object();
+    for (const auto& item : entry.second.items())
+      merged[item.first] = item.second;
+  }
+}
+} // namespace
+
+bool UIThreadRendererBinding::AnimationFrame::merge(
+    const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+    const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches) {
+  std::lock_guard lock(mutex);
+  if (claimed)
+    return false;
+  mergePatchesInto(paint, paintPatches);
+  mergePatchesInto(layout, layoutPatches);
+  // The tags are recorded as they arrive, not when the frame is taken: the
+  // applied callback that drops their paint overlays can run before the compute
+  // does (a synchronous job applies first, then computes).
+  for (const auto& entry : paintPatches)
+    tags.push_back(entry.first);
+  for (const auto& entry : layoutPatches)
+    tags.push_back(entry.first);
+  return true;
+}
+
+bool UIThreadRendererBinding::AnimationFrame::take(
+    std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+    std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches) {
+  std::lock_guard lock(mutex);
+  if (claimed)
+    return false;
+  claimed = true;
+  paintPatches.reserve(paint.size());
+  for (auto& entry : paint) {
+    paintPatches.emplace_back(entry.first, std::move(entry.second));
+  }
+  layoutPatches.reserve(layout.size());
+  for (auto& entry : layout) {
+    layoutPatches.emplace_back(entry.first, std::move(entry.second));
+  }
+  return true;
+}
+
+void UIThreadRendererBinding::writeAnimatedProps(
+    SurfaceId surfaceId,
+    Tag tag,
+    uint64_t identity,
+    ClassifiedAnimatedProps classified,
+    bool applyPaintToView) {
+  std::unique_lock state(stateMutex_);
+  auto& write = animationFrameBuffer_[surfaceId][tag];
+  if (write.identity != identity) {
+    // A different draft owns the tag now, so nothing collected for the previous
+    // one may survive into this frame.
+    write.paint = folly::dynamic::object();
+    write.layout = folly::dynamic::object();
+    write.text = false;
+    write.identity = identity;
+  }
+  for (const auto& item : classified.paint.items()) {
+    write.paint[item.first] = item.second;
+  }
+  for (const auto& item : classified.layout.items()) {
+    write.layout[item.first] = item.second;
+  }
+  write.text = write.text || classified.text;
+  if (classified.paint.empty()) {
+    return;
+  }
+  // Paint keys are the part a later batch could revert, so they stay as the
+  // replayable overlay until the frame that carries them is folded. `sequence`
+  // stays 0: no staged operation owns this entry, the lane erases it itself.
+  auto& overlay = nativePropsOverlays_[surfaceId][tag];
+  // `props` must be an object before it is indexed: a freshly inserted entry is
+  // value-initialized with a default member initializer, but this also covers a
+  // stale entry left behind by an older version of the struct.
+  if (overlay.identity != identity || !overlay.props.isObject()) {
+    overlay.props = folly::dynamic::object();
+  }
+  for (const auto& item : classified.paint.items()) {
+    overlay.props[item.first] = item.second;
+  }
+  overlay.surfaceId = surfaceId;
+  overlay.identity = identity;
+  overlay.sequence = 0;
+  // The view write is a Java call that re-enters `recordNativeProps`.
+  state.unlock();
+  if (applyPaintToView) {
+    applyAnimatedPaintToView(tag, classified.paint);
+  }
+}
+
+void UIThreadRendererBinding::applyAnimatedPaintToView(
+    Tag tag,
+    const folly::dynamic& props) {
+  if (props.empty()) {
+    return;
+  }
+  auto* delegate = getUIManager().getDelegate();
+  if (delegate == nullptr) {
+    return;
+  }
+  const auto previousTag = replayingNativePropsTag_;
+  const auto* previousProps = replayingNativeProps_;
+  replayingNativePropsTag_ = tag;
+  replayingNativeProps_ = &props;
+  try {
+    delegate->uiManagerShouldSynchronouslyUpdateViewOnUIThread(tag, props);
+  } catch (...) {
+    replayingNativePropsTag_ = previousTag;
+    replayingNativeProps_ = previousProps;
+    throw;
+  }
+  replayingNativePropsTag_ = previousTag;
+  replayingNativeProps_ = previousProps;
+}
+
+void UIThreadRendererBinding::erasePaintOverlays(
+    SurfaceId surfaceId,
+    const std::vector<Tag>& tags) {
+  std::lock_guard state(stateMutex_);
+  auto surfaceIt = nativePropsOverlays_.find(surfaceId);
+  if (surfaceIt == nativePropsOverlays_.end()) {
+    return;
+  }
+  for (const auto tag : tags) {
+    auto it = surfaceIt->second.find(tag);
+    // Only entries this lane owns (`sequence == 0`); a staged operation's entry
+    // is erased by its own completion callback.
+    if (it != surfaceIt->second.end() && it->second.sequence == 0) {
+      surfaceIt->second.erase(it);
+    }
+  }
+}
+
+void UIThreadRendererBinding::recordAnimationLaneCost(
+    SurfaceId surfaceId,
+    double micros) {
+  std::lock_guard state(stateMutex_);
+  auto& stats = animationLaneStats_[surfaceId];
+  stats.emaMicros =
+      stats.emaMicros <= 0 ? micros : stats.emaMicros * 0.8 + micros * 0.2;
+  if (stats.asyncMode) {
+    // Only a probe reports a cost while the surface is in the async lane; the
+    // measurement is what decides whether it may come back.
+    if (stats.emaMicros < kAnimationLaneBudgetMicros / 2) {
+      stats.asyncMode = false;
+      stats.overBudgetFrames = 0;
+    }
+    return;
+  }
+  if (stats.emaMicros > kAnimationLaneBudgetMicros) {
+    if (++stats.overBudgetFrames >= kAnimationLaneOverBudgetFrames) {
+      stats.asyncMode = true;
+      stats.overBudgetFrames = 0;
+    }
+    return;
+  }
+  stats.overBudgetFrames = 0;
+}
+
+bool UIThreadRendererBinding::animationLaneAllowsSync(SurfaceId surfaceId) {
+  std::lock_guard state(stateMutex_);
+  const auto iterator = animationLaneStats_.find(surfaceId);
+  if (iterator == animationLaneStats_.end() || !iterator->second.asyncMode) {
+    return true;
+  }
+  // One probe every `kAnimationLaneProbeFrames` frames measures whether the
+  // surface has calmed down; without a measurement there is no way back.
+  return ++iterator->second.asyncProbeCounter % kAnimationLaneProbeFrames == 0;
+}
+
+void UIThreadRendererBinding::traceAnimationLane(
+    SurfaceId surfaceId,
+    bool synchronous,
+    double micros,
+    size_t nodes) {
+#if RN_PROFILE_UI_THREAD_RENDERER
+  if (!UIThreadRendererWorkerProfile::enabled()) {
+    return;
+  }
+#if defined(__ANDROID__)
+  __android_log_print(
+      ANDROID_LOG_INFO,
+      "RNXAnimLane",
+      "sync=%d cost=%.0fus nodes=%zu surface=%d",
+      synchronous ? 1 : 0,
+      micros,
+      nodes,
+      static_cast<int>(surfaceId));
+#elif defined(__APPLE__)
+  os_log(
+      OS_LOG_DEFAULT,
+      "RNXAnimLane sync=%d cost=%.0fus nodes=%lu surface=%d",
+      synchronous ? 1 : 0,
+      micros,
+      static_cast<unsigned long>(nodes),
+      static_cast<int>(surfaceId));
+#else
+  (void)surfaceId;
+  (void)synchronous;
+  (void)micros;
+  (void)nodes;
+#endif
+#else
+  (void)surfaceId;
+  (void)synchronous;
+  (void)micros;
+  (void)nodes;
+#endif
+}
+
+void UIThreadRendererBinding::flushAnimationFrames() {
+  for (const auto& lifetime : bindingSnapshot()) {
+    std::shared_lock lock(lifetime->gate);
+    auto* binding = lifetime->binding;
+    if (binding == nullptr) {
+      continue;
+    }
+    std::vector<SurfaceId> surfaceIds;
+    {
+      std::lock_guard state(binding->stateMutex_);
+      surfaceIds.reserve(binding->animationFrameBuffer_.size());
+      for (const auto& entry : binding->animationFrameBuffer_) {
+        surfaceIds.push_back(entry.first);
+      }
+    }
+    for (const auto surfaceId : surfaceIds) {
+      binding->flushAnimationFrame(surfaceId);
+    }
+  }
+}
+
+void UIThreadRendererBinding::flushAnimationFrame(SurfaceId surfaceId) {
+  std::unique_lock state(stateMutex_);
+  auto bufferIt = animationFrameBuffer_.find(surfaceId);
+  if (bufferIt == animationFrameBuffer_.end() || bufferIt->second.empty()) {
+    return;
+  }
+  // Take the writes before applying anything: folding paint props re-enters this
+  // map through the synchronous-update delegate, and those nested writes belong
+  // to the next frame, not this one.
+  auto writes = std::move(bufferIt->second);
+  animationFrameBuffer_.erase(bufferIt);
+  std::vector<std::pair<Tag, folly::dynamic>> paintPatches;
+  std::vector<std::pair<Tag, folly::dynamic>> layoutPatches;
+  bool needsAsync = false;
+  for (auto& entry : writes) {
+    auto& write = entry.second;
+    const auto mounted = mountedIdentities_.find(entry.first);
+    if (mounted == mountedIdentities_.end() ||
+        mounted->second != write.identity) {
+      continue; // The node is gone or the tag was reused: this write is stale.
+    }
+    needsAsync = needsAsync || write.text;
+    if (!write.paint.empty()) {
+      paintPatches.emplace_back(entry.first, std::move(write.paint));
+    }
+    if (!write.layout.empty()) {
+      layoutPatches.emplace_back(entry.first, std::move(write.layout));
+    }
+  }
+  state.unlock();
+  if (paintPatches.empty() && layoutPatches.empty()) {
+    return;
+  }
+  deferAnimationFrame(surfaceId, paintPatches, layoutPatches, needsAsync);
+}
+
+void UIThreadRendererBinding::deferAnimationFrame(
+    SurfaceId surfaceId,
+    const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+    const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+    bool needsAsync) {
+  std::unique_lock state(stateMutex_);
+  if (auto pending = pendingAnimationFrames_.find(surfaceId);
+      pending != pendingAnimationFrames_.end()) {
+    // The queued job has not started, so the newer frame replaces its payload
+    // instead of appending a second job (design §5.4).
+    if (pending->second->merge(paintPatches, layoutPatches)) {
+      return;
+    }
+  }
+  auto rendererIt = renderers_.find(surfaceId);
+  if (rendererIt == renderers_.end()) {
+    return;
+  }
+  auto rendererOwner = rendererIt->second;
+  auto tokenIt = surfaceTokens_.find(surfaceId);
+  if (tokenIt == surfaceTokens_.end() || !tokenIt->second->active) {
+    return;
+  }
+  auto token = tokenIt->second;
+  // Only a frame that has to run Yoga (or text measurement) is subject to the
+  // adaptive budget: a paint-only frame is a merge plus an immediate view write
+  // either way, so it always takes the synchronous path when the worker is idle
+  // (design §5.2 and §5.7).
+  const bool hasLayoutOrText = !layoutPatches.empty() || needsAsync;
+  const bool synchronous =
+      !hasLayoutOrText || animationLaneAllowsSync(surfaceId);
+  auto frame = std::make_shared<AnimationFrame>();
+  frame->merge(paintPatches, layoutPatches);
+  // With JS off the UI thread `writeAnimatedProps` cannot write paint keys to
+  // the views as they arrive, so the frame writes them when it is taken (at
+  // compute time, so a frame merged into a pending job writes its latest
+  // values). A synchronous job computes on the UI thread and writes there; an
+  // async one computes on the worker and leaves the write to `applied`, which
+  // for async jobs runs on the UI thread after compute. (For synchronous jobs
+  // `applied` runs before compute, so it cannot do the write itself.)
+  auto paintForView = UIThreadRendererWorker::kJavaScriptOnUIThread
+      ? nullptr
+      : std::make_shared<std::vector<std::pair<Tag, folly::dynamic>>>();
+  auto job = std::make_unique<UIThreadRendererWorker::Job>();
+  job->synchronous = synchronous;
+  job->compute = [this, rendererOwner, frame, paintForView] {
+    std::vector<std::pair<Tag, folly::dynamic>> framePaint;
+    std::vector<std::pair<Tag, folly::dynamic>> frameLayout;
+    if (!frame->take(framePaint, frameLayout)) {
+      return;
+    }
+    if (paintForView) {
+      if (worker_->onUIThread()) {
+        for (const auto& [tag, paint] : framePaint) {
+          applyAnimatedPaintToView(tag, paint);
+        }
+      } else {
+        *paintForView = framePaint;
+      }
+    }
+    rendererOwner->applyAnimationFrame(framePaint, frameLayout);
+  };
+  job->applied = [this, surfaceId, frame, paintForView] {
+    if (paintForView) {
+      for (const auto& [tag, paint] : *paintForView) {
+        applyAnimatedPaintToView(tag, paint);
+      }
+    }
+    std::vector<Tag> tags;
+    {
+      std::lock_guard lock(frame->mutex);
+      tags = frame->tags;
+    }
+    erasePaintOverlays(surfaceId, tags);
+    std::lock_guard state(stateMutex_);
+    if (auto pending = pendingAnimationFrames_.find(surfaceId);
+        pending != pendingAnimationFrames_.end() && pending->second == frame) {
+      pendingAnimationFrames_.erase(pending);
+    }
+  };
+  pendingAnimationFrames_[surfaceId] = frame;
+  // A synchronous job may apply right here and call back into this binding.
+  state.unlock();
+  if (!synchronous) {
+    submitWorkerJob(token, std::move(job));
+    return;
+  }
+  const auto start = UIThreadRendererWorkerProfile::Clock::now();
+  bool ranSynchronously = false;
+  submitWorkerJob(token, std::move(job), &ranSynchronously);
+  if (!ranSynchronously) {
+    // The worker was busy, so this frame is the pending job now: its cost is
+    // measured by whoever ends up running it, not here.
+    return;
+  }
+  const auto micros = UIThreadRendererWorkerProfile::ms(
+                         start, UIThreadRendererWorkerProfile::Clock::now()) *
+      1000.0;
+  recordAnimationLaneCost(surfaceId, micros);
+  traceAnimationLane(
+      surfaceId, true, micros, paintPatches.size() + layoutPatches.size());
+}
+
 void UIThreadRendererBinding::setWorkerNativeProps(
     const NodeRef& ref,
     folly::dynamic props) {
   if (!ref.draft || !ref.surfaceToken->active)
     return;
+  // View writes are Java calls that only the UI thread may make. Off the UI
+  // thread the props still reach the view: the animation frame is flushed and
+  // applied there, and a staged text/layout write replays on the UI thread.
+  const bool onUIThread = worker_->onUIThread();
+  std::unique_lock state(stateMutex_);
   const auto mounted = mountedIdentities_.find(ref.tag);
   const bool isMounted = mounted != mountedIdentities_.end() &&
       mounted->second == ref.draft->identity;
@@ -458,9 +930,28 @@ void UIThreadRendererBinding::setWorkerNativeProps(
   }
   if (!isMounted && !isSubmitted)
     return;
+  if (isMounted) {
+    const auto rendererIt = renderers_.find(ref.surfaceId);
+    auto classified = classifyAnimatedProps(props);
+    if (!classified.text &&
+        (rendererIt == renderers_.end() ||
+         !rendererIt->second->isTextNode(ref.tag))) {
+      // Animation fast lane (design §5.1): the write joins the frame being
+      // collected and its paint keys are on the view before this call returns.
+      state.unlock();
+      writeAnimatedProps(
+          ref.surfaceId,
+          ref.tag,
+          ref.draft->identity,
+          std::move(classified),
+          /*applyPaintToView=*/onUIThread);
+      return;
+    }
+  }
+  state.unlock();
   auto payload = stageNativeProps(
       ref.tag, ref.draft->identity, ref.surfaceToken, std::move(props));
-  if (!payload || !isMounted)
+  if (!payload || !isMounted || !onUIThread)
     return; // First mount replays the overlay before any layout events.
   if (auto* delegate = getUIManager().getDelegate()) {
     const auto previousTag = replayingNativePropsTag_;
@@ -498,6 +989,7 @@ void UIThreadRendererBinding::releaseSurface(SurfaceId surfaceId) {
 void UIThreadRendererBinding::applyConstraints(
     SurfaceId surfaceId,
     const SurfaceConstraints& constraints) {
+  std::unique_lock state(stateMutex_);
   auto iterator = renderers_.find(surfaceId);
   if (iterator == renderers_.end()) {
     // Nothing is mounted for this surface yet. `renderer()` picks these up when
@@ -506,6 +998,7 @@ void UIThreadRendererBinding::applyConstraints(
   }
 #if UI_THREAD_RENDERER_WORKER
   auto owner = iterator->second;
+  state.unlock();
   submitWorkerOperation(tokenFor(surfaceId), [owner, constraints] {
     owner->setConstraints(
         constraints.minWidth,
@@ -527,6 +1020,7 @@ void UIThreadRendererBinding::applyConstraints(
 }
 
 void UIThreadRendererBinding::releaseSurfaceInternal(SurfaceId surfaceId) {
+  std::lock_guard state(stateMutex_);
   if (auto token = surfaceTokens_.find(surfaceId);
       token != surfaceTokens_.end()) {
     token->second->active = false;
@@ -552,6 +1046,11 @@ void UIThreadRendererBinding::releaseSurfaceInternal(SurfaceId surfaceId) {
 #endif
 #if UI_THREAD_RENDERER_WORKER
   submittedIdentities_.erase(surfaceId);
+  // Animation fast lane state is per surface: a frame still being collected, the
+  // single queued animation job and its adaptive cost history all die with it.
+  animationFrameBuffer_.erase(surfaceId);
+  pendingAnimationFrames_.erase(surfaceId);
+  animationLaneStats_.erase(surfaceId);
 #endif
   ++surfaceGenerations_[surfaceId];
   renderers_.erase(surfaceId);
@@ -572,9 +1071,12 @@ UIThreadRendererBinding::constraintsFor(SurfaceId surfaceId) const {
 #pragma mark - Renderer
 
 UIThreadRenderer& UIThreadRendererBinding::renderer(SurfaceId surfaceId) {
-  auto iterator = renderers_.find(surfaceId);
-  if (iterator != renderers_.end()) {
-    return *iterator->second;
+  {
+    std::lock_guard state(stateMutex_);
+    auto iterator = renderers_.find(surfaceId);
+    if (iterator != renderers_.end()) {
+      return *iterator->second;
+    }
   }
 
   auto rendererToken = tokenFor(surfaceId);
@@ -613,26 +1115,34 @@ UIThreadRenderer& UIThreadRendererBinding::renderer(SurfaceId surfaceId) {
       // Only this surface's overlays can be replayed onto this surface, so the
       // scan is bounded by them rather than by every overlay on every surface.
       std::vector<Tag> overlayTags;
-      auto surfaceOverlays = nativePropsOverlays_.find(surface);
-      if (surfaceOverlays != nativePropsOverlays_.end()) {
-        overlayTags.reserve(surfaceOverlays->second.size());
-        for (const auto& [tag, overlay] : surfaceOverlays->second) {
-          if (overlay.surfaceId == surface)
-            overlayTags.push_back(tag);
+      {
+        std::lock_guard state(stateMutex_);
+        auto surfaceOverlays = nativePropsOverlays_.find(surface);
+        if (surfaceOverlays != nativePropsOverlays_.end()) {
+          overlayTags.reserve(surfaceOverlays->second.size());
+          for (const auto& [tag, overlay] : surfaceOverlays->second) {
+            if (overlay.surfaceId == surface)
+              overlayTags.push_back(tag);
+          }
         }
       }
       for (const auto tag : overlayTags) {
         // Re-looked up rather than stored: applying native props can emit events
         // and reenter this map, which may stage a distinct nested delta.
-        if (surfaceOverlays == nativePropsOverlays_.end())
-          break;
-        auto it = surfaceOverlays->second.find(tag);
-        if (it == surfaceOverlays->second.end() ||
-            mountedIdentities_[tag] != it->second.identity)
-          continue;
-        // Native prop application can emit events and reenter this map. Keep
-        // this replay stable while allowing a distinct nested delta to stage.
-        auto props = it->second.props;
+        folly::dynamic props;
+        {
+          std::lock_guard state(stateMutex_);
+          auto surfaceOverlays = nativePropsOverlays_.find(surface);
+          if (surfaceOverlays == nativePropsOverlays_.end())
+            break;
+          auto it = surfaceOverlays->second.find(tag);
+          if (it == surfaceOverlays->second.end() ||
+              mountedIdentities_[tag] != it->second.identity)
+            continue;
+          // Native prop application can emit events and reenter this map. Keep
+          // this replay stable while allowing a distinct nested delta to stage.
+          props = it->second.props;
+        }
         const auto previousTag = replayingNativePropsTag_;
         const auto* previousProps = replayingNativeProps_;
         replayingNativePropsTag_ = tag;
@@ -767,6 +1277,27 @@ UIThreadRenderer& UIThreadRendererBinding::renderer(SurfaceId surfaceId) {
             minimumSize,
             maximumSize);
       };
+#if UI_THREAD_RENDERER_WORKER
+  operations.getScrollOffset = [this](SurfaceId surface, Tag tag) {
+    // Live view state belongs to the UI thread; a JS-thread reader asks it.
+    return readOnUIThread(
+               [surface, tag](UIManagerDelegate& delegate)
+                   -> std::optional<std::pair<float, float>> {
+                 return delegate.uiThreadRendererGetScrollOffset(surface, tag);
+               },
+               std::pair<float, float>{0, 0})
+        .value_or(std::pair<float, float>{0, 0});
+  };
+  operations.getViewLocationInSurface = [this](SurfaceId surface, Tag tag)
+      -> std::optional<std::pair<float, float>> {
+    return readOnUIThread(
+        [surface, tag](UIManagerDelegate& delegate) {
+          return delegate.uiThreadRendererGetViewLocationInSurface(
+              surface, tag);
+        },
+        std::nullopt);
+  };
+#else
   operations.getScrollOffset = [this](SurfaceId surface, Tag tag) {
     if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
       return delegate->uiThreadRendererGetScrollOffset(surface, tag);
@@ -780,6 +1311,7 @@ UIThreadRenderer& UIThreadRendererBinding::renderer(SurfaceId surfaceId) {
     }
     return std::nullopt;
   };
+#endif
   operations.reportUnsupportedInlineAttachment = [this](
                                                      SurfaceId surface,
                                                      Tag tag) {
@@ -905,6 +1437,7 @@ UIThreadRenderer& UIThreadRendererBinding::renderer(SurfaceId surfaceId) {
       constraints.maxHeight,
       constraints.isRTL);
 
+  std::lock_guard state(stateMutex_);
   auto inserted = renderers_.emplace(surfaceId, std::move(created));
   return *inserted.first->second;
 }
@@ -915,8 +1448,10 @@ void UIThreadRendererBinding::submitWorkerOperation(
     UIThreadRendererWorker::Task compute,
     std::function<void()> applied,
     bool synchronous,
-    bool profileCommit) {
+    bool profileCommit,
+    bool inlineEligible) {
   auto job = std::make_unique<UIThreadRendererWorker::Job>();
+  job->inlineEligible = inlineEligible;
   job->compute = std::move(compute);
   job->applied = std::move(applied);
   job->synchronous = synchronous;
@@ -926,7 +1461,11 @@ void UIThreadRendererBinding::submitWorkerOperation(
 
 void UIThreadRendererBinding::submitWorkerJob(
     std::shared_ptr<SurfaceToken> token,
-    std::unique_ptr<UIThreadRendererWorker::Job> job) {
+    std::unique_ptr<UIThreadRendererWorker::Job> job,
+    bool* ranSynchronously) {
+  if (ranSynchronously != nullptr) {
+    *ranSynchronously = false;
+  }
   job->active = [token] { return token->active.load(); };
   job->failed = [this, token](std::exception_ptr error) {
     if (!token->active.exchange(false))
@@ -957,8 +1496,18 @@ void UIThreadRendererBinding::submitWorkerJob(
   // A forced-sync commit computes on the UI thread either way. Running it here
   // when the worker is idle skips the worker round trip; when the worker still
   // owns work the job is queued behind it, which is what preserves ordering.
-  if (job->synchronous && worker_->runIfIdle(job))
+  if (job->synchronous && worker_->runIfIdle(job)) {
+    if (ranSynchronously != nullptr) {
+      *ranSynchronously = true;
+    }
     return;
+  }
+  // A small commit costs less than the worker hand-off, so it is computed right
+  // here (UI thread in main-thread mode, JS thread otherwise) when no other
+  // work is outstanding.
+  if (worker_->tryRunInline(job)) {
+    return;
+  }
   worker_->submit(std::move(job));
 }
 
@@ -966,6 +1515,19 @@ void UIThreadRendererBinding::publishWorkerCommit(
     SurfaceId surfaceId,
     const std::vector<std::shared_ptr<NodeRef>>& children,
     bool forceSync) {
+#if RN_JANK_REPORTER
+  // React Native X (debug): lets the jank report say how much of a slow task
+  // was spent committing to the native renderer.
+  struct JankCommitTimer {
+    std::chrono::steady_clock::time_point start{std::chrono::steady_clock::now()};
+    ~JankCommitTimer() {
+      jank::Reporter::addCommit(
+          std::chrono::duration<double, std::milli>(
+              std::chrono::steady_clock::now() - start)
+              .count());
+    }
+  } jankCommitTimer;
+#endif
   auto packet = std::make_unique<WorkerCommit>();
   packet->surfaceId = surfaceId;
   packet->token = tokenFor(surfaceId);
@@ -988,6 +1550,8 @@ void UIThreadRendererBinding::publishWorkerCommit(
   bool hasText = false;
   bool unsafeTextProps = false;
   bool retainsLiveSnapshot = false;
+  // Size of the changed part of the tree, the cost estimate for inlining.
+  size_t changedTexts = 0;
   std::function<DraftNode::FreezeFacts(const std::shared_ptr<DraftNode>&)> freeze =
       [&](const auto& draft) -> DraftNode::FreezeFacts {
         if (!draft)
@@ -1032,6 +1596,11 @@ void UIThreadRendererBinding::publishWorkerCommit(
             (*draft->componentName == "RCTText" ||
              *draft->componentName == "Paragraph" ||
              *draft->componentName == "Text");
+        if (facts.hasText && draft->componentName &&
+            (*draft->componentName == "RCTText" ||
+             *draft->componentName == "Paragraph" ||
+             *draft->componentName == "Text"))
+          ++changedTexts;
 
         for (const auto& child : *draft->children) {
           const auto childFacts = freeze(child);
@@ -1057,8 +1626,11 @@ void UIThreadRendererBinding::publishWorkerCommit(
   // Stale entries are harmless: both reads validate the stored identity against
   // the live draft (see `setWorkerNativeProps`), so a removed or reused tag simply
   // fails the comparison, and surface teardown prunes by surface.
-  for (const auto& [tag, identity] : *identities)
-    submittedIdentities_[surfaceId][tag] = identity;
+  {
+    std::lock_guard state(stateMutex_);
+    for (const auto& [tag, identity] : *identities)
+      submittedIdentities_[surfaceId][tag] = identity;
+  }
   auto document = pendingDocumentInstanceHandles_.find(surfaceId);
   if (document != pendingDocumentInstanceHandles_.end()) {
     packet->documentHandle = std::move(document->second);
@@ -1070,7 +1642,7 @@ void UIThreadRendererBinding::publishWorkerCommit(
     // across commits because `TextEffectRegistry.hasRegisteredFactories()`
     // changes when a library registers or unregisters a factory.
     const bool textSafe =
-        !hasText || delegate->uiThreadRendererCanMeasureTextOnWorker();
+        !hasText || canMeasureTextOnWorker(*delegate);
     // The text-safety decision belongs to this commit only. Earlier revisions
     // kept it on the surface token, which made every later job on the surface
     // (setNativeProps, constraints) synchronous as well.
@@ -1080,7 +1652,11 @@ void UIThreadRendererBinding::publishWorkerCommit(
   } else
     forceSync = true;
   auto& live = renderer(surfaceId);
-  auto owner = renderers_.at(surfaceId);
+  std::shared_ptr<UIThreadRenderer> owner;
+  {
+    std::lock_guard state(stateMutex_);
+    owner = renderers_.at(surfaceId);
+  }
   auto token = packet->token;
   auto applied = [this, token, identities, committedDrafts] {
     applyPublishedIdentities(token, *identities, *committedDrafts);
@@ -1089,12 +1665,38 @@ void UIThreadRendererBinding::publishWorkerCommit(
   // the same renderer on UI for its ENTIRE reconciliation/style/layout/diff.
   // Reentrant submissions remain ordered after the enclosing UI result.
   (void)live;
-  auto compute = UIThreadRendererWorker::Task([owner,
+  // React Native X: cost estimate. Units are the changed nodes, with a text
+  // counting extra because measuring and preparing it dominates a small update.
+  // A commit also carries a fixed cost proportional to the whole tree (layout
+  // pass, unsupported-attachment scan, identity collection), so the changed
+  // size alone cannot predict its time: small commits additionally have to be
+  // cheap in practice, judged by the recently observed time of such commits.
+  const double units =
+      1.0 + static_cast<double>(committedDrafts->size()) + 4.0 * changedTexts;
+  const bool smallCommit = units <= kInlineMaxUnits;
+  const bool inlineEligible = !forceSync && smallCommit &&
+      smallCommitMs_.load(std::memory_order_relaxed) < kInlineBudgetMs;
+  auto compute = UIThreadRendererWorker::Task([this,
+                                               owner,
                                                packet = std::move(packet),
                                                identities,
                                                publishIdentities = applied,
-                                               forceSync] {
+                                               forceSync,
+                                               smallCommit] {
+    const auto computeStart = std::chrono::steady_clock::now();
     reconcileWorkerCommit(*owner, *packet);
+    if (smallCommit) {
+      // Keeps the budget test honest on this device right now: a cold CPU, or
+      // a large tree whose fixed per-commit cost dominates, turns it off.
+      const double ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - computeStart)
+                            .count();
+      const double previous = smallCommitMs_.load(std::memory_order_relaxed);
+      smallCommitMs_.store(
+          static_cast<float>(previous * 0.7 + ms * 0.3),
+          std::memory_order_relaxed);
+    }
+
     // Include children retained through compatibility/native DOM snapshots.
     // This metadata is result-owned and is never read concurrently by UI.
     identities->clear();
@@ -1114,8 +1716,16 @@ void UIThreadRendererBinding::publishWorkerCommit(
       publishIdentities();
   });
   submitWorkerOperation(
-      token, std::move(compute), std::move(applied), forceSync, true);
-  if (forceSync)
+      token,
+      std::move(compute),
+      std::move(applied),
+      forceSync,
+      true,
+      inlineEligible);
+  // The queued synchronous job computes on the UI thread inside its own apply,
+  // so a JS thread has nothing to gain by waiting for it: readers use the
+  // barrier, and the UI thread never waits for JS.
+  if (forceSync && worker_->onUIThread())
     worker_->synchronize();
 }
 
@@ -1123,6 +1733,7 @@ void UIThreadRendererBinding::applyPublishedIdentities(
     const std::shared_ptr<SurfaceToken>& token,
     const std::unordered_map<Tag, uint64_t>& identities,
     const std::vector<std::shared_ptr<DraftNode>>& committedDrafts) {
+  std::lock_guard state(stateMutex_);
   // Erase only what this commit no longer contains. This pass is what discovers
   // removals, and it stays correct because `identities` is the full live set
   // rather than the freeze walk's output.
@@ -1789,6 +2400,7 @@ UIThreadRendererBinding::makeNodeRef(
 
 std::shared_ptr<UIThreadRendererBinding::SurfaceToken>
 UIThreadRendererBinding::tokenFor(SurfaceId surfaceId) {
+  std::lock_guard state(stateMutex_);
   auto iterator = surfaceTokens_.find(surfaceId);
   if (iterator != surfaceTokens_.end() && iterator->second->active) {
     return iterator->second;
@@ -1864,14 +2476,100 @@ bool UIThreadRendererBinding::isRawTextRef(const NodeRef& ref) const {
     const auto& name = *ref.draft->componentName;
     return isRawTextName(name);
   }
-  const auto renderer = renderers_.find(ref.surfaceId);
-  return renderer != renderers_.end() &&
-      renderer->second->componentName(ref.tag) == "RCTRawText";
+  const auto renderer = findRenderer(ref.surfaceId);
+  return renderer != nullptr && renderer->componentName(ref.tag) == "RCTRawText";
 }
+
+std::shared_ptr<UIThreadRenderer> UIThreadRendererBinding::findRenderer(
+    SurfaceId surfaceId) const {
+  std::lock_guard state(stateMutex_);
+  const auto iterator = renderers_.find(surfaceId);
+  return iterator == renderers_.end() ? nullptr : iterator->second;
+}
+
+#if UI_THREAD_RENDERER_WORKER
+bool UIThreadRendererBinding::canMeasureTextOnWorker(
+    UIManagerDelegate& delegate) {
+  if (UIThreadRendererWorker::kJavaScriptOnUIThread) {
+    // Asked only when the answer can change the decision, and not cached:
+    // `TextEffectRegistry.hasRegisteredFactories()` changes when a library
+    // registers or unregisters a factory.
+    return delegate.uiThreadRendererCanMeasureTextOnWorker();
+  }
+  if (worker_->onUIThread())
+    refreshCanMeasureTextOnWorker();
+  return canMeasureTextOnWorker_.load() == 1;
+}
+
+void UIThreadRendererBinding::refreshCanMeasureTextOnWorker() {
+  if (!worker_->onUIThread())
+    return;
+  if (auto* delegate = getUIManager().getDelegate())
+    canMeasureTextOnWorker_ =
+        delegate->uiThreadRendererCanMeasureTextOnWorker() ? 1 : 0;
+}
+
+std::optional<std::pair<float, float>> UIThreadRendererBinding::readOnUIThread(
+    std::function<std::optional<std::pair<float, float>>(UIManagerDelegate&)>
+        read,
+    std::optional<std::pair<float, float>> fallback) {
+  auto* delegate = getUIManager().getDelegate();
+  if (delegate == nullptr)
+    return fallback;
+  if (worker_->onUIThread())
+    return read(*delegate);
+  auto uiExecutor = delegate->uiThreadRendererGetUIExecutor();
+  if (!uiExecutor)
+    return fallback;
+  struct Reply {
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool done{false};
+    std::optional<std::pair<float, float>> value;
+  };
+  auto reply = std::make_shared<Reply>();
+  const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
+  uiExecutor([weakLifetime, reply, read = std::move(read)] {
+    std::optional<std::pair<float, float>> value;
+    if (auto lifetime = weakLifetime.lock()) {
+      std::shared_lock held(lifetime->gate);
+      if (auto* binding = lifetime->binding) {
+        if (auto* delegate = binding->getUIManager().getDelegate()) {
+          try {
+            value = read(*delegate);
+          } catch (...) {
+          }
+        }
+      }
+    }
+    {
+      std::lock_guard lock(reply->mutex);
+      reply->value = value;
+      reply->done = true;
+    }
+    reply->ready.notify_all();
+  });
+  // JS waits for the UI thread here, never the reverse.
+  std::unique_lock lock(reply->mutex);
+  if (!reply->ready.wait_for(lock, std::chrono::seconds(5), [&] {
+        return reply->done;
+      })) {
+#if defined(__ANDROID__)
+    __android_log_print(
+        ANDROID_LOG_WARN,
+        "RNXWorker",
+        "live view read waited 5 s for the UI thread");
+#endif
+    return fallback;
+  }
+  return reply->value;
+}
+#endif
 
 UIThreadRenderer* UIThreadRendererBinding::rendererOwning(Tag tag) {
   // Tags are unique across surfaces, so the first renderer that knows the tag
   // is the one that owns it.
+  std::lock_guard state(stateMutex_);
   for (auto& entry : renderers_) {
     if (entry.second->exists(tag)) {
       return entry.second.get();
@@ -1901,20 +2599,18 @@ UIThreadRendererBinding::nodeRef(jsi::Runtime& runtime, const jsi::Value& value)
 }
 
 bool UIThreadRendererBinding::isLiveNodeRef(const NodeRef& ref) const {
-  const auto renderer = renderers_.find(ref.surfaceId);
-  if (renderer == renderers_.end()) {
+  const auto renderer = findRenderer(ref.surfaceId);
+  if (renderer == nullptr) {
     return false;
   }
-  const auto tag = ref.tag == 0 ? renderer->second->rootTag() : ref.tag;
-  if (tag == 0 || !renderer->second->exists(tag)) {
+  const auto tag = ref.tag == 0 ? renderer->rootTag() : ref.tag;
+  if (tag == 0 || !renderer->exists(tag)) {
     return false;
   }
-  if (tag == renderer->second->rootTag() &&
-      (ref.tag == 0 || ref.draft == nullptr)) {
+  if (tag == renderer->rootTag() && (ref.tag == 0 || ref.draft == nullptr)) {
     return true;
   }
-  return ref.draft != nullptr &&
-      renderer->second->identityOf(tag) == ref.draft->identity;
+  return ref.draft != nullptr && renderer->identityOf(tag) == ref.draft->identity;
 }
 
 std::vector<Tag> UIThreadRendererBinding::tagsOf(
@@ -2546,9 +3242,9 @@ requireArguments(rt, "dispatchCommand", 3, count);
                  ref,
                  commandName = std::move(commandName),
                  commandArgs = std::move(commandArgs)] {
-                  auto owner = renderers_.find(surfaceId);
-                  if (owner != renderers_.end() && isLiveNodeRef(*ref)) {
-                    owner->second->dispatchCommand(
+                  auto owner = findRenderer(surfaceId);
+                  if (owner != nullptr && isLiveNodeRef(*ref)) {
+                    owner->dispatchCommand(
                         ref->tag, commandName, commandArgs);
                   }
                 });
@@ -2577,9 +3273,9 @@ requireArguments(rt, "sendAccessibilityEvent", 2, count);
                  surfaceId = ref->surfaceId,
                  ref,
                  eventType = std::move(eventType)] {
-                  auto owner = renderers_.find(surfaceId);
-                  if (owner != renderers_.end() && isLiveNodeRef(*ref)) {
-                    owner->second->sendAccessibilityEvent(ref->tag, eventType);
+                  auto owner = findRenderer(surfaceId);
+                  if (owner != nullptr && isLiveNodeRef(*ref)) {
+                    owner->sendAccessibilityEvent(ref->tag, eventType);
                   }
                 });
           }
@@ -2611,9 +3307,9 @@ requireArguments(rt, "setIsJSResponder", 3, count);
                  ref,
                  isJSResponder,
                  blockNativeResponder] {
-                  auto owner = renderers_.find(surfaceId);
-                  if (owner != renderers_.end() && isLiveNodeRef(*ref)) {
-                    owner->second->setIsJSResponder(
+                  auto owner = findRenderer(surfaceId);
+                  if (owner != nullptr && isLiveNodeRef(*ref)) {
+                    owner->setIsJSResponder(
                         ref->tag, isJSResponder, blockNativeResponder);
                   }
                 });

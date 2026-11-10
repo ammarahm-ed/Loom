@@ -17,6 +17,7 @@ import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.UiThreadUtil
 import com.facebook.react.bridge.ReadableNativeMap
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.common.annotations.UnstableReactNativeAPI
 import com.facebook.react.common.mapbuffer.ReadableMapBuffer
 import com.facebook.react.uimanager.StateWrapper
 import com.facebook.react.uimanager.ReferenceStateWrapper
@@ -94,6 +95,7 @@ internal class UIThreadDirectViewApplier(
       val preparedTextLayouts: Array<Any?>,
       val phaseOffsets: IntArray?,
       val requiresTagReplacement: Boolean,
+      val propsTable: DirectPropsTable?,
   )
 
   private data class RemoveInstruction(
@@ -110,6 +112,9 @@ internal class UIThreadDirectViewApplier(
 
     override fun updateState(map: WritableMap) = Unit
 
+    @OptIn(UnstableReactNativeAPI::class)
+    override fun updateState(map: WritableMap, updateMode: StateWrapper.UpdateMode) = Unit
+
     override fun destroyState() = Unit
   }
 
@@ -119,6 +124,8 @@ internal class UIThreadDirectViewApplier(
     override val stateDataMapBuffer: ReadableMapBuffer? = null
     override val stateData: ReadableNativeMap? = null
     override fun updateState(map: WritableMap) = Unit
+    @OptIn(UnstableReactNativeAPI::class)
+    override fun updateState(map: WritableMap, updateMode: StateWrapper.UpdateMode) = Unit
     override fun destroyState() = Unit
   }
 
@@ -198,6 +205,7 @@ internal class UIThreadDirectViewApplier(
       preparedTextLayouts: Array<Any?> = emptyArray(),
       phaseOffsets: IntArray? = null,
       requiresTagReplacement: Boolean = false,
+      propsTable: DirectPropsTable? = null,
   ) {
     val manager = surface(surfaceId)
     var deferred = false
@@ -222,6 +230,7 @@ internal class UIThreadDirectViewApplier(
                     preparedTextLayouts,
                     phaseOffsets,
                     requiresTagReplacement,
+                    propsTable,
                 ),
             )
         deferred = true
@@ -262,7 +271,8 @@ internal class UIThreadDirectViewApplier(
             preparedTextTags,
             preparedTextLayouts,
             phaseOffsets,
-            requiresTagReplacement)
+            requiresTagReplacement,
+            propsTable)
       } finally {
         synchronized(ownershipLock) { dispatchingSurfaces.remove(surfaceId) }
       }
@@ -378,6 +388,7 @@ internal class UIThreadDirectViewApplier(
               batch.preparedTextLayouts,
               batch.phaseOffsets,
               batch.requiresTagReplacement,
+              batch.propsTable,
           )
         }
       } finally {
@@ -475,7 +486,10 @@ internal class UIThreadDirectViewApplier(
       preparedTextLayouts: Array<Any?>,
       phaseOffsets: IntArray?,
       requiresTagReplacement: Boolean,
+      propsTable: DirectPropsTable?,
   ) {
+    // React Native X (debug builds only): time the apply so a slow one is reported with its size.
+    val jankStart = if (BuildConfig.DEBUG) System.nanoTime() else 0L
     applyBatchNowInternal(
         surfaceId,
         manager,
@@ -488,7 +502,12 @@ internal class UIThreadDirectViewApplier(
         preparedTextLayouts,
         phaseOffsets,
         requiresTagReplacement,
+        propsTable,
     )
+    if (BuildConfig.DEBUG) {
+      com.facebook.react.common.JankReporterSupport.noteApply(
+          System.nanoTime() - jankStart, instructions.size)
+    }
   }
 
   private fun applyBatchNowInternal(
@@ -503,6 +522,7 @@ internal class UIThreadDirectViewApplier(
       preparedTextLayouts: Array<Any?>,
       phaseOffsets: IntArray?,
       requiresTagReplacement: Boolean,
+      propsTable: DirectPropsTable?,
   ) {
     val profile = if (BuildConfig.RN_PROFILE_UI_THREAD_RENDERER) BatchProfile() else null
     val batchStartNanos = profile?.let { SystemClock.elapsedRealtimeNanos() } ?: 0L
@@ -646,7 +666,9 @@ internal class UIThreadDirectViewApplier(
           val tag = instructions[index++]
           val isLayoutable = instructions[index++] != 0
           val componentName = objects[objectIndex++] as String
-          val props = objects[objectIndex++] as ReadableMap
+          val propsSlot = objectIndex++
+          val props = objects[propsSlot] as ReadableMap? ?: propsTable?.mapAt(propsSlot)
+              ?: error("Direct create $tag has no props")
           // State travels in the same JNI batch as its create/update operations.
           // Pass it through the normal ViewManager creation contract for newly
           // created nodes, then apply any remaining states after the batch.
@@ -673,7 +695,11 @@ internal class UIThreadDirectViewApplier(
         }
         OP_UPDATE_PROPS -> {
           val tag = instructions[index++]
-          manager.updateProps(tag, objects[objectIndex++] as ReadableMap)
+          val propsSlot = objectIndex++
+          manager.updateProps(
+              tag,
+              objects[propsSlot] as ReadableMap? ?: propsTable?.mapAt(propsSlot)
+                  ?: error("Direct props update $tag has no props"))
         }
         OP_INSERT -> {
           val parentTag = instructions[index++]

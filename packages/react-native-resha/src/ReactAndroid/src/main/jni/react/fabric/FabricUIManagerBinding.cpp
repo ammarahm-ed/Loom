@@ -177,6 +177,38 @@ void FabricUIManagerBinding::reportMount(SurfaceId surfaceId) {
   scheduler->reportMount(surfaceId);
 }
 
+void FabricUIManagerBinding::pullAndExecuteTransaction(SurfaceId surfaceId) {
+  TraceSection section("FabricUIManagerBinding::pullAndExecuteTransaction");
+
+  std::shared_ptr<const MountingCoordinator> mountingCoordinator;
+  {
+    std::scoped_lock lock(pullableMountingCoordinatorsMutex_);
+    auto pullable = pullableMountingCoordinators_.extract(surfaceId);
+    if (pullable.empty()) {
+      return;
+    }
+    mountingCoordinator = std::move(pullable.mapped());
+  }
+
+  auto mountingManager = getMountingManager("pullAndExecuteTransaction");
+  if (!mountingManager) {
+    return;
+  }
+
+  // The UI thread pulls the transaction itself (it may accumulate several
+  // revisions committed since the notification was enqueued, and may be empty
+  // if a previous pull already consumed them). willPerformAsynchronously =
+  // false: the transaction is applied synchronously right here, so no
+  // `didPerformAsyncTransactions` bookkeeping is needed.
+  auto mountingTransaction =
+      mountingCoordinator->pullTransaction(/* willPerformAsynchronously = */
+                                           false);
+  if (mountingTransaction.has_value()) {
+    mountingManager->executeMount(
+        *mountingTransaction, /* synchronous = */ true);
+  }
+}
+
 #pragma mark - Surface management
 
 // Used by bridgeless
@@ -669,7 +701,12 @@ void FabricUIManagerBinding::installFabricUIManager(
         globalJavaUiManager);
   };
 
-  contextContainer->insert("FabricUIManager", globalJavaUiManager);
+  auto fabricUIManagerOwner =
+      std::make_shared<jni::global_ref<jobject>>(globalJavaUiManager);
+  // The alias and its owner must stay registered for the container's lifetime.
+  contextContainer->insert("FabricUIManagerOwner", fabricUIManagerOwner);
+  contextContainer->insert(
+      "FabricUIManager", jni::alias_ref<jobject>(*fabricUIManagerOwner));
 
   animationChoreographer_ = std::make_shared<AndroidAnimationChoreographer>();
 
@@ -864,56 +901,61 @@ UIThreadTextMeasurement FabricUIManagerBinding::uiThreadRendererPrepareText(
     const ParagraphAttributes& paragraphAttributes,
     const Size& minimumSize,
     const Size& maximumSize) {
-  UIThreadTextMeasurement result;
-  std::shared_ptr<const TextLayoutManager> manager;
-  {
-    std::shared_lock lock(installMutex_);
-    manager = directTextLayoutManager_;
-  }
-  if (!manager) {
+  try {
+    UIThreadTextMeasurement result;
+    std::shared_ptr<const TextLayoutManager> manager;
+    {
+      std::shared_lock lock(installMutex_);
+      manager = directTextLayoutManager_;
+    }
+    if (!manager) {
+      return result;
+    }
+    TextLayoutContext layoutContext;
+    layoutContext.pointScaleFactor = pointScaleFactor_;
+    layoutContext.surfaceId = surfaceId;
+    LayoutConstraints constraints;
+    constraints.minimumSize = minimumSize;
+    constraints.maximumSize = maximumSize;
+  #if RN_PROFILE_UI_THREAD_RENDERER
+    TextLayoutManagerProfile profile;
+    auto* profileOutput = &profile;
+  #else
+    TextLayoutManagerProfile* profileOutput = nullptr;
+  #endif
+    auto prepared = std::make_shared<TextLayoutManager::PreparedTextLayout>(
+        manager->prepareLayout(
+            attributedString, paragraphAttributes, layoutContext, constraints, profileOutput));
+    const bool hasAttachments = std::any_of(
+        attributedString.getFragments().begin(),
+        attributedString.getFragments().end(),
+        [](const auto& fragment) { return fragment.isAttachment(); });
+    auto measurement = hasAttachments
+        ? manager->measurePreparedLayout(*prepared, layoutContext, constraints)
+        : manager->measurePreparedLayoutSize(
+              *prepared, layoutContext, constraints, profileOutput);
+    result.size = measurement.size;
+    result.minimumSize = minimumSize;
+    result.maximumSize = maximumSize;
+    result.pointScaleFactor = layoutContext.pointScaleFactor;
+    result.valid = true;
+    result.preparedLayout = std::move(prepared);
+  #if RN_PROFILE_UI_THREAD_RENDERER
+    result.profile = {
+        .spannableBuildNanos = profile.spannableBuildNanos,
+        .paintSetupNanos = profile.paintSetupNanos,
+        .layoutCreateNanos = profile.layoutCreateNanos,
+        .isBoringNanos = profile.isBoringNanos,
+        .boringMakeNanos = profile.boringMakeNanos,
+        .measurementResultNanos = profile.measurementResultNanos,
+        .layoutKind = profile.layoutKind};
+    result.profile.simplePlainTextFastPath = profile.simplePlainTextFastPath;
+  #endif
     return result;
+  } catch (const jni::JniException& error) {
+    logDirectRendererJavaException("uiThreadRendererPrepareText", error);
+    throw;
   }
-  TextLayoutContext layoutContext;
-  layoutContext.pointScaleFactor = pointScaleFactor_;
-  layoutContext.surfaceId = surfaceId;
-  LayoutConstraints constraints;
-  constraints.minimumSize = minimumSize;
-  constraints.maximumSize = maximumSize;
-#if RN_PROFILE_UI_THREAD_RENDERER
-  TextLayoutManagerProfile profile;
-  auto* profileOutput = &profile;
-#else
-  TextLayoutManagerProfile* profileOutput = nullptr;
-#endif
-  auto prepared = std::make_shared<TextLayoutManager::PreparedTextLayout>(
-      manager->prepareLayout(
-          attributedString, paragraphAttributes, layoutContext, constraints, profileOutput));
-  const bool hasAttachments = std::any_of(
-      attributedString.getFragments().begin(),
-      attributedString.getFragments().end(),
-      [](const auto& fragment) { return fragment.isAttachment(); });
-  auto measurement = hasAttachments
-      ? manager->measurePreparedLayout(*prepared, layoutContext, constraints)
-      : manager->measurePreparedLayoutSize(
-            *prepared, layoutContext, constraints, profileOutput);
-  result.size = measurement.size;
-  result.minimumSize = minimumSize;
-  result.maximumSize = maximumSize;
-  result.pointScaleFactor = layoutContext.pointScaleFactor;
-  result.valid = true;
-  result.preparedLayout = std::move(prepared);
-#if RN_PROFILE_UI_THREAD_RENDERER
-  result.profile = {
-      .spannableBuildNanos = profile.spannableBuildNanos,
-      .paintSetupNanos = profile.paintSetupNanos,
-      .layoutCreateNanos = profile.layoutCreateNanos,
-      .isBoringNanos = profile.isBoringNanos,
-      .boringMakeNanos = profile.boringMakeNanos,
-      .measurementResultNanos = profile.measurementResultNanos,
-      .layoutKind = profile.layoutKind};
-  result.profile.simplePlainTextFastPath = profile.simplePlainTextFastPath;
-#endif
-  return result;
 }
 
 UIThreadTextMeasurement FabricUIManagerBinding::uiThreadRendererPrepareTextForMount(
@@ -922,48 +964,53 @@ UIThreadTextMeasurement FabricUIManagerBinding::uiThreadRendererPrepareTextForMo
     const ParagraphAttributes& paragraphAttributes,
     const Size& minimumSize,
     const Size& maximumSize) {
-  UIThreadTextMeasurement result;
-  std::shared_ptr<const TextLayoutManager> manager;
-  {
-    std::shared_lock lock(installMutex_);
-    manager = directTextLayoutManager_;
-  }
-  if (!manager) {
-    return result;
-  }
+  try {
+    UIThreadTextMeasurement result;
+    std::shared_ptr<const TextLayoutManager> manager;
+    {
+      std::shared_lock lock(installMutex_);
+      manager = directTextLayoutManager_;
+    }
+    if (!manager) {
+      return result;
+    }
 
-  TextLayoutContext layoutContext;
-  layoutContext.pointScaleFactor = pointScaleFactor_;
-  layoutContext.surfaceId = surfaceId;
-  LayoutConstraints constraints;
-  constraints.minimumSize = minimumSize;
-  constraints.maximumSize = maximumSize;
-#if RN_PROFILE_UI_THREAD_RENDERER
-  TextLayoutManagerProfile profile;
-  auto* profileOutput = &profile;
-#else
-  TextLayoutManagerProfile* profileOutput = nullptr;
-#endif
-  auto prepared = manager->prepareLayout(
-      attributedString,
-      paragraphAttributes,
-      layoutContext,
-      constraints,
-      profileOutput);
-  result.minimumSize = minimumSize;
-  result.maximumSize = maximumSize;
-  result.pointScaleFactor = layoutContext.pointScaleFactor;
-  result.valid = true;
-  result.preparedLayout = std::make_shared<TextLayoutManager::PreparedTextLayout>(
-      std::move(prepared));
-#if RN_PROFILE_UI_THREAD_RENDERER
-  result.profile = {
-      .paintSetupNanos = profile.paintSetupNanos,
-      .isBoringNanos = profile.isBoringNanos,
-      .boringMakeNanos = profile.boringMakeNanos,
-      .layoutKind = profile.layoutKind};
-#endif
-  return result;
+    TextLayoutContext layoutContext;
+    layoutContext.pointScaleFactor = pointScaleFactor_;
+    layoutContext.surfaceId = surfaceId;
+    LayoutConstraints constraints;
+    constraints.minimumSize = minimumSize;
+    constraints.maximumSize = maximumSize;
+  #if RN_PROFILE_UI_THREAD_RENDERER
+    TextLayoutManagerProfile profile;
+    auto* profileOutput = &profile;
+  #else
+    TextLayoutManagerProfile* profileOutput = nullptr;
+  #endif
+    auto prepared = manager->prepareLayout(
+        attributedString,
+        paragraphAttributes,
+        layoutContext,
+        constraints,
+        profileOutput);
+    result.minimumSize = minimumSize;
+    result.maximumSize = maximumSize;
+    result.pointScaleFactor = layoutContext.pointScaleFactor;
+    result.valid = true;
+    result.preparedLayout = std::make_shared<TextLayoutManager::PreparedTextLayout>(
+        std::move(prepared));
+  #if RN_PROFILE_UI_THREAD_RENDERER
+    result.profile = {
+        .paintSetupNanos = profile.paintSetupNanos,
+        .isBoringNanos = profile.isBoringNanos,
+        .boringMakeNanos = profile.boringMakeNanos,
+        .layoutKind = profile.layoutKind};
+  #endif
+    return result;
+  } catch (const jni::JniException& error) {
+    logDirectRendererJavaException("uiThreadRendererPrepareTextForMount", error);
+    throw;
+  }
 }
 
 std::pair<float, float> FabricUIManagerBinding::uiThreadRendererGetScrollOffset(
@@ -1178,7 +1225,26 @@ void FabricUIManagerBinding::schedulerShouldRenderTransactions(
     }
   }
 
-  if (ReactNativeFeatureFlags::enableAccumulatedUpdatesInRawPropsAndroid()) {
+  if (ReactNativeFeatureFlags::enableMountingCoordinatorPullModelAndroid()) {
+    // Pull model: do NOT pull the transaction or build the batch here (on the
+    // commit thread). Just notify Java that a transaction is available; the UI
+    // thread calls back into `pullAndExecuteTransaction` at its next mount
+    // dispatch.
+    auto surfaceId = mountingCoordinator->getSurfaceId();
+    {
+      std::scoped_lock lock(pullableMountingCoordinatorsMutex_);
+      auto& pullable = pullableMountingCoordinators_[surfaceId];
+      if (pullable != nullptr && pullable != mountingCoordinator) {
+        LOG(WARNING)
+            << "FabricUIManagerBinding::schedulerShouldRenderTransactions: "
+            << "surface " << surfaceId
+            << " was restarted while the previous surface's commit waits to be pulled";
+      }
+      pullable = mountingCoordinator;
+    }
+    mountingManager->onTransactionAvailable(surfaceId);
+  } else if (ReactNativeFeatureFlags::
+                 enableAccumulatedUpdatesInRawPropsAndroid()) {
     auto mountingTransaction = mountingCoordinator->pullTransaction(
         /* willPerformAsynchronously = */ true);
     if (mountingTransaction.has_value()) {
@@ -1211,17 +1277,24 @@ void FabricUIManagerBinding::schedulerShouldRenderTransactions(
 
 void FabricUIManagerBinding::schedulerShouldMergeReactRevision(
     SurfaceId surfaceId) {
-  std::shared_lock lock(installMutex_);
-  auto mountingManager =
-      getMountingManager("schedulerShouldMergeReactRevision");
-  if (mountingManager) {
-    mountingManager->scheduleReactRevisionMerge(surfaceId);
+  if (ReactNativeFeatureFlags::enableFabricCommitBranchingMergeOnMainThread()) {
+    auto mountingManager =
+        getMountingManager("schedulerShouldMergeReactRevision");
+    if (mountingManager) {
+      mountingManager->scheduleReactRevisionMerge(surfaceId);
+    }
+  } else {
+    mergeReactRevision(surfaceId);
   }
 }
 
 void FabricUIManagerBinding::mergeReactRevision(SurfaceId surfaceId) {
-  std::shared_lock lock(installMutex_);
-  scheduler_->getUIManager()->getShadowTreeRegistry().visit(
+  auto scheduler = getScheduler();
+  if (!scheduler) {
+    return;
+  }
+
+  scheduler->getUIManager()->getShadowTreeRegistry().visit(
       surfaceId,
       [](const ShadowTree& shadowTree) { shadowTree.mergeReactRevision(); });
 }
@@ -1245,12 +1318,13 @@ void FabricUIManagerBinding::schedulerDidRequestPreliminaryViewAllocation(
   }
   const auto wasPreallocated =
       mountingManager->maybePreallocateShadowNode(shadowNode);
-  // Only the Views of ShadowNode that were pre-allocated (forms views) needs
-  // to be destroyed if the ShadowNode is destroyed but it was never mounted
-  // on the screen.
+  // Only the Views of ShadowNode that were pre-allocated (forms views) need
+  // to be destroyed if the ShadowNode is destroyed and no mount created its
+  // View. Resha: skip the callback when nothing was preallocated (rendering on
+  // the main thread), which would otherwise cost a JNI call per destroyed node.
   if (wasPreallocated &&
       shadowNode.getTraits().check(ShadowNodeTraits::Trait::FormsView)) {
-    shadowNode.getFamilyShared()->onUnmountedFamilyDestroyed(
+    shadowNode.getFamilyShared()->onFamilyDestroyed(
         [weakMountingManager =
              std::weak_ptr(mountingManager)](const ShadowNodeFamily& family) {
           if (auto mountingManager = weakMountingManager.lock()) {
@@ -1301,6 +1375,13 @@ void FabricUIManagerBinding::schedulerShouldSynchronouslyUpdateViewOnUIThread(
     const folly::dynamic& props) {
   if ((UI_THREAD_RENDERER || ReactNativeFeatureFlags::cxxNativeAnimatedEnabled()) && mountingManager_) {
     mountingManager_->synchronouslyUpdateViewOnUIThread(tag, props);
+  }
+}
+
+void FabricUIManagerBinding::schedulerShouldSynchronouslyUpdateAnimatedProps(
+    const std::unordered_map<Tag, AnimatedProps>& updates) {
+  if (ReactNativeFeatureFlags::cxxNativeAnimatedEnabled() && mountingManager_) {
+    mountingManager_->synchronouslyUpdateAnimatedProps(updates);
   }
 }
 
@@ -1357,10 +1438,19 @@ void FabricUIManagerBinding::recordDirectNativeProps(jint tag, NativeMap* props)
 #endif
 }
 
+void FabricUIManagerBinding::flushDirectAnimationFrame() {
+#if UI_THREAD_RENDERER_WORKER
+  UIThreadRendererBinding::flushAnimationFrames();
+#endif
+}
+
 void FabricUIManagerBinding::registerNatives() {
   registerHybrid({
       makeNativeMethod("initHybrid", FabricUIManagerBinding::initHybrid),
       makeNativeMethod("recordDirectNativeProps", FabricUIManagerBinding::recordDirectNativeProps),
+      makeNativeMethod(
+          "flushDirectAnimationFrame",
+          FabricUIManagerBinding::flushDirectAnimationFrame),
       makeNativeMethod(
           "installFabricUIManager",
           FabricUIManagerBinding::installFabricUIManager),
@@ -1386,6 +1476,9 @@ void FabricUIManagerBinding::registerNatives() {
       makeNativeMethod(
           "dispatchDirectEvent", FabricUIManagerBinding::dispatchDirectEvent),
 #endif
+      makeNativeMethod(
+          "pullAndExecuteTransaction",
+          FabricUIManagerBinding::pullAndExecuteTransaction),
       makeNativeMethod(
           "uninstallFabricUIManager",
           FabricUIManagerBinding::uninstallFabricUIManager),

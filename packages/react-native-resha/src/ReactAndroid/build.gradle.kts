@@ -11,6 +11,7 @@ import com.facebook.react.tasks.internal.*
 import com.facebook.react.tasks.internal.utils.*
 import de.undercouch.gradle.tasks.download.Download
 import java.nio.file.Paths
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -18,7 +19,6 @@ plugins {
   id("com.facebook.react")
   alias(libs.plugins.android.library)
   alias(libs.plugins.download)
-  alias(libs.plugins.ktfmt)
 }
 
 version = project.findProperty("VERSION_NAME")?.toString()!!
@@ -73,16 +73,18 @@ val rnxUiThreadRendererWorker = rnxSwitch("UI_THREAD_RENDERER_WORKER")
 val rnxBuildCppTests = rnxSwitch("RN_BUILD_CPP_TESTS")
 val rnxProfileUiThreadRenderer = rnxSwitch("RN_PROFILE_UI_THREAD_RENDERER")
 
-// The direct host renderer calls Android view operations synchronously from its JS host methods,
-// so its runtime must be hosted by the main Looper as well.
-if (rnxUiThreadRenderer && !rnxUiThread) {
+// The direct host renderer calls Android view operations synchronously from its JS host methods
+// when JavaScript is hosted by the main Looper (`RN_UI_THREAD`). With JavaScript on React Native's
+// own JS thread, host methods cannot touch views, so every view effect has to go through the
+// renderer's worker, whose results the UI thread applies.
+if (rnxUiThreadRenderer && !rnxUiThread && !rnxUiThreadRendererWorker) {
   throw GradleException(
-      "UI_THREAD_RENDERER=true requires RN_UI_THREAD=true: direct host operations must run on the " +
-          "Android UI thread, which must also own the JavaScript runtime.")
+      "UI_THREAD_RENDERER=true with RN_UI_THREAD=false requires UI_THREAD_RENDERER_WORKER=true: " +
+          "direct host operations must run on the Android UI thread, so a JavaScript thread " +
+          "other than the UI thread can only hand work to the worker.")
 }
-if (rnxUiThreadRendererWorker && (!rnxUiThreadRenderer || !rnxUiThread)) {
-  throw GradleException(
-      "UI_THREAD_RENDERER_WORKER=true requires UI_THREAD_RENDERER=true and RN_UI_THREAD=true.")
+if (rnxUiThreadRendererWorker && !rnxUiThreadRenderer) {
+  throw GradleException("UI_THREAD_RENDERER_WORKER=true requires UI_THREAD_RENDERER=true.")
 }
 
 /** CMake's spelling of a boolean switch. */
@@ -144,6 +146,10 @@ val preparePrefab by
                       Pair("../ReactCommon/hermes/inspector-modern/", "hermes/inspector-modern/"),
                       // fabricjni
                       Pair("src/main/jni/react/fabric", "react/fabric/"),
+                      Pair(
+                          "src/main/jni/react/newarchdefaults/CoreComponentsRegistry.h",
+                          "react/fabric/",
+                      ),
                       // uimanagerjni
                       Pair("src/main/jni/react/uimanager", "react/uimanager/"),
                       // glog
@@ -161,6 +167,7 @@ val preparePrefab by
                       // reactnativejni
                       Pair("src/main/jni/react/jni", "react/jni/"),
                       Pair("../ReactCommon/cxxreact/", "cxxreact/"),
+                      Pair("../ReactCommon/cxxreact/React/", "React/"),
                       // react_featureflags
                       Pair("../ReactCommon/react/featureflags/", "react/featureflags/"),
                       // react_devtoolsruntimesettings
@@ -180,6 +187,7 @@ val preparePrefab by
                           "../ReactCommon/react/renderer/componentregistry/",
                           "react/renderer/componentregistry/",
                       ),
+                      Pair("../ReactCommon/react/renderer/componentregistry/React/", "React/"),
                       // react_renderer_consistency
                       Pair(
                           "../ReactCommon/react/renderer/consistency/",
@@ -187,21 +195,26 @@ val preparePrefab by
                       ),
                       // react_renderer_core
                       Pair("../ReactCommon/react/renderer/core/", "react/renderer/core/"),
+                      Pair("../ReactCommon/react/renderer/core/React/", "React/"),
                       // react_renderer_css
                       Pair("../ReactCommon/react/renderer/css/", "react/renderer/css/"),
                       // react_debug
                       Pair("../ReactCommon/react/debug/", "react/debug/"),
+                      Pair("../ReactCommon/react/debug/React/", "React/"),
                       // react_renderer_debug
                       Pair("../ReactCommon/react/renderer/debug/", "react/renderer/debug/"),
+                      Pair("../ReactCommon/react/renderer/debug/React/", "React/"),
                       // react_renderer_graphics
                       Pair("../ReactCommon/react/renderer/graphics/", "react/renderer/graphics/"),
+                      Pair("../ReactCommon/react/renderer/graphics/React/", "React/"),
                       Pair("../ReactCommon/react/renderer/graphics/platform/android/", ""),
                       // react_renderer_imagemanager
                       Pair(
                           "../ReactCommon/react/renderer/imagemanager/",
                           "react/renderer/imagemanager/",
                       ),
-                      Pair("../ReactCommon/react/renderer/imagemanager/platform/cxx/", ""),
+                      Pair("../ReactCommon/react/renderer/imagemanager/React/", "React/"),
+                      Pair("../ReactCommon/react/renderer/imagemanager/platform/android/", ""),
                       // react_renderer_mounting
                       Pair("../ReactCommon/react/renderer/mounting/", "react/renderer/mounting/"),
                       // react_renderer_scheduler
@@ -210,15 +223,22 @@ val preparePrefab by
                       Pair("../ReactCommon/react/renderer/uimanager/", "react/renderer/uimanager/"),
                       // react_utils
                       Pair("../ReactCommon/react/utils/", "react/utils/"),
+                      Pair("../ReactCommon/react/utils/platform/android/", ""),
+                      Pair("../ReactCommon/react/utils/React/", "React/"),
                       // rrc_image
                       Pair(
                           "../ReactCommon/react/renderer/components/image/",
                           "react/renderer/components/image/",
                       ),
+                      Pair("../ReactCommon/react/renderer/components/image/React/", "React/"),
                       // rrc_view
                       Pair(
                           "../ReactCommon/react/renderer/components/view/",
                           "react/renderer/components/view/",
+                      ),
+                      Pair(
+                          "../ReactCommon/react/renderer/components/view/React/",
+                          "React/",
                       ),
                       Pair("../ReactCommon/react/renderer/components/view/platform/android/", ""),
                       // rrc_root
@@ -228,6 +248,8 @@ val preparePrefab by
                       ),
                       // runtimeexecutor
                       Pair("../ReactCommon/runtimeexecutor/", ""),
+                      Pair("../ReactCommon/runtimeexecutor/platform/cxx/", ""),
+                      Pair("../ReactCommon/runtimeexecutor/React/", "React/"),
                       // react_renderer_textlayoutmanager
                       Pair(
                           "../ReactCommon/react/renderer/textlayoutmanager/",
@@ -239,6 +261,7 @@ val preparePrefab by
                           "../ReactCommon/react/renderer/components/text/",
                           "react/renderer/components/text/",
                       ),
+                      Pair("../ReactCommon/react/renderer/components/text/platform/android/", ""),
                       Pair(
                           "../ReactCommon/react/renderer/attributedstring",
                           "react/renderer/attributedstring",
@@ -262,9 +285,14 @@ val preparePrefab by
                       Pair(File(buildDir, "third-party-ndk/folly/").absolutePath, ""),
                       Pair(File(buildDir, "third-party-ndk/glog/exported/").absolutePath, ""),
                       Pair("../ReactCommon/callinvoker/", ""),
+                      Pair("../ReactCommon/callinvoker/React/", "React/"),
                       Pair("../ReactCommon/cxxreact/", "cxxreact/"),
+                      // Exported because the deprecated cxxreact/ErrorUtils.h shim includes it
+                      Pair("../ReactCommon/jserrorhandler/", "jserrorhandler/"),
                       Pair("../ReactCommon/react/bridging/", "react/bridging/"),
+                      Pair("../ReactCommon/react/bridging/React/", "React/"),
                       Pair("../ReactCommon/react/nativemodule/core/", ""),
+                      Pair("../ReactCommon/react/nativemodule/core/React/", "React/"),
                       Pair("../ReactCommon/react/nativemodule/core/platform/android/", ""),
                       Pair(
                           "../ReactCommon/react/renderer/componentregistry/",
@@ -281,6 +309,7 @@ val preparePrefab by
                           "react/renderer/leakchecker/",
                       ),
                       Pair("../ReactCommon/react/renderer/mapbuffer/", "react/renderer/mapbuffer/"),
+                      Pair("../ReactCommon/react/renderer/mapbuffer/React/", "React/"),
                       Pair("../ReactCommon/react/renderer/mounting/", "react/renderer/mounting/"),
                       Pair(
                           "../ReactCommon/react/renderer/runtimescheduler/",
@@ -290,6 +319,7 @@ val preparePrefab by
                       Pair("../ReactCommon/react/renderer/telemetry/", "react/renderer/telemetry/"),
                       Pair("../ReactCommon/react/renderer/uimanager/", "react/renderer/uimanager/"),
                       Pair("../ReactCommon/react/debug/", "react/debug/"),
+                      Pair("../ReactCommon/react/debug/React/", "React/"),
                       Pair("../ReactCommon/react/cxxstableapi/", "react/cxxstableapi/"),
                       Pair("../ReactCommon/react/utils/", "react/utils/"),
                       Pair("src/main/jni/react/jni", "react/jni/"),
@@ -312,6 +342,7 @@ val preparePrefab by
                       ),
                       // react_timing
                       Pair("../ReactCommon/react/timing/", "react/timing/"),
+                      Pair("../ReactCommon/react/timing/React/", "React/"),
                       // yoga
                       Pair("../ReactCommon/yoga/", ""),
                       Pair("src/main/jni/first-party/yogajni/jni", ""),
@@ -334,22 +365,23 @@ val preparePrefab by
                   // hermes_executor
                   Pair("../ReactCommon/hermes/inspector-modern/", "hermes/inspector-modern/"),
               ),
-          )
+          ),
       )
       outputDir.set(prefabHeadersDir)
     }
 
-val createNativeDepsDirectories by tasks.registering {
-  downloadsDir.mkdirs()
-  thirdPartyNdkDir.mkdirs()
-}
+val createNativeDepsDirectories by
+    tasks.registering {
+      downloadsDir.mkdirs()
+      thirdPartyNdkDir.mkdirs()
+    }
 
 val downloadBoostDest = File(downloadsDir, "boost_${BOOST_VERSION}.tar.gz")
 val downloadBoost by
     tasks.registering(Download::class) {
       dependsOn(createNativeDepsDirectories)
       src(
-          "https://archives.boost.io/release/${BOOST_VERSION.replace("_", ".")}/source/boost_${BOOST_VERSION}.tar.gz"
+          "https://archives.boost.io/release/${BOOST_VERSION.replace("_", ".")}/source/boost_${BOOST_VERSION}.tar.gz",
       )
       onlyIfModified(true)
       overwrite(false)
@@ -373,7 +405,7 @@ val downloadDoubleConversion by
     tasks.registering(Download::class) {
       dependsOn(createNativeDepsDirectories)
       src(
-          "https://github.com/google/double-conversion/archive/v${DOUBLE_CONVERSION_VERSION}.tar.gz"
+          "https://github.com/google/double-conversion/archive/v${DOUBLE_CONVERSION_VERSION}.tar.gz",
       )
       onlyIfModified(true)
       overwrite(false)
@@ -483,21 +515,23 @@ val prepareGlog by
     }
 
 // Tasks used by Fantom to download the Native 3p dependencies used.
-val prepareNative3pDependencies by tasks.registering {
-  dependsOn(
-      prepareBoost,
-      prepareDoubleConversion,
-      prepareFastFloat,
-      prepareFmt,
-      prepareFolly,
-      prepareGlog,
-  )
-}
+val prepareNative3pDependencies by
+    tasks.registering {
+      dependsOn(
+          prepareBoost,
+          prepareDoubleConversion,
+          prepareFastFloat,
+          prepareFmt,
+          prepareFolly,
+          prepareGlog,
+      )
+    }
 
-val prepareKotlinBuildScriptModel by tasks.registering {
-  // This task is run when Gradle Sync is running.
-  // We create it here so we can let it depend on preBuild inside the android{}
-}
+val prepareKotlinBuildScriptModel by
+    tasks.registering {
+      // This task is run when Gradle Sync is running.
+      // We create it here so we can let it depend on preBuild inside the android{}
+    }
 
 // As ReactAndroid builds from source, the codegen needs to be built before it can be invoked.
 // This is not the case for users of React Native, as we ship a compiled version of the codegen.
@@ -511,7 +545,7 @@ val buildCodegenCLI by
           fileTree(codegenDir) {
             include("lib/**/*.js")
             include("lib/**/*.js.flow")
-          }
+          },
       )
       rootProjectName.set(rootProject.name)
     }
@@ -592,8 +626,8 @@ android {
 
   kotlin {
     compilerOptions {
-      // Using '-Xjvm-default=all' to generate default java methods for interfaces
-      freeCompilerArgs = listOf("-Xjvm-default=all")
+      // Generate default java methods for interfaces
+      jvmDefault = JvmDefaultMode.NO_COMPATIBILITY
       // Using -PenableWarningsAsErrors=true prop to enable allWarningsAsErrors
       allWarningsAsErrors = enableWarningsAsErrors()
     }
@@ -641,7 +675,6 @@ android {
             "-DREACT_BUILD_DIR=$buildDir",
             "-DANDROID_STL=c++_shared",
             "-DANDROID_TOOLCHAIN=clang",
-            "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
             "-DCMAKE_POLICY_DEFAULT_CMP0069=NEW",
             // React Native X compile-time switches, so the C++ half sees the same values as the BuildConfig
             // booleans above.
@@ -676,21 +709,24 @@ android {
   tasks.getByName("generateCodegenSchemaFromJavaScript").dependsOn(buildCodegenCLI)
   prepareKotlinBuildScriptModel.dependsOn("preBuild")
   prepareKotlinBuildScriptModel.dependsOn(
-      ":packages:react-native:ReactAndroid:hermes-engine:preBuild"
+      ":packages:react-native:ReactAndroid:hermes-engine:preBuild",
   )
 
   sourceSets {
     named("main") {
-      res.directories.addAll(
-          listOf(
-              "src/main/res/devsupport",
-              "src/main/res/shell",
-              "src/main/res/views/alert",
-              "src/main/res/views/modal",
-              "src/main/res/views/uimanager",
-              "src/main/res/views/view",
-          )
-      )
+      res.directories.apply {
+        clear()
+        addAll(
+            listOf(
+                "src/main/res/devsupport",
+                "src/main/res/shell",
+                "src/main/res/views/alert",
+                "src/main/res/views/modal",
+                "src/main/res/views/uimanager",
+                "src/main/res/views/view",
+            ),
+        )
+      }
     }
   }
 
@@ -755,6 +791,7 @@ tasks.withType<KotlinCompile>().configureEach {
 }
 
 dependencies {
+  api(libs.androidx.activity)
   api(libs.androidx.appcompat)
   api(libs.androidx.appcompat.resources)
   api(libs.androidx.autofill)

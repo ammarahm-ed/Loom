@@ -360,6 +360,76 @@ bool requiresIntrinsicMeasurement(const std::string& componentName) {
  */
 } // namespace
 
+/**
+ * The animation fast lane's key table (design §3.2). It decides per key, not
+ * per patch: `{transform, width}` splits into a paint key and a layout key.
+ *
+ * Nothing listed as paint is read by Yoga, so folding such a key into the
+ * merged props without a style rebuild is exact — in Fabric, too, a transform
+ * never triggers layout. The one derived value that depends on it, the mount
+ * diff's overflow inset, is recomputed on the next real commit.
+ */
+AnimatedPropClass classifyAnimatedPropKey(const std::string& key) {
+  if (key == "opacity" || key == "transform" || key == "transformOrigin" ||
+      key == "backgroundColor" || key == "tintColor" ||
+      key == "overlayColor" || key == "elevation") {
+    return AnimatedPropClass::Paint;
+  }
+  // `borderColor*` and every `border*Radius` are paint on both platforms, while
+  // `borderWidth*` is layout because it changes the box. `zIndex` also takes
+  // the layout path because child reordering requires a mounting diff.
+  if (key.rfind("border", 0) == 0 &&
+      (key.find("Color") != std::string::npos ||
+       key.find("Radius") != std::string::npos)) {
+    return AnimatedPropClass::Paint;
+  }
+  if (key.rfind("shadow", 0) == 0) {
+    return AnimatedPropClass::Paint;
+  }
+  // Text keys change font shaping or text measurement, so they cannot be
+  // folded: they take the ordinary commit path (design §3.2 "Text").
+  if (key.rfind("font", 0) == 0 || key == "lineHeight" ||
+      key == "letterSpacing" || key == "textAlign" ||
+      key == "textAlignVertical" || key == "textTransform" ||
+      key == "textDecorationLine" || key == "textShadowColor" ||
+      key == "textShadowOffset" || key == "textShadowRadius" ||
+      key == "allowFontScaling" || key == "numberOfLines") {
+    return AnimatedPropClass::Text;
+  }
+  return AnimatedPropClass::Layout;
+}
+
+ClassifiedAnimatedProps classifyAnimatedProps(const folly::dynamic& props) {
+  ClassifiedAnimatedProps classified;
+  // The host sees hoisted props, so the classes are decided on the same keys.
+  const auto flattened = hoistProps(props);
+  if (!flattened.isObject()) {
+    return classified;
+  }
+  for (const auto& item : flattened.items()) {
+    if (!item.first.isString()) {
+      classified.layout[item.first] = item.second;
+      continue;
+    }
+    const auto& key = item.first.getString();
+    switch (classifyAnimatedPropKey(key)) {
+      case AnimatedPropClass::Paint:
+        classified.paint[key] = item.second;
+        break;
+      case AnimatedPropClass::Text:
+        // The caller routes the whole payload through the normal commit path,
+        // so the split itself does not have to be exact here.
+        classified.text = true;
+        classified.layout[key] = item.second;
+        break;
+      case AnimatedPropClass::Layout:
+        classified.layout[key] = item.second;
+        break;
+    }
+  }
+  return classified;
+}
+
 std::string UIThreadRenderer::hostComponentName(
     const std::string& componentName) {
   // Fabric name -> Android ViewManager name, mirroring
@@ -2386,9 +2456,19 @@ void UIThreadRenderer::cloneNodeWithNewProps(
 void UIThreadRenderer::patchProps(
     Node& node,
     const folly::dynamic& propsPatch) {
-  mergeProps(node, hoistProps(propsPatch));
-  refreshStyle(node);
-  markTextDirty(node.tag);
+  auto hoisted = hoistProps(propsPatch);
+  // A patch of paint-only keys (the allow-list the paint-only commit uses)
+  // affects neither Yoga style nor text, so re-parsing the node's whole style
+  // and invalidating text would change nothing: skip both. The node conditions
+  // are the ones `tryCommitPaintOnlyProps` requires for the same guarantee.
+  const bool paintOnly = !node.virtualNode && !node.layoutOnlyNode &&
+      !isParagraphName(node.componentName) &&
+      isConservativePaintOnlyPatch(hoisted);
+  mergeProps(node, std::move(hoisted));
+  if (!paintOnly) {
+    refreshStyle(node);
+    markTextDirty(node.tag);
+  }
 }
 
 
@@ -2506,6 +2586,42 @@ bool UIThreadRenderer::hasSameInstanceHandle(
     const InstanceHandle::Shared& handle) const {
   const auto* node = find(tag);
   return node != nullptr && node->instanceHandle == handle;
+}
+
+void UIThreadRenderer::foldPaintProps(
+    const std::vector<std::pair<Tag, folly::dynamic>>& patches) {
+  for (const auto& [tag, patch] : patches) {
+    auto* node = find(tag);
+    if (node == nullptr || !node->hostCreated) {
+      continue;
+    }
+    // No refreshStyle, no markTextDirty and no emission: none of these keys is
+    // visible to Yoga and the host already applied the values to the native
+    // view (design §3.2). `mergeProps` still marks the node props-dirty, so the
+    // next real commit ships the merged set, exactly as a normal patch would.
+    mergeProps(*node, hoistProps(patch));
+  }
+}
+
+void UIThreadRenderer::applyAnimationFrame(
+    const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+    const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches) {
+  foldPaintProps(paintPatches);
+  if (layoutPatches.empty()) {
+    return;
+  }
+  for (const auto& [tag, patch] : layoutPatches) {
+    auto* node = find(tag);
+    if (node == nullptr) {
+      continue;
+    }
+    // A layout key needs the style rebuild and the text invalidation every
+    // other prop write gets, and `commit()` coalesces the layout of every node
+    // it reaches into a single batch — which is what makes this one commit per
+    // frame however many nodes are animating (design §5.2).
+    patchProps(*node, patch);
+  }
+  commit();
 }
 
 bool UIThreadRenderer::tryCommitPaintOnlyProps(

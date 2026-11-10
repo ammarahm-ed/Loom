@@ -7,25 +7,32 @@
 
 #pragma once
 
+#include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <optional>
 #include <unordered_set>
 #include <vector>
-#include <optional>
 
+#include <React/RendererCore.h>
 #include <fbjni/fbjni.h>
 #include <react/fabric/JFabricUIManager.h>
-#include <react/renderer/uimanager/UIThreadDirectMountBatch.h>
 #include <react/renderer/attributedstring/AttributedString.h>
 #include <react/renderer/attributedstring/ParagraphAttributes.h>
 #include <react/renderer/mapbuffer/MapBuffer.h>
-#include <react/renderer/uimanager/primitives.h>
+#include <react/renderer/mounting/ShadowView.h>
+#include <react/renderer/uimanager/UIThreadDirectMountBatch.h>
 #include <react/renderer/uimanager/UIThreadTextMeasurement.h>
+#include <react/renderer/uimanager/primitives.h>
 
 namespace facebook::react {
 
+/** Logs the Java stack trace of a JNI exception raised by a direct-renderer operation. */
+void logDirectRendererJavaException(const char* operation, const jni::JniException& error);
+
+struct AnimatedProps;
+
 class MountingTransaction;
-struct ShadowView;
 
 class FabricMountingManager final {
  public:
@@ -37,22 +44,25 @@ class FabricMountingManager final {
 
   void onSurfaceStop(SurfaceId surfaceId);
 
+  /*
+   * Can be called from any thread. Returns whether a view was queued for
+   * preallocation (it is skipped on the main thread).
+   */
   bool maybePreallocateShadowNode(const ShadowNode &shadowNode);
 
+  /*
+   * Can be called from any thread.
+   */
   void destroyUnmountedShadowNode(const ShadowNodeFamily &family);
 
   /*
-   * Drains preallocatedViewsQueue_ by calling preallocateShadowView on each
-   * item in the queue. Can be called by any thread.
+   * Drains preallocatedViewsQueue_: preallocates each queued view on the Java
+   * side and registers its tag in allocatedViewRegistry_ so that executeMount
+   * skips the redundant Create mount item for this tag. In the pull model, it
+   * skips the views whose family was destroyed. Must be called on the UI
+   * thread.
    */
   void drainPreallocateViewsQueue();
-
-  /*
-   * Preallocates a view on the Java side and registers the tag in
-   * allocatedViewRegistry_ so that executeMount skips the redundant Create
-   * mount item for this tag.
-   */
-  void preallocateShadowView(const ShadowView &shadowView);
 
   /*
    * Returns true if the given tag is registered in allocatedViewRegistry_
@@ -61,7 +71,23 @@ class FabricMountingManager final {
    */
   bool isViewAllocated(SurfaceId surfaceId, Tag tag);
 
-  void executeMount(const MountingTransaction &transaction);
+  /*
+   * Converts the transaction's mutations into an IntBufferBatchMountItem and
+   * hands it to Java.
+   *
+   * In the push model (`synchronous` = false), the batch is
+   * scheduled onto the UI thread asynchronously.
+   *
+   * In the pull model (`synchronous` = true) the batch is
+   * applied immediately on the calling (UI) thread.
+   */
+  void executeMount(const MountingTransaction &transaction, bool synchronous = false);
+
+  /*
+   * Pull model: notify Java that a transaction is available for `surfaceId` so
+   * the UI thread pulls it at its next mount dispatch.
+   */
+  void onTransactionAvailable(SurfaceId surfaceId);
 
 #if UI_THREAD_RENDERER
   /*
@@ -119,6 +145,8 @@ class FabricMountingManager final {
 
   void synchronouslyUpdateViewOnUIThread(Tag viewTag, const folly::dynamic &props);
 
+  void synchronouslyUpdateAnimatedProps(const std::unordered_map<Tag, AnimatedProps> &updates);
+
   void captureViewSnapshot(Tag tag, SurfaceId surfaceId);
 
   void setViewSnapshot(Tag sourceTag, Tag targetTag, SurfaceId surfaceId);
@@ -129,6 +157,8 @@ class FabricMountingManager final {
 
  private:
   bool isOnMainThread();
+
+  void preallocateRegisteredView(const ShadowView &shadowView);
 
   jni::global_ref<JFabricUIManager::javaobject> javaUIManager_;
 
@@ -150,12 +180,28 @@ class FabricMountingManager final {
    */
   std::mutex preallocateMutex_;
 
+  struct QueuedView {
+    ShadowView shadowView;
+    std::weak_ptr<const ShadowNodeFamily> family;
+  };
+
   /*
    * A queue of views to be preallocated on the Java side.
    */
-  std::vector<ShadowView> preallocatedViewsQueue_{};
+  std::vector<QueuedView> preallocatedViewsQueue_{};
 
-  std::unordered_map<SurfaceId, std::unordered_set<Tag>> allocatedViewRegistry_{};
+  enum class AllocatedViewState { Preallocated, Mounted };
+
+  struct AllocatedView {
+    /*
+     * With enablePreallocatedPropsDiffOnInsertAndroid, the props the view was
+     * preallocated with, until its first Insert. nullptr otherwise.
+     */
+    Props::Shared preallocatedProps;
+    AllocatedViewState state;
+  };
+
+  std::unordered_map<SurfaceId, std::unordered_map<Tag, AllocatedView>> allocatedViewRegistry_{};
   std::recursive_mutex allocatedViewsMutex_;
 };
 

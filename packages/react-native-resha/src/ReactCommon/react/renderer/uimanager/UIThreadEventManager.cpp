@@ -4,6 +4,7 @@
 
 #include <react/renderer/core/DynamicEventPayload.h>
 
+#include <mutex>
 #include <unordered_set>
 #include <utility>
 #if defined(__ANDROID__)
@@ -195,9 +196,26 @@ void UIThreadEventManager::dispatch(
   } else {
     eventDispatcher_->dispatchEvent(std::move(event));
   }
+#if defined(__ANDROID__) && !RN_UI_THREAD
+  // A synchronous event blocks the calling (UI) thread until JavaScript has
+  // handled it. With JavaScript on its own thread that wait can deadlock against
+  // a JS thread that is itself waiting for the UI thread to apply worker
+  // results, so the event is delivered asynchronously instead. Waits go from JS
+  // to UI only.
   if (synchronous) {
-    eventDispatcher_->experimental_flushSync();
+    static std::once_flag logged;
+    std::call_once(logged, [] {
+      __android_log_print(
+          ANDROID_LOG_INFO,
+          "RNXDirectEvent",
+          "synchronous events are delivered asynchronously when JavaScript is not on the UI thread");
+    });
   }
+#else
+  if (synchronous) {
+    eventDispatcher_->experimental_flushSync(tag);
+  }
+#endif
 }
 
 } // namespace facebook::react

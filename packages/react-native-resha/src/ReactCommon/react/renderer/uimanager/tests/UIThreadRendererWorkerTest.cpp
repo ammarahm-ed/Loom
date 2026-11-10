@@ -5,6 +5,8 @@
 #include <gtest/gtest.h>
 #include <react/renderer/uimanager/UIThreadRendererWorker.h>
 #include <atomic>
+#include <chrono>
+#include <deque>
 #include <future>
 #include <stdexcept>
 
@@ -244,4 +246,151 @@ TEST(UIThreadRendererWorkerTest, ShutdownJoinsAndNeverAppliesPendingEffects) {
   EXPECT_TRUE(lifetime.expired());
   EXPECT_EQ(mounted, 0);
 }
+namespace {
+
+/**
+ * A stand-in for the platform UI thread when JavaScript runs elsewhere: the
+ * test body plays the JS thread, this thread owns result application and is the
+ * only one the worker considers "UI".
+ */
+class FakeUIThread {
+ public:
+  FakeUIThread() : thread_([this] { loop(); }) {
+    uiId_ = thread_.get_id();
+    std::unique_lock lock(mutex_);
+    ready_.wait(lock, [this] { return started_; });
+  }
+  ~FakeUIThread() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+    }
+    ready_.notify_all();
+    thread_.join();
+  }
+  bool isUIThread() const {
+    return std::this_thread::get_id() == uiId_;
+  }
+  void post(std::function<void()> task) {
+    {
+      std::lock_guard lock(mutex_);
+      tasks_.push_back(std::move(task));
+    }
+    ready_.notify_all();
+  }
+
+ private:
+  void loop() {
+    {
+      std::lock_guard lock(mutex_);
+      started_ = true;
+    }
+    ready_.notify_all();
+    std::unique_lock lock(mutex_);
+    for (;;) {
+      ready_.wait(lock, [this] { return stopping_ || !tasks_.empty(); });
+      if (stopping_ && tasks_.empty())
+        return;
+      auto task = std::move(tasks_.front());
+      tasks_.pop_front();
+      lock.unlock();
+      task();
+      lock.lock();
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<std::function<void()>> tasks_;
+  bool started_{false};
+  bool stopping_{false};
+  std::thread::id uiId_;
+  std::thread thread_;
+};
+
+} // namespace
+
+TEST(UIThreadRendererWorkerTest, OffUIBarrierWaitsForTheUIThreadToApply) {
+  FakeUIThread ui;
+  UIThreadRendererWorker* workerPointer = nullptr;
+  std::atomic<int> applied{0};
+  std::atomic<int> appliedOffUI{0};
+  UIThreadRendererWorker worker(
+      [&] { ui.post([&] { workerPointer->applyReady(); }); },
+      [&] { return ui.isUIThread(); });
+  workerPointer = &worker;
+  for (int index = 0; index != 20; ++index) {
+    auto job = std::make_unique<UIThreadRendererWorker::Job>();
+    job->compute = [] {};
+    job->applied = [&] {
+      if (!ui.isUIThread())
+        ++appliedOffUI;
+      ++applied;
+    };
+    worker.submit(std::move(job));
+  }
+  // This thread is "JS": synchronize() must wait instead of applying itself.
+  worker.synchronize();
+  EXPECT_EQ(applied.load(), 20);
+  EXPECT_EQ(appliedOffUI.load(), 0);
+}
+
+TEST(UIThreadRendererWorkerTest, OffUISynchronousJobComputesOnTheUIThread) {
+  FakeUIThread ui;
+  UIThreadRendererWorker* workerPointer = nullptr;
+  UIThreadRendererWorker worker(
+      [&] { ui.post([&] { workerPointer->applyReady(); }); },
+      [&] { return ui.isUIThread(); });
+  workerPointer = &worker;
+  std::atomic<bool> computedOnUI{false};
+  std::atomic<bool> appliedOnUI{false};
+  auto job = std::make_unique<UIThreadRendererWorker::Job>();
+  job->synchronous = true;
+  job->compute = [&] { computedOnUI = ui.isUIThread(); };
+  job->applied = [&] { appliedOnUI = ui.isUIThread(); };
+  // The worker is idle, but this is not the UI thread, so it must not borrow it.
+  EXPECT_FALSE(worker.runIfIdle(job));
+  ASSERT_NE(job, nullptr);
+  worker.submit(std::move(job));
+  worker.awaitApplied();
+  EXPECT_TRUE(computedOnUI.load());
+  EXPECT_TRUE(appliedOnUI.load());
+}
+
+TEST(UIThreadRendererWorkerTest, RunIfIdleStillBorrowsTheUIThread) {
+  FakeUIThread ui;
+  UIThreadRendererWorker worker([] {}, [&] { return ui.isUIThread(); });
+  std::promise<bool> ranOnUI;
+  ui.post([&] {
+    auto job = std::make_unique<UIThreadRendererWorker::Job>();
+    job->synchronous = true;
+    bool computed = false;
+    job->compute = [&] { computed = true; };
+    const bool taken = worker.runIfIdle(job);
+    ranOnUI.set_value(taken && computed);
+  });
+  EXPECT_TRUE(ranOnUI.get_future().get());
+}
+
+TEST(UIThreadRendererWorkerTest, ApplyReadyIgnoresNonUICallers) {
+  FakeUIThread ui;
+  UIThreadRendererWorker worker([] {}, [&] { return ui.isUIThread(); });
+  std::atomic<int> applied{0};
+  auto job = std::make_unique<UIThreadRendererWorker::Job>();
+  job->compute = [] {};
+  job->applied = [&] { ++applied; };
+  worker.submit(std::move(job));
+  // Give the worker time to publish its result, then try to apply it here.
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  worker.applyReady();
+  EXPECT_EQ(applied.load(), 0);
+  std::promise<void> done;
+  ui.post([&] {
+    worker.applyReady();
+    done.set_value();
+  });
+  done.get_future().wait();
+  EXPECT_EQ(applied.load(), 1);
+}
+
 } // namespace facebook::react

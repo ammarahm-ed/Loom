@@ -28,6 +28,7 @@
 
 #include <react/featureflags/ReactNativeFeatureFlags.h>
 #include <react/featureflags/ReactNativeFeatureFlagsDefaults.h>
+#include <react/renderer/animationbackend/AnimatedProps.h>
 #include <react/renderer/uimanager/UIThreadRenderer.h>
 #include <react/renderer/uimanager/UIThreadRendererBinding.h>
 #include <react/renderer/uimanager/UIThreadRendererWorker.h>
@@ -648,6 +649,47 @@ TEST(UIThreadRendererTest, PaintOnlyPropsRejectLayoutAndTextChanges) {
             "style", folly::dynamic::object("width", 80.0))}}));
   EXPECT_FALSE(renderer.tryCommitPaintOnlyProps(
       {{2, folly::dynamic::object("accessibilityLabel", "changed")}}));
+}
+
+// Include the upstream AnimatedProps header above as a compile-time regression
+// check: the lane type must coexist with the backend type in the same TU.
+TEST(UIThreadRendererTest, AnimationLaneClassifiesNativeDriverTransform) {
+  AnimatedProps backendProps;
+  EXPECT_TRUE(backendProps.props.empty());
+  auto transform =
+      folly::dynamic::array(folly::dynamic::object("translateX", 0));
+  const std::vector<folly::dynamic> payloads{
+           folly::dynamic::object("transform", transform),
+           folly::dynamic::object(
+               "style", folly::dynamic::object("transform", transform))};
+  for (const auto& payload : payloads) {
+    auto classified = classifyAnimatedProps(payload);
+    ASSERT_TRUE(classified.paint.isObject());
+    ASSERT_TRUE(classified.layout.isObject());
+    EXPECT_EQ(classified.paint.at("transform"), transform);
+    EXPECT_TRUE(classified.layout.empty());
+    EXPECT_FALSE(classified.text);
+  }
+}
+
+TEST(UIThreadRendererTest, AnimationLaneSplitsPaintLayoutAndText) {
+  auto classified = classifyAnimatedProps(
+      folly::dynamic::object("opacity", 0.5)("width", 40)("zIndex", 2)(
+          "fontSize", 16));
+  folly::dynamic expectedPaint = folly::dynamic::object("opacity", 0.5);
+  folly::dynamic expectedLayout =
+      folly::dynamic::object("width", 40)("zIndex", 2)("fontSize", 16);
+  EXPECT_EQ(classified.paint, expectedPaint);
+  EXPECT_EQ(classified.layout, expectedLayout);
+  EXPECT_TRUE(classified.text);
+  EXPECT_TRUE(classifyAnimatedProps(nullptr).empty());
+  EXPECT_TRUE(classifyAnimatedProps(folly::dynamic::array()).empty());
+  auto clearedStyle =
+      classifyAnimatedProps(folly::dynamic::object("style", nullptr));
+  EXPECT_TRUE(clearedStyle.paint.isObject());
+  EXPECT_TRUE(clearedStyle.layout.isObject());
+  auto nonStringKey = classifyAnimatedProps(folly::dynamic::object(42, true));
+  EXPECT_EQ(nonStringKey.layout.at(42), true);
 }
 
 TEST(UIThreadRendererTest, NativeAnimatedPatchShapesUseThePaintOnlyPath) {

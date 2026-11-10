@@ -7,26 +7,27 @@
 
 #pragma once
 
+#include <react/cxxstableapi/FrameworksGuard.h>
+
 #include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
+#include <React/Graphics.h>
+#include <React/RendererCore.h>
 #include <folly/dynamic.h>
-
-#include <optional>
-
 #include <react/renderer/attributedstring/AttributedString.h>
 #include <react/renderer/attributedstring/ParagraphAttributes.h>
-#include <react/renderer/uimanager/UIThreadTextMeasurement.h>
 #include <react/renderer/uimanager/UIThreadDirectMountBatch.h>
-#include <react/renderer/core/ReactPrimitives.h>
-#include <react/renderer/core/EventEmitter.h>
-#include <react/renderer/core/RawEvent.h>
-#include <react/renderer/graphics/Rect.h>
+#include <react/renderer/uimanager/UIThreadTextMeasurement.h>
 #include <react/renderer/mounting/MountingCoordinator.h>
 #include <react/renderer/mounting/ShadowView.h>
 
 namespace facebook::react {
+
+struct AnimatedProps;
 
 /*
  * Abstract class for Scheduler's delegate.
@@ -158,6 +159,12 @@ class SchedulerDelegate {
   schedulerDidSetIsJSResponder(const ShadowView &shadowView, bool isJSResponder, bool blockNativeResponder) = 0;
 
   virtual void schedulerShouldSynchronouslyUpdateViewOnUIThread(Tag tag, const folly::dynamic &props) = 0;
+
+  /*
+   * Synchronous update of animated props for many views at once. By default,
+   * forwards each view to `schedulerShouldSynchronouslyUpdateViewOnUIThread`.
+   */
+  virtual void schedulerShouldSynchronouslyUpdateAnimatedProps(const std::unordered_map<Tag, AnimatedProps> &updates);
 
   virtual void schedulerDidUpdateShadowTree(const std::unordered_map<Tag, folly::dynamic> &tagToProps) = 0;
 

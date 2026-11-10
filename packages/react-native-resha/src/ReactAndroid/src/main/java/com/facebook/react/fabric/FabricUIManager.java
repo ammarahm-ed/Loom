@@ -28,6 +28,7 @@ import android.view.accessibility.AccessibilityEvent;
 import androidx.annotation.AnyThread;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
+import androidx.annotation.VisibleForTesting;
 import androidx.core.view.ViewCompat.FocusDirection;
 import com.facebook.common.logging.FLog;
 import com.facebook.infer.annotation.Assertions;
@@ -66,6 +67,7 @@ import com.facebook.react.fabric.mounting.SurfaceMountingManager;
 import com.facebook.react.fabric.mounting.UIThreadDirectViewApplier;
 import com.facebook.proguard.annotations.DoNotStrip;
 import com.facebook.react.fabric.mounting.mountitems.BatchMountItem;
+import com.facebook.react.fabric.mounting.mountitems.BatchedAnimatedPropsMountItem;
 import com.facebook.react.fabric.mounting.mountitems.DispatchCommandMountItem;
 import com.facebook.react.fabric.mounting.mountitems.MountItem;
 import com.facebook.react.fabric.mounting.mountitems.MountItemFactory;
@@ -110,6 +112,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * We instruct ProGuard not to strip out any fields or methods, because many of these methods are
@@ -218,7 +221,7 @@ public class FabricUIManager
    */
   private volatile boolean mDestroyed = false;
 
-  private boolean mDriveCxxAnimations = false;
+  private volatile boolean mDriveCxxAnimations = false;
 
   private @Nullable ViewTransitionSnapshotManager mViewTransitionSnapshotManager;
 
@@ -241,6 +244,11 @@ public class FabricUIManager
           // This executor can be technically accessed before the dispatcher is created,
           // but if that happens, something is terribly wrong
           mMountItemDispatcher.dispatchMountItems(items);
+          // Only called when a surface's root view attaches, before the surface counts as attached,
+          // so the dispatch above skips its pull. Pull model: the next frame pulls it.
+          if (mMountItemDispatcher.hasSurfaceIdsToPull()) {
+            mDispatchUIFrameCallback.schedule();
+          }
         }
       };
 
@@ -248,6 +256,7 @@ public class FabricUIManager
   // It's initialized only when addUIBlock or prependUIBlock is called the first time.
   @Nullable private InteropUIBlockListener mInteropUIBlockListener;
 
+  @SuppressWarnings("this-escape")
   public FabricUIManager(
       ReactApplicationContext reactContext,
       ViewManagerRegistry viewManagerRegistry,
@@ -264,6 +273,10 @@ public class FabricUIManager
     mEventDispatcher = new FabricEventDispatcher(reactContext, new FabricEventEmitter(this));
     mBatchEventDispatchedListener = batchEventDispatchedListener;
     mReactApplicationContext.addLifecycleEventListener(this);
+    if (BuildConfig.DEBUG) {
+      // React Native X: debug-only main-thread jank reporter (see JankReporterSupport).
+      com.facebook.react.common.JankReporterSupport.attach(reactContext);
+    }
 
     mViewManagerRegistry = viewManagerRegistry;
     mReactApplicationContext.registerComponentCallbacks(viewManagerRegistry);
@@ -271,14 +284,20 @@ public class FabricUIManager
 
   @DoNotStrip
   public static void uiThreadDirectScheduleResult(Runnable result) {
-    UiThreadUtil.runOnUiThread(result);
+    // Asynchronous messages are not held back by the sync barrier ViewRootImpl posts while a
+    // traversal is pending, so a result that is ready before the next frame is applied before that
+    // frame draws instead of after it.
+    sDirectResultHandler.post(result);
   }
+
+  private static final android.os.Handler sDirectResultHandler =
+      androidx.core.os.HandlerCompat.createAsync(android.os.Looper.getMainLooper());
 
   @UiThread
   @DoNotStrip
   public boolean uiThreadDirectCanMeasureTextOnWorker() {
     UiThreadUtil.assertOnUiThread();
-    ViewManager manager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
+    ViewManager<?, ?> manager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
     boolean stock = manager.getClass() == ReactTextViewManager.class
         || manager.getClass() == com.facebook.react.views.text.PreparedLayoutTextViewManager.class;
     return stock && manager instanceof ReactTextViewManagerCallback
@@ -299,7 +318,8 @@ public class FabricUIManager
       int[] preparedTextTags,
       Object[] preparedTextLayouts,
       int[] phaseOffsets,
-      boolean requiresTagReplacement) {
+      boolean requiresTagReplacement,
+      @Nullable Object propsTable) {
     mUiThreadDirectViewApplier.applyBatch(
         surfaceId,
         instructions,
@@ -310,7 +330,8 @@ public class FabricUIManager
         preparedTextTags,
         preparedTextLayouts,
         phaseOffsets,
-        requiresTagReplacement);
+        requiresTagReplacement,
+        (com.facebook.react.fabric.mounting.DirectPropsTable) propsTable);
   }
 
   /** Fail-stops a direct-renderer surface after a commit has partially applied. */
@@ -366,6 +387,9 @@ public class FabricUIManager
         surfaceId, reactTag, isJSResponder, blockNativeResponder);
   }
 
+  /**
+   * @deprecated Use {@code ReactHost.createSurface(...)} and {@code ReactSurface.start()} instead.
+   */
   @Override
   @UiThread
   @ThreadConfined(UI)
@@ -375,7 +399,8 @@ public class FabricUIManager
     ReactSoftExceptionLogger.logSoftException(
         TAG,
         new IllegalViewOperationException(
-            "Do not call addRootView in Fabric; it is unsupported. Call startSurface instead."));
+            "Do not call addRootView in Fabric; it is unsupported. Use ReactHost.createSurface(...)"
+                + " and ReactSurface.start() instead."));
 
     ReactRoot reactRootView = (ReactRoot) rootView;
     final int rootTag = reactRootView.getRootViewTag();
@@ -445,6 +470,10 @@ public class FabricUIManager
     return mBinding != null ? mBinding.getRelativeAncestorList(rootTag, childTag) : null;
   }
 
+  /**
+   * @deprecated Use {@code ReactHost.createSurface(...)} and {@code ReactSurface.start()} instead.
+   */
+  @Deprecated
   @Override
   @AnyThread
   @ThreadConfined(ANY)
@@ -533,12 +562,22 @@ public class FabricUIManager
     mBinding.stopSurfaceWithSurfaceHandler(surfaceHandler);
   }
 
+  private static boolean isUrgentEventCategory(@EventCategoryDef int eventCategory) {
+    return eventCategory == EventCategoryDef.CONTINUOUS_START
+        || eventCategory == EventCategoryDef.CONTINUOUS_END
+        || eventCategory == EventCategoryDef.DISCRETE;
+  }
+
   /** Method called when an event has been dispatched on the C++ side. */
   @SuppressWarnings("unused")
   public void onRequestEventBeat() {
     mEventDispatcher.dispatchAllEvents();
   }
 
+  /**
+   * @deprecated Use {@code ReactSurface.stop()} instead.
+   */
+  @Deprecated
   @AnyThread
   @ThreadConfined(ANY)
   @Override
@@ -668,7 +707,7 @@ public class FabricUIManager
       ReadableMapBuffer paragraphAttributes,
       float width,
       float height) {
-    ViewManager textViewManager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
+    ViewManager<?, ?> textViewManager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
 
     return (NativeArray)
         TextLayoutManager.measureLines(
@@ -684,12 +723,12 @@ public class FabricUIManager
             mTextEffectRegistry);
   }
 
-  public int getColor(int surfaceId, String[] resourcePaths) {
+  public @Nullable Integer getColor(int surfaceId, String[] resourcePaths) {
     ThemedReactContext context =
         mMountingManager.getSurfaceManagerEnforced(surfaceId, "getColor").getContext();
     // Surface may have been stopped
     if (context == null) {
-      return 0;
+      return null;
     }
 
     for (String resourcePath : resourcePaths) {
@@ -698,7 +737,9 @@ public class FabricUIManager
         return color;
       }
     }
-    return 0;
+    // Null (explicit miss), not 0, so native can tell an unresolved color from
+    // one that resolves to transparent black (ARGB 0).
+    return null;
   }
 
   /**
@@ -756,7 +797,7 @@ public class FabricUIManager
       float maxHeight,
       @Nullable float[] attachmentsPositions) {
 
-    ViewManager textViewManager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
+    ViewManager<?, ?> textViewManager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
 
     return TextLayoutManager.measureText(
         mReactApplicationContext.getAssets(),
@@ -785,7 +826,7 @@ public class FabricUIManager
       float minHeight,
       float maxHeight,
       boolean enableProfiling) {
-    ViewManager textViewManager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
+    ViewManager<?, ?> textViewManager = mViewManagerRegistry.get(ReactTextViewManager.REACT_CLASS);
 
     return TextLayoutManager.createPreparedLayout(
         mReactApplicationContext.getAssets(),
@@ -816,7 +857,9 @@ public class FabricUIManager
         preparedLayout.getVerticalOffset(),
         reactTags,
         preparedLayout.getTextBreakStrategy(),
-        preparedLayout.getJustificationMode());
+        preparedLayout.getJustificationMode(),
+        preparedLayout.getBaseTextAttributes(),
+        preparedLayout.getSourceText());
     result.setProfileSpannableBuildNanos(preparedLayout.getProfileSpannableBuildNanos());
     result.setProfilePaintSetupNanos(preparedLayout.getProfilePaintSetupNanos());
     result.setProfileLayoutCreateNanos(preparedLayout.getProfileLayoutCreateNanos());
@@ -992,6 +1035,35 @@ public class FabricUIManager
         ReactMarkerConstants.FABRIC_UPDATE_UI_MAIN_THREAD_END, null, commitNumber);
   }
 
+  /** Called from C++ via JNI with a batch encoded by AnimatedPropBufferEncoder.cpp. */
+  @SuppressLint("NotInvokedPrivateMethod")
+  @SuppressWarnings("unused")
+  @UiThread
+  @ThreadConfined(UI)
+  private void synchronouslyUpdateViewBatch(
+      int[] intBuffer, double[] doubleBuffer, Object[] rawPropsBuffer) {
+    UiThreadUtil.assertOnUiThread();
+
+    int commitNumber = mCurrentSynchronousCommitNumber++;
+    ReactMarker.logFabricMarker(
+        ReactMarkerConstants.FABRIC_UPDATE_UI_MAIN_THREAD_START, null, commitNumber);
+
+    if (ReactNativeFeatureFlags.enableFabricLogs()) {
+      FLog.d(
+          TAG,
+          "SynchronouslyUpdateViewBatch: %d ints, %d doubles, %d raw props",
+          intBuffer.length,
+          doubleBuffer.length,
+          rawPropsBuffer.length);
+    }
+
+    new BatchedAnimatedPropsMountItem(intBuffer, doubleBuffer, rawPropsBuffer, mMountItemDispatcher)
+        .execute(mMountingManager);
+
+    ReactMarker.logFabricMarker(
+        ReactMarkerConstants.FABRIC_UPDATE_UI_MAIN_THREAD_END, null, commitNumber);
+  }
+
   /** Called from C++ via JNI. */
   @SuppressLint("NotInvokedPrivateMethod")
   @SuppressWarnings("unused")
@@ -1095,7 +1167,8 @@ public class FabricUIManager
       long layoutEndTime,
       long finishTransactionStartTime,
       long finishTransactionEndTime,
-      int affectedLayoutNodesCount) {
+      int affectedLayoutNodesCount,
+      boolean synchronous) {
     // When Binding.cpp calls scheduleMountItems during a commit phase, it always calls with
     // a BatchMountItem. No other sites call into this with a BatchMountItem, and Binding.cpp only
     // calls scheduleMountItems with a BatchMountItem.
@@ -1109,8 +1182,9 @@ public class FabricUIManager
     } else {
       shouldSchedule = mountItem != null;
     }
-    // In case of sync rendering, this could be called on the UI thread. Otherwise,
-    // it should ~always be called on the JS thread.
+    // In the push model, this is ~always called on the JS thread, or on the UI
+    // thread in case of sync rendering.
+    // In the pull model, this is always called on the UI thread, at pull time.
     for (UIManagerListener listener : mListeners) {
       listener.didScheduleMountItems(this);
     }
@@ -1125,16 +1199,22 @@ public class FabricUIManager
 
     if (shouldSchedule) {
       Assertions.assertNotNull(mountItem, "MountItem is null");
-      mMountItemDispatcher.addMountItem(mountItem);
-      if (UiThreadUtil.isOnUiThread()) {
-        Runnable runnable =
-            new GuardedRunnable(mReactApplicationContext) {
-              @Override
-              public void runGuarded() {
-                mMountItemDispatcher.tryDispatchMountItems();
-              }
-            };
-        runnable.run();
+      if (synchronous) {
+        // Pull model: we are already on the UI thread, inside the dispatcher's pull of a surface
+        // whose root view is attached. We don't schedule the item, we execute it directly.
+        mountItem.execute(mMountingManager);
+      } else {
+        mMountItemDispatcher.addMountItem(mountItem);
+        if (UiThreadUtil.isOnUiThread()) {
+          Runnable runnable =
+              new GuardedRunnable(mReactApplicationContext) {
+                @Override
+                public void runGuarded() {
+                  mMountItemDispatcher.tryDispatchMountItems();
+                }
+              };
+          runnable.run();
+        }
       }
     }
 
@@ -1167,6 +1247,25 @@ public class FabricUIManager
           layoutEndTime,
           affectedLayoutNodesCount);
       ReactMarker.logFabricMarker(ReactMarkerConstants.FABRIC_COMMIT_END, null, commitNumber);
+    }
+  }
+
+  /**
+   * Pull model: called from C++ via JNI (usually on the commit thread) to signal that a transaction
+   * is available for {@code surfaceId}. The next dispatch on the UI thread pulls and applies it
+   * before the queued mount items.
+   */
+  @SuppressWarnings("unused")
+  @AnyThread
+  @ThreadConfined(ANY)
+  @VisibleForTesting
+  void onTransactionAvailable(int surfaceId) {
+    if (mBinding == null) {
+      return;
+    }
+    mMountItemDispatcher.addSurfaceIdToPull(surfaceId);
+    if (UiThreadUtil.isOnUiThread()) {
+      mMountItemDispatcher.tryDispatchMountItems();
     }
   }
 
@@ -1395,6 +1494,15 @@ public class FabricUIManager
           return;
         }
       }
+      // React Native X: with JavaScript on the UI thread, deliver the start and end of a gesture
+      // (and other discrete events) to JavaScript right here, inside Android's input stage,
+      // instead of queueing them for the next Choreographer frame callback. The resulting React
+      // commit is then mounted before this frame's traversal, so a tap is drawn in the same frame
+      // a native app would draw it in, one vsync earlier than the queued path.
+      boolean deliverNow =
+          BuildConfig.RN_UI_THREAD
+              && (experimentalIsSynchronous || isUrgentEventCategory(eventCategory))
+              && UiThreadUtil.isOnUiThread();
       mBinding.dispatchDirectEvent(
           directSurfaceId,
           reactTag,
@@ -1409,7 +1517,18 @@ public class FabricUIManager
               : com.facebook.react.bridge.Arguments.makeNativeMap(params.toHashMap()),
           eventCategory,
           eventTimestamp,
-          experimentalIsSynchronous);
+          experimentalIsSynchronous || deliverNow);
+      if (deliverNow) {
+        // The synchronous request above only marks the event beat; ticking it here runs the
+        // beat (and so the JavaScript handlers) now instead of on the next frame callback.
+        mBatchEventDispatchedListener.onBatchEventDispatched();
+      } else if (!BuildConfig.RN_UI_THREAD
+          && isUrgentEventCategory(eventCategory)
+          && UiThreadUtil.isOnUiThread()) {
+        // JavaScript on its own thread: hand the event to it now rather than on the next frame
+        // callback. Ticking the beat only schedules work on the JS thread; nothing here waits.
+        mBatchEventDispatchedListener.onBatchEventDispatched();
+      }
       return;
     }
 
@@ -1433,6 +1552,10 @@ public class FabricUIManager
 
   @Override
   public void onHostResume() {
+    if (BuildConfig.DEBUG) {
+      com.facebook.react.common.JankReporterSupport.attachFrameMetrics(
+          mReactApplicationContext.getCurrentActivity());
+    }
     mDispatchUIFrameCallback.resume();
   }
 
@@ -1443,6 +1566,9 @@ public class FabricUIManager
 
   @Override
   public void onHostPause() {
+    if (BuildConfig.DEBUG) {
+      com.facebook.react.common.JankReporterSupport.detachFrameMetrics();
+    }
     mDispatchUIFrameCallback.pause();
   }
 
@@ -1620,6 +1746,11 @@ public class FabricUIManager
   @AnyThread
   public void onAnimationStarted() {
     mDriveCxxAnimations = true;
+    if (ReactNativeFeatureFlags.disableIdleMountItemFrameCallbackRearmAndroid()) {
+      // A C++ animation session may begin while the DISPATCH_UI frame callback is disarmed at
+      // idle and no mount items are pending yet; re-arm it for the first tick.
+      mDispatchUIFrameCallback.schedule();
+    }
   }
 
   // Called from Binding.cpp
@@ -1659,16 +1790,14 @@ public class FabricUIManager
         listener.didMountItems(FabricUIManager.this);
       }
 
-      if (mountItems == null || mountItems.isEmpty()) {
-        return;
-      }
-
-      // Collect surface IDs for all the mount items
-      for (MountItem mountItem : mountItems) {
-        if (mountItem != null
-            && mountItem.getSurfaceId() != View.NO_ID
-            && !mSurfaceIdsWithPendingMountNotification.contains(mountItem.getSurfaceId())) {
-          mSurfaceIdsWithPendingMountNotification.add(mountItem.getSurfaceId());
+      if (mountItems != null) {
+        // Collect surface IDs for all the mount items
+        for (MountItem mountItem : mountItems) {
+          if (mountItem != null
+              && mountItem.getSurfaceId() != View.NO_ID
+              && !mSurfaceIdsWithPendingMountNotification.contains(mountItem.getSurfaceId())) {
+            mSurfaceIdsWithPendingMountNotification.add(mountItem.getSurfaceId());
+          }
         }
       }
 
@@ -1699,11 +1828,31 @@ public class FabricUIManager
       }
     }
 
+    @UiThread
+    @ThreadConfined(UI)
+    @Override
+    public void pullTransaction(int surfaceId) {
+      FabricUIManagerBinding binding = mBinding;
+      if (binding == null) {
+        return;
+      }
+      binding.pullAndExecuteTransaction(surfaceId);
+      if (!mSurfaceIdsWithPendingMountNotification.contains(surfaceId)) {
+        mSurfaceIdsWithPendingMountNotification.add(surfaceId);
+      }
+    }
+
     @Override
     public void didDispatchMountItems() {
       for (UIManagerListener listener : mListeners) {
         listener.didDispatchMountItems(FabricUIManager.this);
       }
+    }
+
+    @Override
+    public void onItemsQueued() {
+      // Items may be queued from any thread while the DISPATCH_UI frame callback is idle.
+      mDispatchUIFrameCallback.schedule();
     }
   }
 
@@ -1731,24 +1880,38 @@ public class FabricUIManager
 
     private volatile boolean mIsMountingEnabled = true;
 
-    @ThreadConfined(UI)
-    private boolean mShouldSchedule = false;
+    private volatile boolean mShouldSchedule = false;
 
-    @ThreadConfined(UI)
-    private boolean mIsScheduled = false;
+    private final AtomicBoolean mScheduleTaskPending = new AtomicBoolean(false);
+    private volatile boolean mIsScheduled = false;
 
     private DispatchUIFrameCallback(ReactContext reactContext) {
       super(reactContext);
     }
 
-    @UiThread
-    @ThreadConfined(UI)
-    private void schedule() {
-      if (!mIsScheduled && mShouldSchedule) {
-        mIsScheduled = true;
-        ReactChoreographer.getInstance()
-            .postFrameCallback(ReactChoreographer.CallbackType.DISPATCH_UI, this);
+    @AnyThread
+    void schedule() {
+      if (mIsScheduled || !mShouldSchedule) {
+        return;
       }
+
+      if (!UiThreadUtil.isOnUiThread()) {
+        if (mScheduleTaskPending.compareAndSet(false, true)) {
+          UiThreadUtil.runOnUiThread(
+              () -> {
+                try {
+                  schedule();
+                } finally {
+                  mScheduleTaskPending.set(false);
+                }
+              });
+        }
+        return;
+      }
+
+      mIsScheduled = true;
+      ReactChoreographer.getInstance()
+          .postFrameCallback(ReactChoreographer.CallbackType.DISPATCH_UI, this);
     }
 
     @UiThread
@@ -1785,7 +1948,7 @@ public class FabricUIManager
 
       // Drain pending React revision merges first so that animations,
       // preallocation, and mount items operate against the latest revision.
-      if (ReactNativeFeatureFlags.enableFabricCommitBranching()) {
+      if (ReactNativeFeatureFlags.enableFabricCommitBranchingMergeOnMainThread()) {
         FabricUIManagerBinding binding = mBinding;
         if (binding != null) {
           Integer mergeSurfaceId;
@@ -1796,9 +1959,6 @@ public class FabricUIManager
       }
 
       // Drive any animations from C++.
-      // There is a race condition here between getting/setting
-      // `mDriveCxxAnimations` which shouldn't matter; it's safe to call
-      // the mBinding method, unless mBinding has gone away.
       if ((mDriveCxxAnimations || ReactNativeFeatureFlags.cxxNativeAnimatedEnabled())
           && mBinding != null) {
         mBinding.driveCxxAnimations();
@@ -1806,6 +1966,21 @@ public class FabricUIManager
 
       if (!ReactNativeFeatureFlags.disableViewPreallocationAndroid() && mBinding != null) {
         mBinding.drainPreallocateViewsQueue();
+      }
+
+      // Resha animation fast lane: apply the animation props collected since the
+      // last flush before this frame's mount dispatch, so a JS-driven or Native
+      // Animated frame reaches the screen in the same vsync. This runs after the
+      // Native Animated module's own frame callback, because the Choreographer
+      // runs NATIVE_ANIMATED_MODULE before DISPATCH_UI. The flush never takes the
+      // frame loop down: failures are reported per surface by the direct
+      // renderer, and `schedule()` below must still be reached.
+      if (BuildConfig.UI_THREAD_RENDERER_WORKER && mBinding != null) {
+        try {
+          mBinding.flushDirectAnimationFrame();
+        } catch (Exception ex) {
+          FLog.e(TAG, "Exception thrown when flushing the direct animation frame", ex);
+        }
       }
 
       try {
@@ -1821,7 +1996,19 @@ public class FabricUIManager
         mIsMountingEnabled = false;
         throw ex;
       } finally {
-        schedule();
+        // Keep the Choreographer armed while items remain pending or a C++ animation driver
+        // needs per-frame ticks from this callback (driveCxxAnimations and
+        // driveAnimationBackend run here). Queueing new items re-arms it via
+        // MountItemDispatcher.onItemsQueued, and onAnimationStarted re-arms it when the C++
+        // side begins an animation session. The two flags below drive animations from this
+        // callback unconditionally, so they disable the idle optimization entirely.
+        if (!ReactNativeFeatureFlags.disableIdleMountItemFrameCallbackRearmAndroid()
+            || mMountItemDispatcher.hasPendingItems()
+            || mDriveCxxAnimations
+            || ReactNativeFeatureFlags.cxxNativeAnimatedEnabled()
+            || ReactNativeFeatureFlags.useSharedAnimatedBackend()) {
+          schedule();
+        }
       }
 
       if (ReactNativeFeatureFlags.useSharedAnimatedBackend() && mBinding != null) {

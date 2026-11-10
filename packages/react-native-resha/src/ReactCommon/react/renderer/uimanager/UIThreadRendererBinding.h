@@ -89,6 +89,16 @@ class UIThreadRendererBinding final : public UIManagerBinding {
   /** Drops a surface's renderer and everything it mounted on the host. */
   static void releaseSurface(SurfaceId surfaceId);
   static void recordNativeProps(Tag tag, folly::dynamic props);
+
+  /**
+   * Animation fast lane (design §5.2): folds every surface's collected
+   * animation frame into the direct renderer. Installed as the runtime
+   * scheduler's rendering-update listener (end of a JS task) and called from the
+   * platform's pre-draw hook, so it must be safe to call at any point between
+   * frames and cheap when nothing was written.
+   */
+  static void flushAnimationFrames();
+
   static void shutdownWorkerForUIManager(UIManager& manager);
   static void synchronizeWorkerForUIManager(UIManager& manager);
 
@@ -304,14 +314,46 @@ class UIThreadRendererBinding final : public UIManagerBinding {
       const std::vector<std::shared_ptr<DraftNode>>& committedDrafts);
   void submitWorkerJob(
       std::shared_ptr<SurfaceToken>,
-      std::unique_ptr<UIThreadRendererWorker::Job>);
+      std::unique_ptr<UIThreadRendererWorker::Job>,
+      /** Set when the job ran on the UI thread instead of being queued. */
+      bool* ranSynchronously = nullptr);
   void submitWorkerOperation(
       std::shared_ptr<SurfaceToken>,
       UIThreadRendererWorker::Task,
       std::function<void()> = {},
       bool synchronous = false,
-      bool profileCommit = false);
+      bool profileCommit = false,
+      bool inlineEligible = false);
   std::unique_ptr<UIThreadRendererWorker> worker_;
+  /**
+   * React Native X: smoothed compute time of recent small commits (few changed
+   * nodes), in ms. While it stays under `kInlineBudgetMs` a small commit is
+   * computed on the submitting thread when the worker is idle, where the
+   * hand-off (two wakeups, a JNI thread attach per job) costs more than the
+   * work. Written by whichever thread computed the commit.
+   */
+  std::atomic<float> smallCommitMs_{0.0f};
+  static constexpr double kInlineBudgetMs = 3.0;
+  static constexpr double kInlineMaxUnits = 64.0;
+  /** Longest the pre-traversal drain waits for the worker (RN_UI_THREAD). */
+  static constexpr std::chrono::microseconds kFrameDrainBudget{8000};
+  /**
+   * Whether text can be measured on the worker. Java answers on the UI thread
+   * only, so off-UI JS reads the last answer the UI thread produced (unknown
+   * counts as "no", which merely computes that commit on the UI thread).
+   */
+  std::atomic<int> canMeasureTextOnWorker_{-1};
+  bool canMeasureTextOnWorker(UIManagerDelegate& delegate);
+  void refreshCanMeasureTextOnWorker();
+  /**
+   * Runs `read` on the UI thread and returns its answer. On the UI thread it is
+   * a direct call; elsewhere the caller waits for the UI thread (JS to UI only),
+   * and a stalled UI thread yields `fallback` after a logged timeout.
+   */
+  std::optional<std::pair<float, float>> readOnUIThread(
+      std::function<std::optional<std::pair<float, float>>(UIManagerDelegate&)>
+          read,
+      std::optional<std::pair<float, float>> fallback);
   bool forceNextCommitSync_{false};
   Tag replayingNativePropsTag_{0};
   const folly::dynamic* replayingNativeProps_{nullptr};
@@ -331,11 +373,20 @@ class UIThreadRendererBinding final : public UIManagerBinding {
       submittedIdentities_;
   std::unordered_map<Tag, uint64_t> mountedIdentities_;
   std::unordered_map<Tag, std::shared_ptr<SurfaceToken>> mountedTokens_;
+  /**
+   * The last native props written for one tag, replayed onto the view after a
+   * commit. `identity` and `props` must be initialized here: a fresh entry is
+   * value-initialized by `nativePropsOverlays_[surfaceId][tag]`, and writers
+   * only clear `props` when the identity changes, so an uninitialized `props`
+   * (a null dynamic) would be indexed as an object on the very first write for
+   * a tag whose published identity is zero, throwing
+   * "TypeError: expected dynamic type 'object', but had type 'null'".
+   */
   struct NativePropsOverlay {
-    SurfaceId surfaceId;
-    uint64_t identity;
-    uint64_t sequence;
-    folly::dynamic props;
+    SurfaceId surfaceId{0};
+    uint64_t identity{0};
+    uint64_t sequence{0};
+    folly::dynamic props{folly::dynamic::object()};
   };
   uint64_t nativePropsSequence_{0};
   /**
@@ -353,6 +404,119 @@ class UIThreadRendererBinding final : public UIManagerBinding {
    */
   std::unordered_map<SurfaceId, std::unordered_map<Tag, NativePropsOverlay>>
       nativePropsOverlays_;
+
+  // ---------------------------------------------------------------------
+  // Animation fast lane (docs/resha/animation-fast-lane-design.md).
+  //
+  // Animated prop writes no longer become one worker job per call. They are
+  // collected into a per-frame buffer keyed by tag, paint keys reach the native
+  // view immediately, and one flush per frame either borrows the renderer when
+  // the worker is idle or merges the frame into the single animation job a
+  // surface may have queued.
+  // ---------------------------------------------------------------------
+
+  /**
+   * One tag's collected animated props for the frame being gathered, split by
+   * the class the key table assigned (design §5.1). `identity` is the draft
+   * identity at write time, so a write that outlives its node is dropped
+   * instead of landing on whoever holds the tag now.
+   */
+  struct AnimatedWrite {
+    uint64_t identity{0};
+    folly::dynamic paint{folly::dynamic::object()};
+    folly::dynamic layout{folly::dynamic::object()};
+    bool text{false};
+  };
+
+  /** The frame being collected, nested per surface: every access knows it. */
+  std::unordered_map<SurfaceId, std::unordered_map<Tag, AnimatedWrite>>
+      animationFrameBuffer_;
+
+  /**
+   * The one animation job that may be queued per surface. Until the worker
+   * claims this frame a flush merges the newer writes into it instead of
+   * appending another job, which is what keeps the queue at one entry however
+   * many nodes and frames are animating (design §5.4). The claim is the mutex,
+   * so it is race-free with the compute that is about to run.
+   */
+  struct AnimationFrame {
+    std::mutex mutex;
+    bool claimed{false};
+    std::unordered_map<Tag, folly::dynamic> paint;
+    std::unordered_map<Tag, folly::dynamic> layout;
+    std::vector<Tag> tags;
+
+    /** Merges newer patches; false once this frame has been claimed. */
+    bool merge(
+        const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+        const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches);
+    /**
+     * Takes the merged frame exactly once, on the thread that will apply it.
+     */
+    bool take(
+        std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+        std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches);
+  };
+
+  std::unordered_map<SurfaceId, std::shared_ptr<AnimationFrame>>
+      pendingAnimationFrames_;
+
+  /**
+   * Per-surface cost of the synchronous lane and its adaptive state
+   * (design §5.7). The lane runs on the UI thread only while its measured cost
+   * stays inside the budget; past it, layout frames take the coalesced async
+   * job, which costs at most a frame of lag and never blocks the UI thread.
+   */
+  struct AnimationLaneStats {
+    double emaMicros{0};
+    int overBudgetFrames{0};
+    int asyncProbeCounter{0};
+    bool asyncMode{false};
+  };
+
+  std::unordered_map<SurfaceId, AnimationLaneStats> animationLaneStats_;
+
+  /**
+   * The lane's entry point: classifies one animated write into the frame being
+   * collected, keeps its paint keys as the replayable overlay, and (when the
+   * platform has not applied them already) puts them on the native view before
+   * returning (design §5.1). Called on the UI thread.
+   */
+  void writeAnimatedProps(
+      SurfaceId surfaceId,
+      Tag tag,
+      uint64_t identity,
+      ClassifiedAnimatedProps classified,
+      bool applyPaintToView);
+
+  /** Flushes one surface's collected frame (design §5.2). */
+  void flushAnimationFrame(SurfaceId surfaceId);
+
+  /** Queues or runs the frame as the surface's single animation job. */
+  void deferAnimationFrame(
+      SurfaceId surfaceId,
+      const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+      const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+      bool needsAsync);
+
+  /** Applies paint keys to the native view through the synchronous delegate. */
+  void applyAnimatedPaintToView(Tag tag, const folly::dynamic& props);
+
+  /** Drops the paint overlays of tags whose frame is folded. */
+  void erasePaintOverlays(SurfaceId surfaceId, const std::vector<Tag>& tags);
+
+  /** Records an observed synchronous cost and updates the adaptive mode. */
+  void recordAnimationLaneCost(SurfaceId surfaceId, double micros);
+
+  /** True while this surface's lane may still run synchronously. */
+  bool animationLaneAllowsSync(SurfaceId surfaceId);
+
+  /** Emits one `RNXAnimLane` profile line when profiling is enabled. */
+  void traceAnimationLane(
+      SurfaceId surfaceId,
+      bool synchronous,
+      double micros,
+      size_t nodes);
 #endif
   UIThreadRenderer& renderer(SurfaceId surfaceId);
   std::shared_ptr<NodeRef> makeNodeRef(
@@ -468,6 +632,19 @@ class UIThreadRendererBinding final : public UIManagerBinding {
       UIThreadRenderer::Metrics& out,
       bool includeTransform = true);
 
+  /**
+   * Guards the bookkeeping below when JavaScript runs off the UI thread, where
+   * host calls (JS) and platform callbacks (UI) both reach it: `renderers_`,
+   * `surfaceTokens_`, `surfaceGenerations_`, `submittedIdentities_`,
+   * `mountedIdentities_`, `mountedTokens_`, `nativePropsOverlays_`,
+   * `animationFrameBuffer_`, `pendingAnimationFrames_` and
+   * `animationLaneStats_`. Recursive because the UI thread re-enters through
+   * synchronous view updates. Hold it only around map accesses: never across a
+   * worker barrier, a JNI call, or a view effect.
+   */
+  mutable std::recursive_mutex stateMutex_;
+  /** `renderers_` lookup that is safe against a concurrent surface teardown. */
+  std::shared_ptr<UIThreadRenderer> findRenderer(SurfaceId surfaceId) const;
   std::unordered_map<SurfaceId, std::shared_ptr<UIThreadRenderer>> renderers_;
   std::unordered_map<SurfaceId, std::shared_ptr<SurfaceToken>> surfaceTokens_;
   std::unordered_map<SurfaceId, uint64_t> nextDraftIdentity_;
