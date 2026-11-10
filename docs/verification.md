@@ -405,3 +405,105 @@ same working tree produced different patch *files*; `captureRnTester` now passes
   regression test covers the three runtime defects found that way — the
   `stageNativeProps` move in particular is still only guarded by the fix itself —
   and the all-off/all-on throughput comparison rests on a single all-off sample.
+
+## Animation fast lane launch crash fix
+
+The all-on smoke app failed on its first Native Animated transform update. The
+instrumented device build logged `clsfy init paintObj=0 layoutObj=0`, a valid
+`transform` array, then `TypeError: expected dynamic type 'object', but had type
+'null'`. The lane had introduced `facebook::react::AnimatedProps`, already defined
+by upstream `ReactCommon/react/renderer/animationbackend/AnimatedProps.h` with a
+completely different layout. This ODR violation allowed the backend constructor
+to initialize the lane object incorrectly.
+
+The lane type is now `ClassifiedAnimatedProps`; its tests include both headers in
+one translation unit. Diagnostic logs were removed. `zIndex` uses the layout path
+because draw-order changes require a mounting diff. The earlier overlay object
+initialization fix is retained.
+
+Build and native suite verification:
+
+```sh
+cd apps/resha-test-app/android
+env -u ANDROID_NDK ./gradlew :app:assembleDebug \
+  -PreactNativeArchitectures=arm64-v8a \
+  -PRN_UI_THREAD=true -PUI_THREAD_RENDERER=true \
+  -PUI_THREAD_RENDERER_WORKER=true -PRN_BUILD_CPP_TESTS=true
+```
+
+- Build passed. The installed APK's banner reports all three switches `true`.
+- Fresh `ui_thread_renderer_tests` from
+  `ReactAndroid/build/intermediates/cxx/Debug/143b4oi6/obj/arm64-v8a` was pushed with
+  `libjsi.so`, `libfbjni.so`, and `libc++_shared.so` to
+  `/data/local/tmp/resha-launch-fix` on Sony `QV7120NC26` (API 30).
+- Device execution with `LD_LIBRARY_PATH=.` passed **87/87 tests** (2.6 seconds),
+  including native-driver transform classification and mixed paint/layout/text
+  payloads, nested style, null style, non-object inputs, and non-string keys.
+- Initial launch plus three force-stop/relaunch cycles mounted successfully.
+  The looping native transform remained active; screenshots captured different
+  positions. The 60 Hz ticker, 120-step burst, and list remount also ran without
+  a null-object exception or React host teardown. This is a stability check, not
+  a frame-rate or latency benchmark.
+- `resha validate` reports **92 overrides valid**; `git diff --check` passes.
+
+Logs: `/tmp/resha-crash-diagnostic-device.log`,
+`/tmp/animlane-crash-fixed-build.log`, `/tmp/resha-launch-fix-cpp-tests.log`,
+`/tmp/resha-launch-fixed-device.log`.
+
+During this verification, materialization was found to delete the generated
+Android build trees on every override change, forcing repeated dependency
+downloads. It now retains `.gradle`, the root `build`, `ReactAndroid/build`,
+`ReactAndroid/.cxx`, and Hermes's `build`/`.cxx` directories by moving them into the
+replacement tree. This also applies to `--force`; source overrides are still
+refreshed from pristine upstream. A private temporary-tree integration test
+checks ordinary refresh and `--force`, asserting that cached files keep their
+contents/inodes and stale source files disappear:
+
+```sh
+node --test packages/react-native-resha/tests/materialize.test.js
+```
+
+Result: **1/1 passed**. No push or publication was performed. This verifies the
+launch fix, not the full latency/scale/precedence matrix in the animation design.
+
+### iOS Simulator verification of the launch fix
+
+Built and ran the same corrected sources on the already booted **iPhone 17 Pro,
+iOS 26.5**, Simulator UDID `27F1F2F3-B71A-41BA-81D2-D13A46701B5B`:
+
+```sh
+cd apps/resha-test-app/ios
+RCT_UI_THREAD_RENDERER_IOS=1 RCT_UI_THREAD_RENDERER_WORKER_IOS=1 bundle exec pod install
+xcodebuild -workspace ReshaTestApp.xcworkspace -scheme ReshaTestApp \
+  -configuration Debug -sdk iphonesimulator \
+  -destination 'id=27F1F2F3-B71A-41BA-81D2-D13A46701B5B' \
+  -derivedDataPath build ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+```
+
+- **BUILD SUCCEEDED**. Existing build folders and dependency caches were reused.
+- Generated React-Fabric and React-RCTFabric configurations contain
+  `UI_THREAD_RENDERER=1 UI_THREAD_RENDERER_WORKER=1`; React-RuntimeApple contains
+  `UI_THREAD_RENDERER_IOS=1`. The smoke screen's switch-reporting module is
+  Android-only, so its iOS banner says switches unavailable.
+- LLDB attached to the running Simulator process and hit
+  `classifyAnimatedProps` on `com.apple.main-thread`. The captured backtrace is
+  `RCTNativeAnimatedNodesManager` → `RCTPropsAnimatedNode.updateView` →
+  `RCTSurfacePresenter` → `UIThreadRendererBinding::recordNativeProps` → the
+  classifier using `ClassifiedAnimatedProps`. The debugger was then detached.
+  This confirms the affected native animation path was exercised at runtime.
+- The looping native transform visibly moved between screenshots. Increment,
+  the ticker (observed at 478 and 1327 ticks), the burst (count reached 120), and
+  list remount were exercised while the animation continued. The process stayed
+  alive and the smoke screen remained visible.
+- Initial launch plus **three terminate/relaunch cycles** succeeded. Each new
+  process was checked alive after five seconds; the final smoke screen remained
+  visible with the animation running. No ReshaTestApp crash report was produced.
+- No additional C++ or Objective-C changes were needed for this launch fix.
+  CocoaPods updated the five switch-dependent local podspec checksums in
+  `Podfile.lock`; dependency versions did not change.
+
+Evidence: `/tmp/resha-ios-crash-pods.log`, `/tmp/resha-ios-crash-build.log`,
+`/tmp/resha-ios-classifier-lldb.log`, `/tmp/resha-ios-launch-unified.log`.
+This verifies Simulator launch and smoke behavior on the native-animation path;
+it does not establish the full iOS fast-lane latency/scale/precedence matrix or
+physical-device behavior.

@@ -1,5 +1,34 @@
 # Handoff — animation fast lane: what we built, and the launch crash that blocks it
 
+## Follow-up: launch crash diagnosis
+
+The instrumented APK confirmed `clsfy init paintObj=0 layoutObj=0`, followed by a
+valid `transform` array payload and the null-object exception on the paint write.
+The lane's `facebook::react::AnimatedProps` collided with upstream's unrelated
+type in `ReactCommon/react/renderer/animationbackend/AnimatedProps.h`. The two
+definitions violate the C++ one-definition rule; the backend's constructor can
+be selected at link time, leaving the lane's dynamic members null.
+
+The lane type is now `ClassifiedAnimatedProps`. Both headers are included together
+in the classifier regression tests to prevent this collision from returning.
+Temporary `RNXLaneDbg` instrumentation has been removed. The overlay initialization
+fix remains, and `zIndex` now follows the layout path for child reordering.
+
+Verification: the all-on arm64 debug APK builds and launches on `QV7120NC26`.
+All 87 C++ tests pass on that device, including both classifier regressions.
+The materializer also now preserves generated Android build directories and
+Gradle/CMake caches across override refreshes and `--force`; its Node regression
+test passes. See [verification.md](verification.md#animation-fast-lane-launch-crash-fix)
+for the commands and device evidence.
+
+The same fix also builds and runs on the iPhone 17 Pro / iOS 26.5 Simulator.
+LLDB confirmed that Native Animated enters the renamed classifier on the main
+thread; the animation, smoke controls, and repeated launches remain functional.
+No additional native source changes were needed. The original handoff below is
+retained as historical debugging evidence, including its unverified iOS claims.
+
+---
+
 Status: **the feature is implemented (Android, design steps 0–5 + 8) but the app crashes on
 launch, ~120 ms after mount, and the React instance is torn down.** Everything below is the
 current state as of this note, including the exact evidence collected so far, the dead ends,
