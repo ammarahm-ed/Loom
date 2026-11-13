@@ -23,6 +23,7 @@
 #include <folly/dynamic.h>
 #include <jsi/jsi.h>
 #include <react/renderer/uimanager/UIManagerBinding.h>
+#include <react/renderer/uimanager/LoomCompat.h>
 #include <react/renderer/uimanager/LoomRenderer.h>
 
 namespace facebook::react {
@@ -89,6 +90,20 @@ class LoomBinding final : public UIManagerBinding {
   /** Drops a surface's renderer and everything it mounted on the host. */
   static void releaseSurface(SurfaceId surfaceId);
   static void recordNativeProps(Tag tag, folly::dynamic props);
+  /**
+   * Same, for a payload the platform already knows holds only paint keys
+   * (opacity, transform, colours) in their final flat form: no `style`
+   * hoisting and no key classification.
+   */
+  static void recordNativePaintProps(Tag tag, folly::dynamic paint);
+
+  /**
+   * One animated view's props from the shared animation backend (Reanimated).
+   * `viewApplied` says the platform puts them on the view in the same frame
+   * (one batched call for every paint-only view); otherwise the lane writes
+   * their paint keys to the view itself, and lays out their layout keys.
+   */
+  static void recordAnimationProps(Tag tag, folly::dynamic props, bool viewApplied);
 
   /**
    * Animation fast lane (design §5.2): folds every surface's collected
@@ -98,6 +113,69 @@ class LoomBinding final : public UIManagerBinding {
    * frames and cheap when nothing was written.
    */
   static void flushAnimationFrames();
+
+  /**
+   * Fabric compatibility layer: takes a native state update
+   * (`State::updateState` -> event dispatcher -> state pipe) addressed to a
+   * node of a Loom surface and applies it to that node's ShadowNode in the
+   * Loom renderer. False when no Loom surface owns the update's family, so the
+   * caller hands it to Fabric's `UIManager::updateState` as usual.
+   */
+  static bool dispatchComponentState(const StateUpdate& stateUpdate);
+
+  // -------------------------------------------------------------------------
+  // Fabric compatibility layer, tree contracts (LoomFabricBridge.cpp).
+  //
+  // Libraries that address nodes through Fabric (Reanimated, Unistyles,
+  // gesture-handler) get real ShadowNodes for the nodes they ask about, built
+  // on demand from Loom's renderer. Nothing is built for any other node, and
+  // React commits never pay for this.
+  // -------------------------------------------------------------------------
+
+  /**
+   * The ShadowNode behind a Loom JS node handle (`Bridging::fromJs`). Its
+   * family is stable for as long as a library holds it. Null for any object
+   * that is not a Loom node handle.
+   */
+  static std::shared_ptr<const ShadowNode> shadowNodeFromJs(
+      jsi::Runtime& runtime,
+      const jsi::Object& object);
+
+  /**
+   * `UIManager::getNewestCloneOfShadowNode` for a node of a Loom surface: a
+   * ShadowNode of its family with its current props and layout. Null when no
+   * Loom surface owns the node.
+   */
+  static std::shared_ptr<const ShadowNode> newestShadowNode(
+      const ShadowNode& shadowNode);
+
+  /**
+   * `UIManager::getRelativeLayoutMetrics` for a node of a Loom surface, from
+   * Loom's layout. Nullopt when no Loom surface owns the node.
+   */
+  static std::optional<LayoutMetrics> relativeLayoutMetrics(
+      const ShadowNode& shadowNode,
+      const ShadowNode* ancestorShadowNode,
+      LayoutableShadowNode::LayoutInspectingPolicy policy);
+
+  /**
+   * `ShadowTree::commit` on a Loom surface that has nodes a library holds: the
+   * transaction runs against a tree of those nodes and their ancestors, and
+   * the props it changes are applied to Loom's renderer. Nullopt when the
+   * surface is not Loom's, holds no such nodes, or the transaction changed no
+   * node of them (the caller then commits as usual).
+   */
+  /**
+   * A frame of the surface's layout animations (`ShadowTree::
+   * notifyDelegatesOfUpdates`, which Reanimated calls per frame): the
+   * surface's layout-animation driver appends the frame and Loom mounts it.
+   * False when the surface has no driver (the caller notifies as usual).
+   */
+  static bool layoutAnimationFrame(SurfaceId surfaceId);
+
+  static std::optional<ShadowTreeCommitStatus> commitOnDemand(
+      const ShadowTree& shadowTree,
+      const ShadowTreeCommitTransaction& transaction);
 
   static void shutdownWorkerForUIManager(UIManager& manager);
   static void synchronizeWorkerForUIManager(UIManager& manager);
@@ -158,6 +236,14 @@ class LoomBinding final : public UIManagerBinding {
     std::shared_ptr<const std::string> initialRawText;
     bool hasInitialProps{false};
     std::shared_ptr<const PropsPatch> propsTail;
+    /**
+     * Components with their own descriptor only: that descriptor, and the props
+     * it parsed from the JSI values of this version (as Fabric parses them on
+     * the JS thread). Kept across compaction: the next props diff is parsed on
+     * top of them.
+     */
+    const ComponentDescriptor* compatDescriptor{nullptr};
+    std::shared_ptr<const Props> compatProps;
     std::shared_ptr<std::vector<std::shared_ptr<DraftNode>>> children{
         std::make_shared<std::vector<std::shared_ptr<DraftNode>>>()};
     std::shared_ptr<const std::vector<RetainedLiveChild>> retainedLiveChildren;
@@ -293,6 +379,8 @@ class LoomBinding final : public UIManagerBinding {
     std::shared_ptr<SurfaceToken> token;
     std::vector<std::shared_ptr<DraftNode>> roots;
     InstanceHandle::Shared documentHandle;
+    /** Made by requestAnimationFrame work (AnimationFrameWork). */
+    bool animationFrame{false};
   };
   void publishWorkerCommit(
       SurfaceId,
@@ -310,8 +398,9 @@ class LoomBinding final : public UIManagerBinding {
    */
   void applyPublishedIdentities(
       const std::shared_ptr<SurfaceToken>& token,
-      const std::unordered_map<Tag, uint64_t>& identities,
-      const std::vector<std::shared_ptr<DraftNode>>& committedDrafts);
+      const TagMap<uint64_t>& identities,
+      const std::vector<std::shared_ptr<DraftNode>>& committedDrafts,
+      const std::vector<Tag>* removedTags = nullptr);
   void submitWorkerJob(
       std::shared_ptr<SurfaceToken>,
       std::unique_ptr<LoomWorker::Job>,
@@ -325,6 +414,9 @@ class LoomBinding final : public UIManagerBinding {
       bool profileCommit = false,
       bool inlineEligible = false);
   std::unique_ptr<LoomWorker> worker_;
+  /** Fabric compatibility layer; created with the first renderer. */
+  std::shared_ptr<LoomCompat> compat_;
+  bool submitComponentState(SurfaceId surfaceId, const StateUpdate& update);
   /**
    * Loom: smoothed compute time of recent small commits (few changed
    * nodes), in ms. While it stays under `kInlineBudgetMs` a small commit is
@@ -345,6 +437,32 @@ class LoomBinding final : public UIManagerBinding {
   std::atomic<int> canMeasureTextOnWorker_{-1};
   bool canMeasureTextOnWorker(UIManagerDelegate& delegate);
   void refreshCanMeasureTextOnWorker();
+#if LOOM_WORKER
+  /**
+   * In-place updates: a node whose children did not change but whose props (or
+   * raw text) did keeps its React instance, so React clones none of its
+   * ancestors. React reports the change in its commit phase (`loomPatchNode`)
+   * and ends the commit with `loomFlushPatches`, which hands every recorded
+   * patch to the worker as one job. JS-thread state.
+   */
+  struct PendingPatch {
+    Tag tag{0};
+    uint64_t identity{0};
+    folly::dynamic props;
+    std::optional<std::string> rawText;
+  };
+  std::unordered_map<SurfaceId, std::vector<PendingPatch>> pendingPatches_;
+  void flushPendingPatches(SurfaceId surfaceId);
+#endif
+#if LOOM_WORKER
+  /**
+   * The platform's UI-thread executor, resolved on first use and cached. Null
+   * until the UI manager's delegate is installed.
+   */
+  std::function<void(std::function<void()>)> platformUIExecutor();
+  std::mutex uiExecutorMutex_;
+  std::function<void(std::function<void()>)> uiExecutor_;
+#endif
   /**
    * Runs `read` on the UI thread and returns its answer. On the UI thread it is
    * a direct call; elsewhere the caller waits for the UI thread (JS to UI only),
@@ -369,10 +487,24 @@ class LoomBinding final : public UIManagerBinding {
    * `{surfaceId, identity}`), and nothing looks a tag up without one, so the
    * surface can be the key and the value shrinks to the identity alone.
    */
-  std::unordered_map<SurfaceId, std::unordered_map<Tag, uint64_t>>
+  std::unordered_map<SurfaceId, TagMap<uint64_t>>
       submittedIdentities_;
-  std::unordered_map<Tag, uint64_t> mountedIdentities_;
-  std::unordered_map<Tag, std::shared_ptr<SurfaceToken>> mountedTokens_;
+  /** createNode: component name -> one shared string (JS thread only). */
+  std::unordered_map<std::string, std::shared_ptr<const std::string>>
+      internedComponentNames_;
+  /**
+   * createNode: interned component name -> its compat descriptor (null for a
+   * component that has none). Looked up once per name (JS thread only).
+   */
+  std::unordered_map<const std::string*, const ComponentDescriptor*>
+      compatDescriptorByName_;
+  /** The compat descriptor for an interned component name (JS thread). */
+  const ComponentDescriptor* compatDescriptorFor(
+      const std::shared_ptr<const std::string>& componentName);
+  /** Parses `value` with the draft's compat descriptor on top of its props. */
+  void parseCompatProps(jsi::Runtime& rt, DraftNode& draft, const jsi::Value& value);
+  TagMap<uint64_t> mountedIdentities_;
+  TagMap<std::shared_ptr<SurfaceToken>> mountedTokens_;
   /**
    * The last native props written for one tag, replayed onto the view after a
    * commit. `identity` and `props` must be initialized here: a fresh entry is
@@ -402,7 +534,7 @@ class LoomBinding final : public UIManagerBinding {
    * surface - the replay after every applied batch, and teardown - so a flat map
    * made both scans O(all overlays on all surfaces).
    */
-  std::unordered_map<SurfaceId, std::unordered_map<Tag, NativePropsOverlay>>
+  std::unordered_map<SurfaceId, TagMap<NativePropsOverlay>>
       nativePropsOverlays_;
 
   // ---------------------------------------------------------------------
@@ -425,11 +557,13 @@ class LoomBinding final : public UIManagerBinding {
     uint64_t identity{0};
     folly::dynamic paint{folly::dynamic::object()};
     folly::dynamic layout{folly::dynamic::object()};
+    /** Paint keys no native view has received yet (see writeAnimatedProps). */
+    folly::dynamic view{folly::dynamic::object()};
     bool text{false};
   };
 
   /** The frame being collected, nested per surface: every access knows it. */
-  std::unordered_map<SurfaceId, std::unordered_map<Tag, AnimatedWrite>>
+  std::unordered_map<SurfaceId, TagMap<AnimatedWrite>>
       animationFrameBuffer_;
 
   /**
@@ -442,20 +576,23 @@ class LoomBinding final : public UIManagerBinding {
   struct AnimationFrame {
     std::mutex mutex;
     bool claimed{false};
-    std::unordered_map<Tag, folly::dynamic> paint;
-    std::unordered_map<Tag, folly::dynamic> layout;
+    TagMap<folly::dynamic> paint;
+    TagMap<folly::dynamic> layout;
+    TagMap<folly::dynamic> view;
     std::vector<Tag> tags;
 
     /** Merges newer patches; false once this frame has been claimed. */
     bool merge(
-        const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
-        const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches);
+        std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+        std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+        std::vector<std::pair<Tag, folly::dynamic>>& viewPatches);
     /**
      * Takes the merged frame exactly once, on the thread that will apply it.
      */
     bool take(
         std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
-        std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches);
+        std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+        std::vector<std::pair<Tag, folly::dynamic>>& viewPatches);
   };
 
   std::unordered_map<SurfaceId, std::shared_ptr<AnimationFrame>>
@@ -487,7 +624,14 @@ class LoomBinding final : public UIManagerBinding {
       Tag tag,
       uint64_t identity,
       ClassifiedAnimatedProps classified,
-      bool applyPaintToView);
+      bool applyPaintToView,
+      bool viewAlreadyApplied = false);
+
+  static void recordNativePropsImpl(
+      Tag tag,
+      folly::dynamic props,
+      bool knownPaint,
+      bool viewApplied = true);
 
   /** Flushes one surface's collected frame (design §5.2). */
   void flushAnimationFrame(SurfaceId surfaceId);
@@ -495,8 +639,9 @@ class LoomBinding final : public UIManagerBinding {
   /** Queues or runs the frame as the surface's single animation job. */
   void deferAnimationFrame(
       SurfaceId surfaceId,
-      const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
-      const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+      std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+      std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+      std::vector<std::pair<Tag, folly::dynamic>>& viewPatches,
       bool needsAsync);
 
   /** Applies paint keys to the native view through the synchronous delegate. */
@@ -518,7 +663,78 @@ class LoomBinding final : public UIManagerBinding {
       double micros,
       size_t nodes);
 #endif
+  /**
+   * Fabric families handed to libraries, per surface and tag. Held for as long
+   * as the node is mounted, as a shadow tree holds its nodes' families:
+   * libraries key by the family and treat one nobody else holds as unmounted
+   * (Unistyles drops those). Released when the renderer removes the node.
+   */
+  struct FabricFamily {
+    ShadowNodeFamily::Shared family;
+    uint64_t identity{0};
+    /** Props parsed for the last node built from the renderer. */
+    Props::Shared props;
+    uint64_t propsGeneration{0};
+    const ComponentDescriptor* propsDescriptor{nullptr};
+  };
+  std::mutex fabricFamiliesMutex_;
+  std::unordered_map<SurfaceId, TagMap<FabricFamily>> fabricFamilies_;
+  /** Set once any family was handed out: removals only pay for this after. */
+  std::atomic<bool> hasFabricFamilies_{false};
+  /**
+   * Families of removed nodes, destroyed on the JS thread: a family holds the
+   * node's instance handle, a JS reference that must not die on the UI thread.
+   */
+  std::vector<ShadowNodeFamily::Shared> releasedFabricFamilies_;
+  /** Drops the families of nodes a commit removed. Under `stateMutex_`. */
+  void releaseFabricFamilies(
+      SurfaceId surfaceId,
+      const std::vector<Tag>* removedTags,
+      const TagMap<uint64_t>& identities);
+  /**
+   * Props of the node handed for a JS node handle, per component: parsed once,
+   * since such a node only has to carry its identity and kind.
+   */
+  std::unordered_map<const ComponentDescriptor*, Props::Shared> handleProps_;
+  /**
+   * Runs `body` with the binding and live renderer that own `surfaceId`; the
+   * binding cannot be torn down meanwhile. False when no binding owns it.
+   */
+  static bool withSurfaceRenderer(
+      SurfaceId surfaceId,
+      const std::function<
+          void(LoomBinding&, const std::shared_ptr<LoomRenderer>&)>& body);
+  /** The ShadowNode handed out for a JS node handle. */
+  std::shared_ptr<const ShadowNode> handleShadowNode(const NodeRef& ref);
+  /** `fabricFamilies_` entry for `tag`, (re)created for `identity`. Locked. */
+  ShadowNodeFamily::Shared fabricFamilyLocked(
+      const ComponentDescriptor& descriptor,
+      SurfaceId surfaceId,
+      Tag tag,
+      uint64_t identity,
+      const InstanceHandle::Shared& instanceHandle);
+  /**
+   * A ShadowNode of `tag` built from the renderer (props, layout relative to
+   * its parent, `children`). The worker must be synchronized. Null when the
+   * renderer does not know `tag`.
+   */
+  std::shared_ptr<ShadowNode> fabricNodeFromRenderer(
+      LoomRenderer& liveRenderer,
+      Tag tag,
+      std::shared_ptr<const std::vector<std::shared_ptr<const ShadowNode>>>
+          children);
+  std::optional<ShadowTreeCommitStatus> commitOnDemandImpl(
+      LoomRenderer& liveRenderer,
+      const ShadowTree& shadowTree,
+      const ShadowTreeCommitTransaction& transaction);
+  /** Waits for every submitted commit to be applied (any thread). */
+  void synchronizeForFabricRead();
+
   LoomRenderer& renderer(SurfaceId surfaceId);
+  /** Reuses the source ref's live token instead of taking `stateMutex_` for it. */
+  std::shared_ptr<NodeRef> makeNodeRef(
+      const NodeRef& source,
+      std::shared_ptr<DraftNode> draft);
   std::shared_ptr<NodeRef> makeNodeRef(
       SurfaceId surfaceId,
       Tag tag,
@@ -551,7 +767,13 @@ class LoomBinding final : public UIManagerBinding {
     std::vector<Tag> rootChildren;
     Tag rootTag{0};
     /** Selected tag -> live identity, for removed-edge capture. */
-    std::unordered_map<Tag, uint64_t> selectedIdentities;
+    TagMap<uint64_t> selectedIdentities;
+    /**
+     * Live subtrees that can lose nodes in this commit: the old children a
+     * changed parent no longer lists, and the old version of a node whose
+     * identity changed. Removed-edge capture walks only these.
+     */
+    std::vector<Tag> removalRoots;
     /** Nonzero when the selected graph contains an unsupported inline
      * attachment; the caller decides how to fail. */
     Tag unsupportedAttachmentTag{0};

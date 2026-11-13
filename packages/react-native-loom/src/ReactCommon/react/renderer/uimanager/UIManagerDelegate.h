@@ -35,7 +35,7 @@ struct AnimatedProps;
  */
 class UIManagerDelegate {
  public:
-#if LOOM_RENDERER
+// Loom delegate methods: declared in every build so the class has one layout for code compiled without LOOM_RENDERER (third-party libraries).
   // Direct host operations used by the independent UI-thread renderer. They
   // are deliberately separate from the Fabric transaction callbacks below.
   //
@@ -145,14 +145,16 @@ class UIManagerDelegate {
    * Publishes the resolved text payload for a paragraph. Android renders text
    * exclusively from this state, so it cannot be expressed as props.
    */
-  virtual void loomUpdateState(
+  virtual void loomUpdateState(const LoomTextStateUpdate&) {}
+  /**
+   * Loom compatibility layer: publishes a component's own state object (made
+   * by its ComponentDescriptor) to its host view, exactly as Fabric's
+   * UpdateState mutation would.
+   */
+  virtual void loomUpdateComponentState(
       SurfaceId,
       Tag,
-      const std::string& componentName,
-      const folly::dynamic& props,
-      const AttributedString& attributedString,
-      const ParagraphAttributes& paragraphAttributes,
-      const LoomTextMeasurement&) {}
+      const std::shared_ptr<const State>&) {}
   virtual void loomUpdateScrollContentBounds(
       SurfaceId,
       Tag,
@@ -172,7 +174,7 @@ class UIManagerDelegate {
       Tag,
       bool isJSResponder,
       bool blockNativeResponder) {}
-#endif
+// (end of Loom delegate methods)
 
   /*
    * Called right after a new/updated Shadow Node tree is constructed.

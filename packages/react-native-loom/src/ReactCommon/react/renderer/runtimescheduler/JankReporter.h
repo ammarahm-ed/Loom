@@ -12,7 +12,7 @@
 // development the app author needs to know what the slow task was. This header
 // compiles to nothing in release builds (NDEBUG), so release carries no
 // watchdog thread, no per-task bookkeeping and no JS bindings.
-#if defined(LOOM_JS_ON_MAIN) && LOOM_JS_ON_MAIN && !defined(NDEBUG)
+#if defined(__ANDROID__) && defined(LOOM_JS_ON_MAIN) && LOOM_JS_ON_MAIN && !defined(NDEBUG)
 #define RN_JANK_REPORTER 1
 #else
 #define RN_JANK_REPORTER 0

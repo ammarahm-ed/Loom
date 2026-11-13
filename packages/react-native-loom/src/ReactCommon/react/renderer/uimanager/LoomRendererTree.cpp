@@ -26,8 +26,17 @@ using loom::stringProp;
 } // namespace
 
 LoomRenderer::Node* LoomRenderer::find(Tag tag) {
+  auto& entry = findCache_[findCacheSlot(tag)];
+  if (entry.node != nullptr && entry.tag == tag) {
+    return entry.node;
+  }
   const auto iterator = nodes_.find(tag);
-  return iterator == nodes_.end() ? nullptr : iterator->second.get();
+  if (iterator == nodes_.end()) {
+    return nullptr;
+  }
+  entry.tag = tag;
+  entry.node = iterator->second.get();
+  return entry.node;
 }
 
 const LoomRenderer::Node* LoomRenderer::find(Tag tag) const {
@@ -66,9 +75,54 @@ void LoomRenderer::detachRawTextFromParent(RawTextLeaf& leaf) {
         std::remove(parent->children.begin(), parent->children.end(), leaf.tag),
         parent->children.end());
     parent->childrenDirty = true;
+    markNeedsPrepare(*parent);
     markTextDirty(oldParent);
   }
   leaf.parent = 0;
+  noteOrphanCandidate(leaf.tag);
+}
+
+void LoomRenderer::markNeedsPrepare(Node& node) {
+  node.prepareSelf = true;
+  // Ancestors carry `prepareDescendant` as a path to the change; stop at the
+  // first one that already has it, since everything above it does too.
+  for (Tag tag = node.parent; tag != 0;) {
+    auto* ancestor = find(tag);
+    if (ancestor == nullptr || ancestor->prepareDescendant) {
+      break;
+    }
+    ancestor->prepareDescendant = true;
+    tag = ancestor->parent;
+  }
+}
+
+void LoomRenderer::markNeedsPrepare(Tag tag) {
+  if (auto* node = find(tag); node != nullptr) {
+    markNeedsPrepare(*node);
+  }
+}
+
+std::optional<LoomRenderer::FabricNodeInfo> LoomRenderer::fabricNodeInfo(
+    Tag tag) const {
+  const auto* node = find(tag);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  FabricNodeInfo info;
+  info.componentName = &node->componentName;
+  info.props = &node->props;
+  info.propsGeneration = node->propsGeneration;
+  info.identity = node->identity;
+  info.parent = node->parent;
+  info.layoutOnly = node->layoutOnlyNode;
+  info.virtualNode = node->virtualNode;
+  info.compat = node->compat.get();
+  return info;
+}
+
+size_t LoomRenderer::mountedChildCount(Tag tag) const {
+  const auto* node = find(tag);
+  return node == nullptr ? 0 : node->mountedChildren.size();
 }
 
 bool LoomRenderer::exists(Tag tag) const {

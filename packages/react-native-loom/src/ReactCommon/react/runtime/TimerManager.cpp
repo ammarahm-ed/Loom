@@ -9,6 +9,7 @@
 
 #include <cxxreact/TraceSection.h>
 #include <react/renderer/runtimescheduler/JankReporter.h>
+#include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
 
 #include <cmath>
 #include <utility>
@@ -197,6 +198,10 @@ void TimerManager::callTimer(TimerHandle timerHandle) {
                 : jank::Cause::Timer,
             getTimerSourceName(timerCallback.source));
 #endif
+        // Loom: what this callback commits is an animation frame.
+        if (timerCallback.source == TimerSource::RequestAnimationFrame) {
+          AnimationFrameWork::set(true);
+        }
         timerCallback.invoke(runtime);
       }
 

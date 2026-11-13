@@ -85,7 +85,7 @@ class Scheduler final : public UIManagerDelegate {
   void uiManagerDidFinishTransaction(
       std::shared_ptr<const MountingCoordinator> mountingCoordinator,
       bool mountSynchronously) override;
-#if LOOM_RENDERER
+// Loom methods: declared in every build so the class has one layout for code compiled without LOOM_RENDERER (third-party libraries).
   void loomSetConstraints(
       SurfaceId,
       float,
@@ -127,14 +127,11 @@ class Scheduler final : public UIManagerDelegate {
       const ParagraphAttributes&,
       const Size&,
       const Size&) override;
-  void loomUpdateState(
+  void loomUpdateState(const LoomTextStateUpdate&) override;
+  void loomUpdateComponentState(
       SurfaceId,
       Tag,
-      const std::string&,
-      const folly::dynamic&,
-      const AttributedString&,
-      const ParagraphAttributes&,
-      const LoomTextMeasurement&) override;
+      const std::shared_ptr<const State>&) override;
   void loomUpdateScrollContentBounds(
       SurfaceId,
       Tag,
@@ -149,7 +146,7 @@ class Scheduler final : public UIManagerDelegate {
   void loomSendAccessibilityEvent(
       SurfaceId, Tag, const std::string&) override;
   void loomSetIsJSResponder(SurfaceId, Tag, bool, bool) override;
-#endif
+// (end of Loom methods)
   void uiManagerDidCreateShadowNode(const ShadowNode &shadowNode) override;
   void uiManagerDidDispatchCommand(
       const std::shared_ptr<const ShadowNode> &shadowNode,

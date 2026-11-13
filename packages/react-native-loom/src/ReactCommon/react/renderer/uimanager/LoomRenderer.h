@@ -1,10 +1,13 @@
 /* Copyright (c) Meta Platforms, Inc. and affiliates. */
 #pragma once
 
+#include <atomic>
+
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -24,6 +27,7 @@
 #include <react/renderer/graphics/Rect.h>
 #include <react/renderer/graphics/Size.h>
 #include <react/renderer/mounting/ShadowView.h>
+#include <react/renderer/uimanager/LoomCompat.h>
 #include <react/renderer/uimanager/LoomMountBatch.h>
 #include <react/renderer/uimanager/LoomEventManager.h>
 #include <react/renderer/uimanager/LoomWorkerProfile.h>
@@ -151,6 +155,143 @@ struct ClassifiedAnimatedProps {
  */
 ClassifiedAnimatedProps classifyAnimatedProps(const folly::dynamic& props);
 
+/**
+ * Hash for tag-keyed maps. The identity hash libc++ uses by default pairs with
+ * a prime bucket count, so every lookup pays a software division on 32-bit
+ * ARM (`__udivmodsi4`). Tags also advance in steps of 2 or 10, which a plain
+ * mask would fold onto a fraction of the buckets, hence the multiplicative
+ * mix. Used together with a power-of-two `reserve` so libc++ masks instead of
+ * dividing (it keeps a power-of-two count as the table grows).
+ */
+struct LoomTagHash {
+  size_t operator()(Tag tag) const noexcept {
+    uint32_t h = static_cast<uint32_t>(tag) * 0x9E3779B1u;
+    return static_cast<size_t>(h ^ (h >> 15));
+  }
+};
+
+/**
+ * `std::unordered_map<Tag, V>` with `LoomTagHash` and a power-of-two initial
+ * bucket count, so libc++ keeps indexing by mask as the table grows (see
+ * LoomTagHash). Use it for any map keyed by a React tag on a commit path.
+ */
+template <class V>
+class TagMap : public std::unordered_map<Tag, V, LoomTagHash> {
+  using Base = std::unordered_map<Tag, V, LoomTagHash>;
+
+  // Construction allocates nothing: most per-commit maps stay empty or small,
+  // and an eager bucket array cost a malloc plus zeroing per map. The first
+  // insert sizes the table to a power of two instead (libc++ would otherwise
+  // start at 2 buckets and move to prime counts, i.e. division per lookup).
+  static constexpr size_t kInitialBuckets = 8;
+
+  void ensureBuckets() {
+    if (Base::bucket_count() == 0) {
+      Base::rehash(kInitialBuckets);
+    }
+  }
+
+  static size_t roundUpPow2(size_t n) {
+    size_t p = kInitialBuckets;
+    while (p < n) {
+      p <<= 1;
+    }
+    return p;
+  }
+
+ public:
+  TagMap() = default;
+  TagMap(std::initializer_list<typename Base::value_type> init) {
+    reserve(init.size());
+    for (const auto& value : init) {
+      Base::insert(value);
+    }
+  }
+  TagMap(const TagMap&) = default;
+  TagMap(TagMap&&) noexcept = default;
+  TagMap& operator=(const TagMap&) = default;
+  TagMap& operator=(TagMap&&) noexcept = default;
+
+  /** Reserves a power-of-two bucket count so indexing stays on a mask. */
+  void reserve(size_t count) {
+    if (count == 0) {
+      return;
+    }
+    const auto buckets = roundUpPow2(static_cast<size_t>(
+        static_cast<float>(count) / Base::max_load_factor() + 0.5f));
+    if (buckets > Base::bucket_count()) {
+      Base::rehash(buckets);
+    }
+  }
+
+  V& operator[](Tag tag) {
+    ensureBuckets();
+    return Base::operator[](tag);
+  }
+
+  template <class... Args>
+  std::pair<typename Base::iterator, bool> emplace(Args&&... args) {
+    ensureBuckets();
+    return Base::emplace(std::forward<Args>(args)...);
+  }
+
+  template <class... Args>
+  std::pair<typename Base::iterator, bool> try_emplace(
+      Tag tag,
+      Args&&... args) {
+    ensureBuckets();
+    return Base::try_emplace(tag, std::forward<Args>(args)...);
+  }
+
+  template <class M>
+  std::pair<typename Base::iterator, bool> insert_or_assign(
+      Tag tag,
+      M&& value) {
+    ensureBuckets();
+    return Base::insert_or_assign(tag, std::forward<M>(value));
+  }
+
+  std::pair<typename Base::iterator, bool> insert(
+      const typename Base::value_type& value) {
+    ensureBuckets();
+    return Base::insert(value);
+  }
+
+  std::pair<typename Base::iterator, bool> insert(
+      typename Base::value_type&& value) {
+    ensureBuckets();
+    return Base::insert(std::move(value));
+  }
+};
+
+/**
+ * Startup switches, set by the host platform before the first surface starts
+ * (iOS: RCTSurfacePresenter, from NSUserDefaults). Off by default, so host tests
+ * and platforms that do not set them keep the plain behaviour.
+ */
+struct LoomStartupOptions {
+  /**
+   * A commit that creates many host views sends their creates (with props) to
+   * the UI thread right after `prepare`, so views are built while the worker
+   * runs layout; the commit's own batch then only inserts and lays them out.
+   */
+  static inline std::atomic<bool> earlyCreate{false};
+  /**
+   * A commit that creates many paragraphs first runs Yoga with estimated text
+   * sizes to learn each paragraph's constraints, measures those in parallel,
+   * then lays out for real against the warmed cache.
+   */
+  static inline std::atomic<bool> parallelText{false};
+  /**
+   * Runs `body(0..count-1)`, possibly in parallel, and returns when every call
+   * has. Set once by platforms without libdispatch (Android: a pool of threads
+   * attached to the JVM) before the first surface starts; Apple platforms use
+   * dispatch_apply. Unset, parallelText does nothing.
+   */
+  static inline std::function<void(size_t, const std::function<void(size_t)>&)>
+      parallelFor;
+};
+
 class LoomRenderer final {
  public:
   struct TextMeasurement {
@@ -172,6 +313,11 @@ class LoomRenderer final {
     std::function<void(SurfaceId, const std::string&)> failSurface;
     /** Applies one flat, ordered operation batch to the host view hierarchy. */
     std::function<void(SurfaceId, LoomMountBatch)> applyBatch;
+    /**
+     * Optional. Like `applyBatch`, but may reach the UI thread while this
+     * commit is still computing; always before the commit's own batch.
+     */
+    std::function<void(SurfaceId, LoomMountBatch)> applyBatchEarly;
     std::function<void(SurfaceId, Tag, InstanceHandle::Shared)>
         registerEventTarget;
     std::function<void(SurfaceId, Tag)> unregisterEventTarget;
@@ -247,15 +393,12 @@ class LoomRenderer final {
      * the component-specific StateData while preserving the normal
      * ViewManager.updateState contract.
      */
-    std::function<void(
-        SurfaceId,
-        Tag,
-        const std::string& componentName,
-        const folly::dynamic& props,
-        const AttributedString&,
-        const ParagraphAttributes&,
-        const LoomTextMeasurement&)>
-        updateState;
+    std::function<void(LoomTextStateUpdate)> updateState;
+    /**
+     * Fabric compatibility layer: hands a compat node's own state object to
+     * its host view (Fabric's UpdateState mutation).
+     */
+    std::function<void(SurfaceId, Tag, State::Shared)> updateComponentState;
     std::function<void(SurfaceId, Tag, const folly::dynamic&, const Rect&)>
         updateScrollContentBounds;
     /** `UIManager`-level host operations that need this renderer's tags only.
@@ -300,6 +443,19 @@ class LoomRenderer final {
   bool setPointScaleFactor(float pointScaleFactor);
   /** Re-runs layout and publishes whatever the host does not have yet. */
   void reflow();
+  /**
+   * Fabric compatibility layer (LoomCompat.h). Without it no node gets a
+   * ShadowNode of its own.
+   */
+  void setCompat(std::shared_ptr<LoomCompat> compat) {
+    compat_ = std::move(compat);
+  }
+  /**
+   * Applies a native state update to the compat node of its family and lays
+   * the surface out again, as `UIManager::updateState` commits in Fabric.
+   * False when no live node of this renderer belongs to that family.
+   */
+  bool applyComponentState(const StateUpdate& update);
   void createNode(
       Tag tag,
       const std::string& componentName,
@@ -314,10 +470,43 @@ class LoomRenderer final {
   void setIdentity(Tag tag, uint64_t identity);
   /** Capture detach edges for old parents absent from a selected draft tree. */
   void captureRemovedMountedEdges(
-      const std::unordered_map<Tag, uint64_t>& selectedIdentities);
+      const TagMap<uint64_t>& selectedIdentities);
+  /**
+   * The incremental form of `captureRemovedMountedEdges`: only the live
+   * subtrees under `removalRoots` can lose a node, so those are walked (in the
+   * same children-first order) instead of the whole tree. A node whose
+   * (tag, identity) is in `keptIdentities` stays in the tree, and so does its
+   * subtree.
+   */
+  void captureRemovedMountedEdgesFrom(
+      const TagMap<uint64_t>& keptIdentities,
+      const std::vector<Tag>& removalRoots);
+  /**
+   * Tags this renderer dropped since the last call. Lets the binding keep its
+   * mounted-identity bookkeeping as a delta instead of re-walking the tree.
+   */
+  std::vector<Tag> takeDroppedTags() {
+    return std::exchange(droppedTags_, {});
+  }
+  /**
+   * The commits until this is reset are frames of a JS-driven animation (a
+   * requestAnimationFrame callback's), so their batches are animation frames.
+   */
+  void setAnimationFrameCommit(bool animationFrame) {
+    animationFrameCommit_ = animationFrame;
+  }
+  /** True when the next commit walks the whole tree (first commit, recovery). */
+  bool nextCommitIsFull() const {
+    return fullPrepare_;
+  }
   /** `propsPatch` is an attribute-payload diff, exactly as React produced it.
    */
   void cloneNodeWithNewProps(Tag tag, const folly::dynamic& propsPatch);
+  /**
+   * Records the props a compat component's descriptor parsed for the props
+   * this node holds now (call after the node's props are applied).
+   */
+  void setCompatProps(Tag tag, std::shared_ptr<const Props> props);
   void setChildren(Tag parentTag, const std::vector<Tag>& children);
   /**
    * The commit. `containerTag` is the surface's own tag and `children` is the
@@ -444,6 +633,26 @@ class LoomRenderer final {
       bool includeScroll = true) const;
   std::optional<std::pair<float, float>> viewLocationInSurface(Tag tag) const;
 
+  /**
+   * Fabric compatibility layer: what a Fabric node of `tag` is built from when
+   * a library asks for one. Pointers are borrowed and invalidated by any
+   * mutation, so callers read them right after the worker is synchronized.
+   */
+  struct FabricNodeInfo {
+    const std::string* componentName{nullptr};
+    const folly::dynamic* props{nullptr};
+    uint64_t propsGeneration{0};
+    uint64_t identity{0};
+    Tag parent{0};
+    /** Mounts no view of its own (flattened). */
+    bool layoutOnly{false};
+    bool virtualNode{false};
+    const LoomCompatNode* compat{nullptr};
+  };
+  std::optional<FabricNodeInfo> fabricNodeInfo(Tag tag) const;
+  /** How many views are mounted in `tag`'s view (flattened children excluded). */
+  size_t mountedChildCount(Tag tag) const;
+
   /** Applies a props patch outside a commit, for `setNativeProps`. */
   void setNativeProps(Tag tag, const folly::dynamic& propsPatch);
   /** Stops this surface after host publication or reconciliation fails. */
@@ -499,9 +708,42 @@ class LoomRenderer final {
     }
   };
 
+  /**
+   * [LoomPerf item 2] Parsed layout inputs of a props shape: everything
+   * `refreshStyle`, the layout-related role flags and `applyYogaProps` derive
+   * from the props, keyed by the layout-relevant keys only (paint props do not
+   * take part, so rows that differ only in colour share a shape). `entries`
+   * holds the keys themselves so a hash hit is verified, never trusted.
+   */
+  struct LayoutShape {
+    std::vector<std::pair<std::string, folly::dynamic>> entries;
+    std::string componentName;
+    bool hasOtherKeys{false};
+    LayoutStyle style;
+    YGDirection direction{YGDirectionInherit};
+    YGBoxSizing boxSizing{YGBoxSizingBorderBox};
+    bool displayNone{false};
+    bool layoutOnly{false};
+    float zIndex{0};
+    bool clipsOverflow{false};
+    /** A configured Yoga node whose style is copied into new nodes. */
+    mutable YGNodeRef yogaTemplate{nullptr};
+    LayoutShape() = default;
+    LayoutShape(const LayoutShape&) = delete;
+    LayoutShape& operator=(const LayoutShape&) = delete;
+    ~LayoutShape() {
+      if (yogaTemplate != nullptr) {
+        YGNodeFree(yogaTemplate);
+      }
+    }
+  };
+
   struct Node {
     Tag tag{0};
     uint64_t identity{0};
+    /** Valid only while `shapeGeneration == propsGeneration`. */
+    std::shared_ptr<const LayoutShape> shape;
+    uint64_t shapeGeneration{0};
     Tag parent{0};
     /** Component name as JS sent it (`RCTText`, `RCTView`, ...). */
     std::string componentName;
@@ -514,29 +756,117 @@ class LoomRenderer final {
      */
     bool propsDirty{false};
     /**
+     * The keys merged since the host last saw this node (null when none). For
+     * the core view managers in `roleSendsPropDiffs` an update ships this
+     * instead of the whole merged set; reset values arrive as explicit nulls.
+     */
+    folly::dynamic propsDelta{nullptr};
+    /** `componentSendsPropDiffs(componentName)`: whether `mergeProps` records `propsDelta`. */
+    bool collectPropsDelta{false};
+    /**
      * Bumped whenever `props` changes. Two funnels mutate props — `mergeProps`
      * for a patch and `createNode` for the initial set — so this is a reliable
      * key for anything derived from them.
      */
     uint64_t propsGeneration{0};
     /**
-     * The last `parseTextAttributes` result for this node.
-     *
-     * Rebuilding a text subtree calls the platform bridge once per node in it,
-     * including nodes whose props did not change. The parse depends only on
-     * `props`, the inherited attributes and whether this is a paragraph root, so
-     * those three are the key: a match means the previous answer is still exact
-     * and no invalidation is needed anywhere.
+     * Everything only text needs. A View, an Image or a ScrollView carries none
+     * of this (about 3.5 KB), so `Node::text` is allocated by the first write
+     * (`ensureText`) on a text root, a nested text or a TextInput, and readers
+     * of a node without one see the defaults (`textOrEmpty`).
      */
-    struct ParsedTextAttributes {
-      bool valid{false};
-      uint64_t propsGeneration{0};
-      bool textRoot{false};
-      TextAttributes inherited{};
-      TextAttributes attributes{};
+    struct TextData {
+      /**
+       * The last `parseTextAttributes` result for this node.
+       *
+       * Rebuilding a text subtree calls the platform bridge once per node in it,
+       * including nodes whose props did not change. The parse depends only on
+       * `props`, the inherited attributes and whether this is a paragraph root, so
+       * those three are the key: a match means the previous answer is still exact
+       * and no invalidation is needed anywhere.
+       */
+      struct ParsedTextAttributes {
+        bool valid{false};
+        uint64_t propsGeneration{0};
+        bool textRoot{false};
+        TextAttributes inherited{};
+        TextAttributes attributes{};
+        ParagraphAttributes paragraphAttributes{};
+      };
+      ParsedTextAttributes parsedTextAttributes;
+      /** Text attributes with the inherited chain already applied. */
+      TextAttributes textAttributes{};
+      /** Paragraph attributes; only filled for text roots. */
       ParagraphAttributes paragraphAttributes{};
+      /**
+       * The styled strings below are shared and immutable: one text change
+       * builds one `AttributedString` and every user (measurement, the measured
+       * and prepared records, the state published to the host) holds the same
+       * object. Comparisons test the pointer first and fall back to the content
+       * compare only when two different builds meet.
+       */
+      using SharedString = std::shared_ptr<const AttributedString>;
+      static const AttributedString& stringOf(const SharedString& string) {
+        static const AttributedString kEmpty;
+        return string ? *string : kEmpty;
+      }
+      /** Text content of this subtree. */
+      SharedString attributedString;
+      /**
+       * Text content to *measure* with, which is not always `attributedString`.
+       *
+       * An empty `TextInput` that has a `placeholder` measures the placeholder, so
+       * that an auto-height input stays as tall as its hint instead of collapsing
+       * to zero. Fabric makes the same split: `attributedStringBoxToMeasure` in
+       * `BaseTextInputShadowNode.h` substitutes the placeholder, while the state
+       * box keeps the real text. The published state therefore still carries the
+       * *actual* content - appending the placeholder to `attributedString` would
+       * send the hint to the host as if the user had typed it.
+       */
+      SharedString measurementAttributedString;
+      /** Text attributes used to key Yoga measurement; paint-only fields are
+       * ignored. */
+      SharedString measuredAttributedString;
+      ParagraphAttributes measuredParagraphAttributes{};
+      Size measuredMinimumSize{};
+      Size measuredMaximumSize{};
+      float measuredPointScaleFactor{1.0f};
+      TextMeasurement measuredText{};
+      /** Full attributes represented by measuredText.prepared for mounting. */
+      SharedString preparedAttributedString;
+      ParagraphAttributes preparedParagraphAttributes{};
+      /**
+       * Recent measurements of the same content under other constraints.
+       *
+       * Yoga measures one text node with several `(min, max)` pairs in a single
+       * layout pass — a bounded measure and then an exact one, for instance — so a
+       * single slot misses on nearly every call and each miss rebuilds the
+       * platform text layout. These entries are consulted before the bridge call;
+       * `measuredText` above stays the most recent one because mounting reads
+       * `preparedAttributedString`, which describes exactly that measurement.
+       */
+      struct TextMeasurementEntry {
+        Size minimumSize{};
+        Size maximumSize{};
+        float pointScaleFactor{1.0f};
+        TextMeasurement measurement{};
+      };
+      static constexpr size_t kTextMeasurementCacheEntries = 4;
+      std::array<TextMeasurementEntry, kTextMeasurementCacheEntries>
+          recentTextMeasurements_{};
+      size_t recentTextMeasurementCount_{0};
     };
-    ParsedTextAttributes parsedTextAttributes;
+    std::unique_ptr<TextData> text;
+    TextData& ensureText() {
+      if (!text) {
+        text = std::make_unique<TextData>();
+      }
+      return *text;
+    }
+    const TextData& textOrEmpty() const {
+      static const TextData kEmpty;
+      return text ? *text : kEmpty;
+    }
     LayoutStyle style;
     YGDirection direction{YGDirectionInherit};
     YGBoxSizing boxSizing{YGBoxSizingBorderBox};
@@ -566,58 +896,16 @@ class LoomRenderer final {
     bool hasScrollContentBounds{false};
     Rect mountedScrollContentBounds{};
     bool intrinsicMeasurementReported{false};
-    /** Text attributes with the inherited chain already applied. */
-    TextAttributes textAttributes{};
-    /** Paragraph attributes; only filled for text roots. */
-    ParagraphAttributes paragraphAttributes{};
-    /** Text content of this subtree. */
-    AttributedString attributedString{};
-    /**
-     * Text content to *measure* with, which is not always `attributedString`.
-     *
-     * An empty `TextInput` that has a `placeholder` measures the placeholder, so
-     * that an auto-height input stays as tall as its hint instead of collapsing
-     * to zero. Fabric makes the same split: `attributedStringBoxToMeasure` in
-     * `BaseTextInputShadowNode.h` substitutes the placeholder, while the state
-     * box keeps the real text. The published state therefore still carries the
-     * *actual* content - appending the placeholder to `attributedString` would
-     * send the hint to the host as if the user had typed it.
-     */
-    AttributedString measurementAttributedString{};
     /** Last successful measure; avoids repeated bridge calls during one tree
      * layout. */
     mutable bool hasTextMeasurementCache{false};
-    /** Text attributes used to key Yoga measurement; paint-only fields are
-     * ignored. */
-    mutable AttributedString measuredAttributedString{};
-    mutable ParagraphAttributes measuredParagraphAttributes{};
-    mutable Size measuredMinimumSize{};
-    mutable Size measuredMaximumSize{};
-    mutable float measuredPointScaleFactor{1.0f};
-    mutable TextMeasurement measuredText{};
-    /** Full attributes represented by measuredText.prepared for mounting. */
-    mutable AttributedString preparedAttributedString{};
-    mutable ParagraphAttributes preparedParagraphAttributes{};
     /**
-     * Recent measurements of the same content under other constraints.
-     *
-     * Yoga measures one text node with several `(min, max)` pairs in a single
-     * layout pass — a bounded measure and then an exact one, for instance — so a
-     * single slot misses on nearly every call and each miss rebuilds the
-     * platform text layout. These entries are consulted before the bridge call;
-     * `measuredText` above stays the most recent one because mounting reads
-     * `preparedAttributedString`, which describes exactly that measurement.
+     * Bumped when `measurementAttributedString` or the paragraph attributes
+     * change what a measurement depends on; a cached measurement is valid only
+     * for the generation it was taken at.
      */
-    struct TextMeasurementEntry {
-      Size minimumSize{};
-      Size maximumSize{};
-      float pointScaleFactor{1.0f};
-      TextMeasurement measurement{};
-    };
-    static constexpr size_t kTextMeasurementCacheEntries = 4;
-    mutable std::array<TextMeasurementEntry, kTextMeasurementCacheEntries>
-        recentTextMeasurements_{};
-    mutable size_t recentTextMeasurementCount_{0};
+    uint64_t measurementContentGeneration{1};
+    mutable uint64_t measuredContentGeneration{0};
 
     YGNodeRef yogaNode{nullptr};
     /** Yoga children currently attached, so they are only touched on change. */
@@ -666,6 +954,20 @@ class LoomRenderer final {
      */
     uint64_t visitedStamp{0};
     uint64_t overflowStamp{0};
+    /**
+     * Incremental commit. A change marks its node (`prepareSelf`) and every
+     * ancestor (`prepareDescendant`), so a commit follows only those paths and
+     * never visits an unchanged subtree. `lastInsideText` and
+     * `lastParentViewTag` are the context the node was last prepared in; a
+     * different context (a move, or an ancestor changing role) re-prepares it.
+     */
+    bool prepareSelf{true};
+    bool prepareDescendant{true};
+    bool preparedOnce{false};
+    bool lastInsideText{false};
+    Tag lastParentViewTag{0};
+    /** Reached by the post-layout walk in the commit with this stamp. */
+    uint64_t layoutVisitStamp{0};
     /** Cached `calculateOverflow` result for the stamping commit. */
     std::array<float, 4> commitOverflow{};
     /**
@@ -680,12 +982,40 @@ class LoomRenderer final {
      * which clear `roleFlagsValid`.
      */
     bool roleFlagsValid{false};
+    /** `zIndex` as the mount order sees it (0 when absent), cached with the role flags. */
+    float roleZIndex{0};
     bool roleIsText{false};
     bool roleIsParagraph{false};
     bool roleIsTextInput{false};
+    /** What the host builds a state for; set with the other role flags. */
+    LoomTextStateKind roleStateKind{LoomTextStateKind::Other};
     bool roleRequiresIntrinsicMeasurement{false};
     bool roleRequiresGenericStateWrapper{false};
     bool roleIsLayoutOnlyView{false};
+    /** `overflow` is "hidden" or "scroll": the node's own bounds clip. */
+    bool roleClipsOverflow{false};
+    /**
+     * Android core view manager known to apply props incrementally (it did so
+     * for the legacy architecture's diff updates), so updates can carry only
+     * the changed keys. Every other component gets the full merged set, which
+     * is what Fabric sends.
+     */
+    bool roleSendsPropDiffs{false};
+    /**
+     * Fabric compatibility layer: the component's own ShadowNode, for
+     * components whose descriptor carries C++ logic (LoomCompat.h). Null for
+     * everything else, which is nearly every node.
+     */
+    std::unique_ptr<LoomCompatNode> compat;
+    const ComponentDescriptor* compatDescriptor{nullptr};
+    /**
+     * Props the component's own descriptor parsed from the JSI value on the JS
+     * thread, current while `compatPropsGeneration == propsGeneration`. Set
+     * only for components with a compat descriptor.
+     */
+    std::shared_ptr<const Props> compatProps;
+    uint64_t compatPropsGeneration{0};
+    bool compatChecked{false};
     LoomRenderer* owner{nullptr};
   };
 
@@ -732,6 +1062,18 @@ class LoomRenderer final {
       YGMeasureMode widthMode,
       float height,
       YGMeasureMode heightMode);
+  /** Yoga measure function of a compat node: its ShadowNode's measureContent. */
+  static YGSize measureCompat(
+      YGNodeConstRef node,
+      float width,
+      YGMeasureMode widthMode,
+      float height,
+      YGMeasureMode heightMode);
+  /**
+   * Creates or re-props the node's compat ShadowNode when its component needs
+   * one, and queues its state for the host when that changed.
+   */
+  void syncCompatNode(Node& node);
 
   Node* find(Tag tag);
   const Node* find(Tag tag) const;
@@ -768,9 +1110,35 @@ class LoomRenderer final {
       const Node& node,
       const Size& minimumSize,
       const Size& maximumSize) const;
+  /** The platform measurement alone: no cache lookup, no cache store. */
+  TextMeasurement measureTextWithPlatform(
+      const Node& node,
+      const Size& minimumSize,
+      const Size& maximumSize) const;
+  void storeTextMeasurement(
+      const Node& node,
+      const Size& minimumSize,
+      const Size& maximumSize,
+      const TextMeasurement& measurement) const;
+  /** See LoomStartupOptions::parallelText. */
+  void speculateTextMeasurements();
+  /** See LoomStartupOptions::earlyCreate. */
+  void emitEarlyCreates();
   static bool sameTextMeasurementContent(
       const AttributedString& left,
       const AttributedString& right);
+  /** The same compare, answered by pointer identity when both are one build. */
+  static bool sameTextMeasurementContent(
+      const std::shared_ptr<const AttributedString>& left,
+      const std::shared_ptr<const AttributedString>& right) {
+    if (left == right) {
+      return true;
+    }
+    if (!left || !right) {
+      return false;
+    }
+    return sameTextMeasurementContent(*left, *right);
+  }
 
   void syncYogaNode(Node& node);
   void syncYogaChildren(Node& node);
@@ -784,6 +1152,22 @@ class LoomRenderer final {
       std::vector<Tag>& traversal,
       std::vector<LayoutParent>& layoutParents,
       std::vector<Node*>& nodes);
+  /** Marks `node` and the path above it for the next commit's prepare walk. */
+  void markNeedsPrepare(Node& node);
+  void markNeedsPrepare(Tag tag);
+  /** A node that may have left the tree; checked by `collectUnreachable`. */
+  void noteOrphanCandidate(Tag tag) {
+    orphanCandidates_.push_back(tag);
+  }
+  /**
+   * Post-layout walk: the nodes whose geometry may have changed, i.e. those
+   * this commit prepared plus those Yoga reports a new layout for, with the
+   * host parent each one is positioned in.
+   */
+  void collectLayoutNodes(
+      Node& node,
+      LayoutParent parentView,
+      bool ancestorOffsetChanged);
   /** Runs one full commit: prepare, layout, then the emission phases. */
   void commit();
   /**
@@ -797,6 +1181,7 @@ class LoomRenderer final {
 
   void emitCreate(Node& node);
   void emitUpdateProps(Node& node);
+  static std::shared_ptr<const Props> currentCompatProps(const Node& node);
   void emitRemovals(
       Node& node,
       const std::unordered_set<uint64_t>& stationaryChildren);
@@ -827,13 +1212,43 @@ class LoomRenderer final {
    * clears that.
    */
   void refreshRoleFlags(Node& node);
+  /** [LoomPerf item 2] `refreshStyle` through the layout shape cache. */
+  void refreshStyleCached(Node& node);
+  static bool shapeValid(const Node& node) {
+    return node.shape != nullptr && node.shapeGeneration == node.propsGeneration;
+  }
+  std::unordered_map<uint64_t, std::shared_ptr<const LayoutShape>> shapeCache_;
 
   SurfaceId surfaceId_;
   NativeOperations operations_;
+  std::shared_ptr<LoomCompat> compat_;
   YGConfigRef yogaConfig_{nullptr};
   float pointScaleFactor_{1.0f};
-  std::unordered_map<Tag, std::unique_ptr<Node>> nodes_;
-  std::unordered_map<Tag, RawTextLeaf> rawTextLeaves_;
+  std::unordered_map<Tag, std::unique_ptr<Node>, LoomTagHash> nodes_;
+  /**
+   * Direct-mapped cache in front of `nodes_` for the non-const `find`: a commit
+   * resolves the same few tags (a node, its parent, its children) over and
+   * over, and each map lookup is a hash plus two dependent cache misses. Entries
+   * hold stable `Node*`s (nodes are unique_ptr-owned) and are dropped when the
+   * node is erased. Worker-confined like the rest of the tree; the const
+   * `find`, which other threads may call, never touches it.
+   */
+  struct FindCacheEntry {
+    Tag tag{0};
+    Node* node{nullptr};
+  };
+  static constexpr size_t kFindCacheSize = 128;
+  FindCacheEntry findCache_[kFindCacheSize];
+  static size_t findCacheSlot(Tag tag) {
+    return (static_cast<uint32_t>(tag) * 0x9E3779B1u) >> 25; // 7 bits
+  }
+  void invalidateFindCache(Tag tag) {
+    auto& entry = findCache_[findCacheSlot(tag)];
+    if (entry.node != nullptr && entry.tag == tag) {
+      entry.node = nullptr;
+    }
+  }
+  std::unordered_map<Tag, RawTextLeaf, LoomTagHash> rawTextLeaves_;
   /** Component names a `ShadowView` points at; kept alive as long as this. */
   mutable std::unordered_set<std::string> internedComponentNames_;
   /**
@@ -843,6 +1258,24 @@ class LoomRenderer final {
    * then be cleared again. Zero means "no commit yet".
    */
   uint64_t commitStamp_{0};
+  /** The next commit walks everything (first commit, scale change, recovery). */
+  bool fullPrepare_{true};
+  std::vector<Tag> scratchMounted_;
+  std::vector<size_t> scratchChildStarts_;
+  std::vector<size_t> scratchChildCounts_;
+  std::vector<uint8_t> scratchChildUnchanged_;
+  std::unordered_set<uint64_t> scratchStationary_;
+  template <class V>
+  static void trimScratch(V& v) {
+    if (v.capacity() > 1024 && v.size() * 4 < v.capacity()) {
+      V().swap(v);
+    }
+  }
+  void releaseSlack();
+  std::vector<Tag> orphanCandidates_;
+  std::vector<Tag> droppedTags_;
+  std::vector<Node*> layoutNodes_;
+  std::vector<LayoutParent> layoutNodeParents_;
   /**
    * Tags in insertion order, each at most once.
    *
@@ -891,6 +1324,8 @@ class LoomRenderer final {
   /** Nodes whose frame changed and whose props asked for `onLayout`. */
   TagSet layoutEvents_;
   Tag rootTag_{0};
+  /** `applyAnimationFrame` is committing: its batch is an animation frame. */
+  bool animationFrameCommit_{false};
   float minWidth_{0};
   float minHeight_{0};
   float maxWidth_{0};
@@ -908,6 +1343,14 @@ class LoomRenderer final {
   bool surfaceFailed_{false};
   bool commitPending_{false};
   bool unsupportedInlineAttachment_{false};
+  struct SpeculativeTextRequest {
+    const Node* node;
+    Size minimumSize;
+    Size maximumSize;
+  };
+  // Set only during the estimating Yoga pass of `speculateTextMeasurements`:
+  // text measure calls record their constraints here and return an estimate.
+  mutable std::vector<SpeculativeTextRequest>* speculativeTextRequests_{nullptr};
   LoomMountBatch pendingOperations_;
   std::vector<RemovedMountedEdge> removedMountedEdges_;
   /**

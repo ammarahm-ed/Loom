@@ -416,7 +416,7 @@ Tag LoomRenderer::findNodeAtPoint(Tag tag, float x, float y) const {
       x < width + rightSlop && y < height + bottomSlop;
   const bool insideBounds = x >= 0 && y >= 0 && x < width && y < height;
 
-  const auto overflow = stringProp(node->props, "overflow");
+  const auto& overflow = stringProp(node->props, "overflow");
   if ((overflow == "hidden" || overflow == "scroll") && !insideBounds) {
     return 0;
   }

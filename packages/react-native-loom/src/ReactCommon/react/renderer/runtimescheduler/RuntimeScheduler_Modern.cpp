@@ -426,6 +426,10 @@ void RuntimeScheduler_Modern::scheduleTask(std::shared_ptr<Task> task) {
       shouldScheduleEventLoop = true;
     }
 
+    // Loom: a task scheduled by requestAnimationFrame work is such work too.
+    if (AnimationFrameWork::active()) {
+      animationFrameTasks_.insert(task.get());
+    }
     taskQueue_.push(std::move(task));
   }
 
@@ -522,7 +526,6 @@ void RuntimeScheduler_Modern::runEventLoop(jsi::Runtime& runtime) {
     }
 #endif // LOOM_JS_ON_MAIN
   }
-
   currentPriority_ = previousPriority;
 }
 
@@ -537,7 +540,11 @@ std::shared_ptr<Task> RuntimeScheduler_Modern::selectTask() {
 
   // Skip executed tasks
   while (!taskQueue_.empty() && !taskQueue_.top()->callback) {
+    animationFrameTasks_.erase(taskQueue_.top().get());
     taskQueue_.pop();
+  }
+  if (taskQueue_.empty()) {
+    animationFrameTasks_.clear();
   }
 
   if (!taskQueue_.empty()) {
@@ -579,6 +586,16 @@ void RuntimeScheduler_Modern::runEventLoopTick(
   lastYieldingOpportunity_ = taskStartTime;
   longestPeriodWithoutYieldingOpportunity_ = HighResDuration::zero();
 
+  // Loom: a requestAnimationFrame callback run outside a task (Android delivers
+  // timers itself) still marks the first task after it, which holds the
+  // microtasks it queued.
+  {
+    std::shared_lock lock(schedulingMutex_);
+    if (animationFrameTasks_.count(&task) != 0) {
+      AnimationFrameWork::set(true);
+    }
+  }
+
   auto didUserCallbackTimeout = task.expirationTime <= taskStartTime;
   executeTask(runtime, task, didUserCallbackTimeout);
 #if RN_JANK_REPORTER
@@ -606,6 +623,7 @@ void RuntimeScheduler_Modern::runEventLoopTick(
   }
 #endif
 
+  AnimationFrameWork::set(false);
   currentTask_ = nullptr;
 }
 
@@ -797,6 +815,7 @@ void RuntimeScheduler_Modern::clearQueues() {
     std::unique_lock lock(schedulingMutex_);
     drainedTasks.swap(taskQueue_);
     isEventLoopScheduled_ = false;
+    animationFrameTasks_.clear();
   }
 
   pendingRenderingUpdates_ = {};

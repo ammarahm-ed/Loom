@@ -9,6 +9,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <algorithm>
+#include <cstddef>
+#include <cstring>
 #include <deque>
 #include <exception>
 #include <functional>
@@ -67,8 +70,102 @@ class LoomWorker final {
     }
   };
 
+  /**
+   * A move-only `void()` callable that stores its target inline.
+   *
+   * Every effect a job records (a state update, a mount batch, an event target)
+   * used to be a `std::function` wrapping a lambda that held a tuple of the
+   * call's arguments, which is one heap block per effect on top of the copies in
+   * the arguments themselves. The inline buffer is sized from the largest common
+   * capture (a shared operation pointer plus `LoomMountBatch` or
+   * `LoomTextStateUpdate`, about 250 bytes); anything larger falls back to the
+   * heap, so correctness never depends on the size.
+   */
+  class Effect {
+   public:
+    static constexpr size_t kInlineBytes = 256;
+
+    Effect() noexcept = default;
+    template <
+        typename F,
+        typename = std::enable_if_t<!std::is_same_v<std::decay_t<F>, Effect>>>
+    explicit Effect(F function) {
+      if constexpr (
+          sizeof(F) <= kInlineBytes &&
+          alignof(F) <= alignof(std::max_align_t) &&
+          std::is_nothrow_move_constructible_v<F>) {
+        new (storage_) F(std::move(function));
+        ops_ = &inlineOps<F>;
+      } else {
+        auto* heap = new F(std::move(function));
+        std::memcpy(storage_, &heap, sizeof(heap));
+        ops_ = &heapOps<F>;
+      }
+    }
+    Effect(Effect&& other) noexcept {
+      moveFrom(other);
+    }
+    Effect& operator=(Effect&& other) noexcept {
+      if (this != &other) {
+        reset();
+        moveFrom(other);
+      }
+      return *this;
+    }
+    Effect(const Effect&) = delete;
+    Effect& operator=(const Effect&) = delete;
+    ~Effect() {
+      reset();
+    }
+    void operator()() {
+      ops_->invoke(storage_);
+    }
+    explicit operator bool() const {
+      return ops_ != nullptr;
+    }
+
+   private:
+    struct Ops {
+      void (*invoke)(void*);
+      void (*relocate)(void* from, void* to) noexcept;
+      void (*destroy)(void*) noexcept;
+    };
+    template <typename F>
+    static inline constexpr Ops inlineOps{
+        [](void* p) { (*static_cast<F*>(p))(); },
+        [](void* from, void* to) noexcept {
+          new (to) F(std::move(*static_cast<F*>(from)));
+          static_cast<F*>(from)->~F();
+        },
+        [](void* p) noexcept { static_cast<F*>(p)->~F(); }};
+    template <typename F>
+    static inline constexpr Ops heapOps{
+        [](void* p) { (**static_cast<F**>(p))(); },
+        [](void* from, void* to) noexcept {
+          std::memcpy(to, from, sizeof(void*));
+        },
+        [](void* p) noexcept { delete *static_cast<F**>(p); }};
+
+    void moveFrom(Effect& other) noexcept {
+      ops_ = other.ops_;
+      if (ops_ != nullptr) {
+        ops_->relocate(other.storage_, storage_);
+        other.ops_ = nullptr;
+      }
+    }
+    void reset() noexcept {
+      if (ops_ != nullptr) {
+        ops_->destroy(storage_);
+        ops_ = nullptr;
+      }
+    }
+
+    alignas(std::max_align_t) unsigned char storage_[kInlineBytes];
+    const Ops* ops_{nullptr};
+  };
+
   struct Result {
-    std::vector<std::function<void()>> effects;
+    std::vector<Effect> effects;
     std::exception_ptr error;
     LoomWorkerProfile::Metrics profile;
     LoomWorkerProfile::Clock::time_point computeStart{},
@@ -93,12 +190,13 @@ class LoomWorker final {
 
   /**
    * Whether the JavaScript runtime is hosted by the UI thread. When it is not
-   * (Android with `LOOM_JS_ON_MAIN` off), JS-thread callers may wait for the UI
+   * (Android, or iOS with `LOOM_JS_ON_MAIN` defined to 0), JS-thread callers may wait for the UI
    * thread but the UI thread must never wait for JS, and result application is
    * confined to the UI thread. iOS and the host test build always host JS on the
    * thread that applies results.
    */
-#if defined(__ANDROID__) && !LOOM_JS_ON_MAIN
+#if (defined(__ANDROID__) && !LOOM_JS_ON_MAIN) || \
+    (defined(__APPLE__) && defined(LOOM_JS_ON_MAIN) && !LOOM_JS_ON_MAIN)
   static constexpr bool kJavaScriptOnUIThread = false;
 #else
   static constexpr bool kJavaScriptOnUIThread = true;
@@ -216,7 +314,7 @@ class LoomWorker final {
       ++submitted_;
     }
     auto owned = std::move(job);
-    auto result = std::make_unique<Result>();
+    auto result = newResult();
     if (owned->profileId) {
       LoomWorkerProfile::metrics() = {};
       result->computeStart = LoomWorkerProfile::Clock::now();
@@ -257,6 +355,9 @@ class LoomWorker final {
     // Applying runs view effects, so it is the UI thread's alone.
     if (applying_ || !onUIThread())
       return;
+    // Early effects belong to a job that is still computing or to the result
+    // below; either way they come first.
+    drainEarly();
     std::unique_ptr<Result> result;
     std::unique_ptr<Job> job;
     {
@@ -308,10 +409,12 @@ class LoomWorker final {
       } catch (...) {
       }
       applying_ = wasApplying;
+      recycleEffects(*result);
       acknowledge();
       return;
     }
     applying_ = wasApplying;
+    recycleEffects(*result);
 
     const auto uiEnd = job->profileId
         ? LoomWorkerProfile::Clock::now()
@@ -334,6 +437,20 @@ class LoomWorker final {
           result->profile.layout,
           result->profile.diff,
           result->profile.effects,
+          result->profile.text,
+          result->profile.textCalls);
+      // The bench harness reads the device console, which has stderr only.
+      std::fprintf(
+          stderr,
+          "LoomWorkerProfile id=%u queue=%.3f compute=%.3f delivery=%.3f ui=%.3f prepare=%.3f layout=%.3f diff=%.3f text=%.3f textCalls=%u\n",
+          job->profileId,
+          P::ms(job->submitted, result->computeStart),
+          P::ms(result->computeStart, result->computeEnd),
+          job->synchronous ? 0.0 : P::ms(result->computeEnd, uiStart),
+          P::ms(uiStart, uiEnd),
+          result->profile.prepare,
+          result->profile.layout,
+          result->profile.diff,
           result->profile.text,
           result->profile.textCalls);
     }
@@ -457,25 +574,122 @@ class LoomWorker final {
     completed_.reset();
   }
 
-  /** Capture native effects during worker computation for ordered UI replay. */
+  /**
+   * Like `defer`, but while a job computes on the worker the effect is handed to
+   * the UI thread at once instead of with the job's result, so the UI thread can
+   * work on it while the worker finishes the job. Early effects are applied in
+   * order and always before the result of the job that produced them (and of
+   * every later job): `applyReady` drains them first. Computed anywhere else
+   * (inline on the UI thread, or outside a job) this is exactly `defer`.
+   */
+  template <typename... Args>
+  std::function<void(Args...)> early(std::function<void(Args...)> operation) {
+    if (!operation)
+      return {};
+    // One shared copy of the operation serves the deferred path, every early
+    // effect and the wrapper itself; effects hold a pointer, never a copy.
+    auto shared = std::make_shared<std::function<void(Args...)>>(
+        std::move(operation));
+    auto deferred = deferShared(shared);
+    return [this, shared, deferred = std::move(deferred)](Args... args) {
+      if (!building_ || onUIThread()) {
+        deferred(std::forward<Args>(args)...);
+        return;
+      }
+      Effect effect(
+          [shared, values = std::make_tuple(std::forward<Args>(args)...)]() mutable {
+            std::apply(*shared, std::move(values));
+          });
+      {
+        std::lock_guard lock(mutex_);
+        if (stopping_)
+          return;
+        earlyEffects_.emplace_back(std::move(effect));
+      }
+      notify_();
+    };
+  }
+
+  /** UI only. Runs the early effects posted so far, in order. */
+  void drainEarly() {
+    if (!onUIThread())
+      return;
+    for (;;) {
+      std::vector<Effect> effects;
+      {
+        std::lock_guard lock(mutex_);
+        if (earlyEffects_.empty())
+          return;
+        effects.swap(earlyEffects_);
+      }
+      const bool wasApplying = applying_;
+      applying_ = true;
+      for (auto& effect : effects) {
+        try {
+          effect();
+        } catch (...) {
+          // As for result effects, a failure must not escape the platform's
+          // dispatch block; the job's own result reports the surface failure.
+        }
+      }
+      applying_ = wasApplying;
+    }
+  }
+
+  /**
+   * Capture native effects during worker computation for ordered UI replay.
+   * Arguments the caller passes as temporaries are moved into the effect.
+   */
   template <typename... Args>
   std::function<void(Args...)> defer(std::function<void(Args...)> operation) {
     if (!operation)
       return {};
-    return [operation = std::move(operation)](Args... args) {
-      if (!building_) {
-        operation(std::forward<Args>(args)...);
-        return;
-      }
-      auto values = std::make_tuple(std::forward<Args>(args)...);
-      building_->effects.emplace_back(
-          [operation, values = std::move(values)]() mutable {
-            std::apply(operation, std::move(values));
-          });
-    };
+    return deferShared(std::make_shared<std::function<void(Args...)>>(
+        std::move(operation)));
   }
 
  private:
+  template <typename... Args>
+  std::function<void(Args...)> deferShared(
+      std::shared_ptr<std::function<void(Args...)>> shared) {
+    return [shared = std::move(shared)](Args... args) {
+      if (!building_) {
+        (*shared)(std::forward<Args>(args)...);
+        return;
+      }
+      building_->effects.emplace_back(Effect(
+          [shared, values = std::make_tuple(std::forward<Args>(args)...)]() mutable {
+            std::apply(*shared, std::move(values));
+          }));
+    };
+  }
+
+  /** A result whose effects vector reuses the capacity of an earlier one. */
+  std::unique_ptr<Result> newResult() {
+    auto result = std::make_unique<Result>();
+    std::lock_guard lock(mutex_);
+    result->effects = std::move(spareEffects_);
+    return result;
+  }
+
+  /**
+   * Destroys an applied result's effects and keeps the vector for the next job,
+   * unless it is far larger than what recent jobs needed (the same idea as
+   * `LoomRenderer::trimScratch`): a burst of effects must not pin its peak.
+   */
+  void recycleEffects(Result& result) {
+    auto effects = std::move(result.effects);
+    const size_t used = effects.size();
+    effects.clear();
+    std::lock_guard lock(mutex_);
+    effectPeak_ = std::max(used, effectPeak_ - effectPeak_ / 8);
+    if (effects.capacity() <= 4 * std::max<size_t>(effectPeak_, 16)) {
+      spareEffects_ = std::move(effects);
+    } else {
+      spareEffects_ = std::vector<Effect>();
+    }
+  }
+
 #if defined(__APPLE__)
   // `std::thread` inherits the 512 KB platform default on Apple platforms. This
   // thread runs Yoga plus several recursive `std::function` tree walks
@@ -494,6 +708,8 @@ class LoomWorker final {
         &workerThread_,
         &attributes,
         [](void* context) -> void* {
+          // Named so profilers and the bench probe can tell it apart.
+          pthread_setname_np("com.loom.worker");
           static_cast<LoomWorker*>(context)->run();
           return nullptr;
         },
@@ -548,7 +764,7 @@ class LoomWorker final {
         running_ = true;
       }
 
-      auto result = std::make_unique<Result>();
+      auto result = newResult();
       if (job->profileId) {
         LoomWorkerProfile::metrics() = {};
         result->computeStart = LoomWorkerProfile::Clock::now();
@@ -589,6 +805,9 @@ class LoomWorker final {
   std::deque<std::unique_ptr<Job>> jobs_;
   std::unique_ptr<Job> completed_;
   std::unique_ptr<Result> result_;
+  std::vector<Effect> earlyEffects_;
+  std::vector<Effect> spareEffects_; // guarded by mutex_
+  size_t effectPeak_{0}; // guarded by mutex_
   static inline thread_local Result* building_{nullptr};
   bool running_{false};
   bool stopping_{false};

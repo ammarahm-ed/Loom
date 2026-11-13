@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <unordered_set>
+
 #include <react/cxxstableapi/PrivateGuard.h>
 
 #include <React/RuntimeExecutor.h>
@@ -196,6 +198,12 @@ class RuntimeScheduler_Modern final : public RuntimeSchedulerBase {
    * This protects the access to `taskQueue_` and `isevent loopScheduled_`.
    */
   mutable std::shared_mutex schedulingMutex_;
+
+  /**
+   * Loom: queued tasks scheduled by requestAnimationFrame work
+   * (AnimationFrameWork). Guarded by `schedulingMutex_`.
+   */
+  std::unordered_set<const Task*> animationFrameTasks_;
 
   const RuntimeExecutor runtimeExecutor_;
   SchedulerPriority currentPriority_{SchedulerPriority::NormalPriority};

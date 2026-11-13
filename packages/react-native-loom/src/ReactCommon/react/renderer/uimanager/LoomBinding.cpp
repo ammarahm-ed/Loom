@@ -5,7 +5,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <glog/logging.h>
+#include <unistd.h>
+#include <folly/json.h>
+#include <react/renderer/core/PropsParserContext.h>
+#include <react/renderer/core/RawProps.h>
 #include "LoomBinding.h"
+#include "LoomFabricBridge.h"
+#include "LoomLayoutAnimations.h"
 #include "LoomRendererInternals.h"
 #include "LoomWorkerProfile.h"
 
@@ -26,6 +33,8 @@
 #endif
 
 #include <jsi/JSIDynamic.h>
+
+
 
 #if LOOM_RENDERER
 namespace facebook::react {
@@ -161,40 +170,42 @@ LoomBinding::LoomBinding(
     : UIManagerBinding(std::move(uiManager)) {
   lifetime_ = std::make_shared<Lifetime>();
   lifetime_->binding = this;
+  installLoomFabricBridge();
+  // Power-of-two bucket counts keep these on mask indexing (see LoomTagHash).
+  mountedIdentities_.reserve(1024);
+  mountedTokens_.reserve(1024);
 #if LOOM_WORKER
   const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
-  auto* delegate = getUIManager().getDelegate();
-  auto uiExecutor =
-      delegate ? delegate->loomGetUIExecutor() : nullptr;
-  if (!uiExecutor)
-    throw std::logic_error(
-        "Direct worker renderer requires a platform UI executor");
-  worker_ = std::make_unique<LoomWorker>(
-      [weakLifetime, uiExecutor] {
-        uiExecutor([weakLifetime] {
-          if (auto lifetime = weakLifetime.lock()) {
-            // Result application can stop/restart a surface synchronously. The
-            // runtime owns this binding throughout the callback; no registry
-            // lock is held across UI effects.
-            if (auto* binding = lifetime->binding) {
-              if (!LoomWorker::kJavaScriptOnUIThread)
-                binding->refreshCanMeasureTextOnWorker();
-              binding->worker_->applyReady();
-            }
-          }
-        });
-      });
-  if (!LoomWorker::kJavaScriptOnUIThread) {
-    // JS runs off the UI thread, where the Java text-capability query is not
-    // allowed; seed the cached answer from the UI thread before the first commit
-    // needs it.
+  // The platform UI executor is resolved on first use, not here: on Android the
+  // JS thread can create this binding while the UI manager's delegate is still
+  // being installed, and requiring it in the constructor made that race a
+  // startup crash. Every use of it comes after the first commit, by which time
+  // the delegate is in place.
+  worker_ = std::make_unique<LoomWorker>([weakLifetime] {
+    auto lifetime = weakLifetime.lock();
+    if (!lifetime || lifetime->binding == nullptr) {
+      return;
+    }
+    auto uiExecutor = lifetime->binding->platformUIExecutor();
+    if (!uiExecutor) {
+      return;
+    }
     uiExecutor([weakLifetime] {
       if (auto lifetime = weakLifetime.lock()) {
-        if (auto* binding = lifetime->binding)
-          binding->refreshCanMeasureTextOnWorker();
+        // Result application can stop/restart a surface synchronously. The
+        // runtime owns this binding throughout the callback; no registry
+        // lock is held across UI effects.
+        if (auto* binding = lifetime->binding) {
+          if (!LoomWorker::kJavaScriptOnUIThread)
+            binding->refreshCanMeasureTextOnWorker();
+          binding->worker_->applyReady();
+        }
       }
     });
-  }
+  });
+  // Nothing here may touch the UI manager's delegate: during startup it can be
+  // a Scheduler still under construction on another thread. The first commit
+  // resolves the executor (see publishWorkerCommit).
 #endif
 #if LOOM_WORKER && LOOM_JS_ON_MAIN
   // Loom: when timers and requestAnimationFrame callbacks have run in
@@ -215,6 +226,34 @@ LoomBinding::LoomBinding(
   std::lock_guard lock(registryMutex());
   liveBindings().emplace(this, lifetime_);
 }
+
+#if LOOM_WORKER
+std::function<void(std::function<void()>)> LoomBinding::platformUIExecutor() {
+  std::lock_guard lock(uiExecutorMutex_);
+  if (uiExecutor_) {
+    return uiExecutor_;
+  }
+  auto* delegate = getUIManager().getDelegate();
+  auto executor = delegate ? delegate->loomGetUIExecutor() : nullptr;
+  if (!executor) {
+    return nullptr;
+  }
+  uiExecutor_ = executor;
+  if (!LoomWorker::kJavaScriptOnUIThread) {
+    // JS runs off the UI thread, where the Java text-capability query is not
+    // allowed; seed the cached answer from the UI thread before the first
+    // commit needs it.
+    const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
+    executor([weakLifetime] {
+      if (auto lifetime = weakLifetime.lock()) {
+        if (auto* binding = lifetime->binding)
+          binding->refreshCanMeasureTextOnWorker();
+      }
+    });
+  }
+  return uiExecutor_;
+}
+#endif
 
 #if LOOM_PROFILE
 LoomBinding::HostCallScope::HostCallScope(
@@ -416,7 +455,135 @@ void LoomBinding::shutdownWorkerForUIManager(UIManager& manager) {
 #endif
 }
 
+namespace {
+
+/**
+ * The renderer as a layout-animation driver sees it. Layout reads are only
+ * answered inside `processBatch` (`inCommit`), where the renderer matches the
+ * batch being mounted.
+ */
+class RendererGeometry final : public LoomLayoutAnimationGeometry {
+ public:
+  RendererGeometry(const LoomRenderer& renderer, bool inCommit)
+      : renderer_(renderer), inCommit_(inCommit) {}
+
+  std::optional<Rect> layoutFrameInSurface(Tag tag) const override {
+    LoomRenderer::Metrics metrics;
+    if (!inCommit_ ||
+        !renderer_.metricsRelativeTo(
+            tag, 0, metrics, /*includeTransform*/ false,
+            /*includeScroll*/ false)) {
+      return std::nullopt;
+    }
+    return Rect{{metrics.x, metrics.y}, {metrics.width, metrics.height}};
+  }
+
+  Tag parentOf(Tag tag) const override {
+    if (!inCommit_) {
+      return 0;
+    }
+    const auto info = renderer_.fabricNodeInfo(tag);
+    return info.has_value() ? info->parent : 0;
+  }
+
+  size_t mountedChildCount(Tag tag) const override {
+    return inCommit_ ? renderer_.mountedChildCount(tag) : 0;
+  }
+
+  const std::string* componentNameOf(Tag tag) const override {
+    if (!inCommit_) {
+      return nullptr;
+    }
+    const auto info = renderer_.fabricNodeInfo(tag);
+    return info.has_value() ? info->componentName : nullptr;
+  }
+
+  const folly::dynamic* propsOf(Tag tag) const override {
+    if (!inCommit_) {
+      return nullptr;
+    }
+    const auto info = renderer_.fabricNodeInfo(tag);
+    return info.has_value() ? info->props : nullptr;
+  }
+
+  std::optional<Point> nativeOriginInSurface(Tag tag) const override {
+    const auto location = renderer_.viewLocationInSurface(tag);
+    if (!location.has_value() || std::isnan(location->first) ||
+        std::isnan(location->second)) {
+      return std::nullopt;
+    }
+    return Point{location->first, location->second};
+  }
+
+ private:
+  const LoomRenderer& renderer_;
+  const bool inCommit_;
+};
+
+} // namespace
+
+bool LoomBinding::layoutAnimationFrame(SurfaceId surfaceId) {
+  auto driver = loomLayoutAnimationDriver(surfaceId);
+  if (driver == nullptr) {
+    return false;
+  }
+  return withSurfaceRenderer(
+      surfaceId,
+      [&](LoomBinding& binding,
+          const std::shared_ptr<LoomRenderer>& liveRenderer) {
+        LoomMountBatch batch;
+        batch.animationFrame = true;
+        const RendererGeometry geometry(*liveRenderer, /*inCommit*/ false);
+        driver->frame(surfaceId, batch, geometry);
+        if (batch.operations.empty()) {
+          return;
+        }
+        if (auto* delegate = binding.getUIManager().getDelegate()) {
+          delegate->loomApplyBatch(surfaceId, std::move(batch));
+        }
+      });
+}
+
+bool LoomBinding::withSurfaceRenderer(
+    SurfaceId surfaceId,
+    const std::function<
+        void(LoomBinding&, const std::shared_ptr<LoomRenderer>&)>& body) {
+  for (const auto& lifetime : bindingSnapshot()) {
+    std::shared_lock lock(lifetime->gate);
+    auto* binding = lifetime->binding;
+    if (binding == nullptr) {
+      continue;
+    }
+    auto liveRenderer = binding->findRenderer(surfaceId);
+    if (liveRenderer == nullptr) {
+      continue;
+    }
+    body(*binding, liveRenderer);
+    return true;
+  }
+  return false;
+}
+
 void LoomBinding::recordNativeProps(Tag tag, folly::dynamic props) {
+  recordNativePropsImpl(tag, std::move(props), false);
+}
+
+void LoomBinding::recordNativePaintProps(Tag tag, folly::dynamic paint) {
+  recordNativePropsImpl(tag, std::move(paint), true);
+}
+
+void LoomBinding::recordAnimationProps(
+    Tag tag,
+    folly::dynamic props,
+    bool viewApplied) {
+  recordNativePropsImpl(tag, std::move(props), viewApplied, viewApplied);
+}
+
+void LoomBinding::recordNativePropsImpl(
+    Tag tag,
+    folly::dynamic props,
+    bool knownPaint,
+    bool viewApplied) {
 #if LOOM_WORKER
   for (const auto& lifetime : bindingSnapshot()) {
     std::shared_lock lock(lifetime->gate);
@@ -443,8 +610,16 @@ void LoomBinding::recordNativeProps(Tag tag, folly::dynamic props) {
     auto identityIt = binding->mountedIdentities_.find(tag);
     if (identityIt == binding->mountedIdentities_.end())
       continue;
-    auto classified = classifyAnimatedProps(props);
-    if (classified.text || owner->second->isTextNode(tag)) {
+    ClassifiedAnimatedProps classified;
+    bool isText = owner->second->isTextNode(tag);
+    if (knownPaint) {
+      if (!isText)
+        classified.paint = std::move(props);
+    } else {
+      classified = classifyAnimatedProps(props);
+      isText = isText || classified.text;
+    }
+    if (isText) {
       // Font and text keys drive measurement, and any key on a paragraph or raw
       // text node can, which the synchronous lane must not do: the whole payload
       // keeps the ordinary per-call path (design §3.2, "Text").
@@ -452,18 +627,20 @@ void LoomBinding::recordNativeProps(Tag tag, folly::dynamic props) {
       return;
     }
     // The platform's synchronous update has already put these values on the
-    // view, so this call only folds them into the frame being collected.
+    // view, or (`!viewApplied`) the lane writes them itself.
     binding->writeAnimatedProps(
         token->surfaceId,
         tag,
         identityIt->second,
         std::move(classified),
-        /*applyPaintToView=*/false);
+        /*applyPaintToView=*/!viewApplied,
+        /*viewAlreadyApplied=*/viewApplied);
     return;
   }
 #else
   (void)tag;
   (void)props;
+  (void)knownPaint;
 #endif
 }
 
@@ -530,27 +707,37 @@ constexpr double kAnimationLaneBudgetMicros = 2000.0;
 constexpr int kAnimationLaneOverBudgetFrames = 3;
 constexpr int kAnimationLaneProbeFrames = 30;
 
+// The patches are consumed: a tag with nothing merged yet (the common case, one
+// write per node per frame) takes the patch whole instead of copying it key by
+// key.
 void mergePatchesInto(
-    std::unordered_map<Tag, folly::dynamic>& target,
-    const std::vector<std::pair<Tag, folly::dynamic>>& patches) {
-  for (const auto& entry : patches) {
-    auto& merged = target[entry.first];
+    TagMap<folly::dynamic>& target,
+    std::vector<std::pair<Tag, folly::dynamic>>& patches) {
+  for (auto& entry : patches) {
+    auto [it, inserted] = target.try_emplace(entry.first);
+    auto& merged = it->second;
+    if (inserted && entry.second.isObject()) {
+      merged = std::move(entry.second);
+      continue;
+    }
     if (!merged.isObject())
       merged = folly::dynamic::object();
-    for (const auto& item : entry.second.items())
-      merged[item.first] = item.second;
+    for (auto& item : entry.second.items())
+      merged[item.first] = std::move(item.second);
   }
 }
 } // namespace
 
 bool LoomBinding::AnimationFrame::merge(
-    const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
-    const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches) {
+    std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+    std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+    std::vector<std::pair<Tag, folly::dynamic>>& viewPatches) {
   std::lock_guard lock(mutex);
   if (claimed)
     return false;
   mergePatchesInto(paint, paintPatches);
   mergePatchesInto(layout, layoutPatches);
+  mergePatchesInto(view, viewPatches);
   // The tags are recorded as they arrive, not when the frame is taken: the
   // applied callback that drops their paint overlays can run before the compute
   // does (a synchronous job applies first, then computes).
@@ -563,7 +750,8 @@ bool LoomBinding::AnimationFrame::merge(
 
 bool LoomBinding::AnimationFrame::take(
     std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
-    std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches) {
+    std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+    std::vector<std::pair<Tag, folly::dynamic>>& viewPatches) {
   std::lock_guard lock(mutex);
   if (claimed)
     return false;
@@ -576,6 +764,10 @@ bool LoomBinding::AnimationFrame::take(
   for (auto& entry : layout) {
     layoutPatches.emplace_back(entry.first, std::move(entry.second));
   }
+  viewPatches.reserve(view.size());
+  for (auto& entry : view) {
+    viewPatches.emplace_back(entry.first, std::move(entry.second));
+  }
   return true;
 }
 
@@ -584,10 +776,12 @@ void LoomBinding::writeAnimatedProps(
     Tag tag,
     uint64_t identity,
     ClassifiedAnimatedProps classified,
-    bool applyPaintToView) {
+    bool applyPaintToView,
+    bool viewAlreadyApplied) {
   std::unique_lock state(stateMutex_);
   auto& write = animationFrameBuffer_[surfaceId][tag];
   if (write.identity != identity) {
+    write.view = folly::dynamic::object();
     // A different draft owns the tag now, so nothing collected for the previous
     // one may survive into this frame.
     write.paint = folly::dynamic::object();
@@ -595,8 +789,13 @@ void LoomBinding::writeAnimatedProps(
     write.text = false;
     write.identity = identity;
   }
-  for (const auto& item : classified.paint.items()) {
-    write.paint[item.first] = item.second;
+  // Paint that no view has seen yet is written to it when the frame is
+  // applied. A write the platform already applied (Native Animated) or that
+  // this call applies right now is not repeated: re-sending it cost a second
+  // dynamic -> NativeMap -> Java round trip per node per frame.
+  if (!applyPaintToView && !viewAlreadyApplied) {
+    for (const auto& item : classified.paint.items())
+      write.view[item.first] = item.second;
   }
   for (const auto& item : classified.layout.items()) {
     write.layout[item.first] = item.second;
@@ -615,12 +814,27 @@ void LoomBinding::writeAnimatedProps(
   if (overlay.identity != identity || !overlay.props.isObject()) {
     overlay.props = folly::dynamic::object();
   }
-  for (const auto& item : classified.paint.items()) {
-    overlay.props[item.first] = item.second;
+  if (overlay.props.empty()) {
+    // The common case (the previous frame's overlay was folded and erased): a
+    // whole-object copy reuses the stored key hashes instead of hashing and
+    // inserting every key again.
+    overlay.props = classified.paint;
+  } else {
+    for (const auto& item : classified.paint.items()) {
+      overlay.props[item.first] = item.second;
+    }
   }
   overlay.surfaceId = surfaceId;
   overlay.identity = identity;
   overlay.sequence = 0;
+  // The frame's copy is the last use of the classified keys unless they are
+  // about to be written to the view below.
+  if (write.paint.empty() && !applyPaintToView) {
+    write.paint = std::move(classified.paint);
+  } else {
+    for (const auto& item : classified.paint.items())
+      write.paint[item.first] = item.second;
+  }
   // The view write is a Java call that re-enters `recordNativeProps`.
   state.unlock();
   if (applyPaintToView) {
@@ -782,6 +996,7 @@ void LoomBinding::flushAnimationFrame(SurfaceId surfaceId) {
   animationFrameBuffer_.erase(bufferIt);
   std::vector<std::pair<Tag, folly::dynamic>> paintPatches;
   std::vector<std::pair<Tag, folly::dynamic>> layoutPatches;
+  std::vector<std::pair<Tag, folly::dynamic>> viewPatches;
   bool needsAsync = false;
   for (auto& entry : writes) {
     auto& write = entry.second;
@@ -797,25 +1012,30 @@ void LoomBinding::flushAnimationFrame(SurfaceId surfaceId) {
     if (!write.layout.empty()) {
       layoutPatches.emplace_back(entry.first, std::move(write.layout));
     }
+    if (!write.view.empty()) {
+      viewPatches.emplace_back(entry.first, std::move(write.view));
+    }
   }
   state.unlock();
   if (paintPatches.empty() && layoutPatches.empty()) {
     return;
   }
-  deferAnimationFrame(surfaceId, paintPatches, layoutPatches, needsAsync);
+  deferAnimationFrame(
+      surfaceId, paintPatches, layoutPatches, viewPatches, needsAsync);
 }
 
 void LoomBinding::deferAnimationFrame(
     SurfaceId surfaceId,
-    const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
-    const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+    std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
+    std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches,
+    std::vector<std::pair<Tag, folly::dynamic>>& viewPatches,
     bool needsAsync) {
   std::unique_lock state(stateMutex_);
   if (auto pending = pendingAnimationFrames_.find(surfaceId);
       pending != pendingAnimationFrames_.end()) {
     // The queued job has not started, so the newer frame replaces its payload
     // instead of appending a second job (design §5.4).
-    if (pending->second->merge(paintPatches, layoutPatches)) {
+    if (pending->second->merge(paintPatches, layoutPatches, viewPatches)) {
       return;
     }
   }
@@ -837,7 +1057,7 @@ void LoomBinding::deferAnimationFrame(
   const bool synchronous =
       !hasLayoutOrText || animationLaneAllowsSync(surfaceId);
   auto frame = std::make_shared<AnimationFrame>();
-  frame->merge(paintPatches, layoutPatches);
+  frame->merge(paintPatches, layoutPatches, viewPatches);
   // With JS off the UI thread `writeAnimatedProps` cannot write paint keys to
   // the views as they arrive, so the frame writes them when it is taken (at
   // compute time, so a frame merged into a pending job writes its latest
@@ -853,16 +1073,17 @@ void LoomBinding::deferAnimationFrame(
   job->compute = [this, rendererOwner, frame, paintForView] {
     std::vector<std::pair<Tag, folly::dynamic>> framePaint;
     std::vector<std::pair<Tag, folly::dynamic>> frameLayout;
-    if (!frame->take(framePaint, frameLayout)) {
+    std::vector<std::pair<Tag, folly::dynamic>> frameView;
+    if (!frame->take(framePaint, frameLayout, frameView)) {
       return;
     }
     if (paintForView) {
       if (worker_->onUIThread()) {
-        for (const auto& [tag, paint] : framePaint) {
+        for (const auto& [tag, paint] : frameView) {
           applyAnimatedPaintToView(tag, paint);
         }
       } else {
-        *paintForView = framePaint;
+        *paintForView = std::move(frameView);
       }
     }
     rendererOwner->applyAnimationFrame(framePaint, frameLayout);
@@ -972,6 +1193,50 @@ void LoomBinding::setWorkerNativeProps(
 }
 #endif
 
+bool LoomBinding::dispatchComponentState(const StateUpdate& stateUpdate) {
+  if (stateUpdate.family == nullptr) {
+    return false;
+  }
+  const auto surfaceId = stateUpdate.family->getSurfaceId();
+  for (const auto& lifetime : bindingSnapshot()) {
+    std::shared_lock lock(lifetime->gate);
+    auto* binding = lifetime->binding;
+    if (binding != nullptr && binding->submitComponentState(surfaceId, stateUpdate)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool LoomBinding::submitComponentState(
+    SurfaceId surfaceId,
+    const StateUpdate& update) {
+  std::unique_lock state(stateMutex_);
+  auto rendererIt = renderers_.find(surfaceId);
+  if (rendererIt == renderers_.end()) {
+    return false;
+  }
+  auto renderer = rendererIt->second;
+  auto tokenIt = surfaceTokens_.find(surfaceId);
+  if (tokenIt == surfaceTokens_.end() || !tokenIt->second->active) {
+    // The surface is Loom's but already stopping: the update has no target.
+    return true;
+  }
+  auto token = tokenIt->second;
+  state.unlock();
+#if LOOM_WORKER
+  // Always queued, never run on the calling thread: `unstable_Immediate`
+  // updates arrive from inside UIKit layout and from mounting, where applying
+  // a batch synchronously would re-enter the batch applier.
+  auto job = std::make_unique<LoomWorker::Job>();
+  job->compute = [renderer, update] { renderer->applyComponentState(update); };
+  submitWorkerJob(token, std::move(job));
+#else
+  renderer->applyComponentState(update);
+#endif
+  return true;
+}
+
 void LoomBinding::releaseSurface(SurfaceId surfaceId) {
   {
     std::lock_guard lock(registryMutex());
@@ -1020,6 +1285,10 @@ void LoomBinding::applyConstraints(
 }
 
 void LoomBinding::releaseSurfaceInternal(SurfaceId surfaceId) {
+  {
+    std::lock_guard families(fabricFamiliesMutex_);
+    fabricFamilies_.erase(surfaceId);
+  }
   std::lock_guard state(stateMutex_);
   if (auto token = surfaceTokens_.find(surfaceId);
       token != surfaceTokens_.end()) {
@@ -1110,6 +1379,14 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
                               SurfaceId surface,
                               LoomMountBatch batch) {
     if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
+      // Layout animations (Reanimated adapter): the driver sees the batch the
+      // platform is about to mount. Without a driver this is one atomic load.
+      if (auto driver = loomLayoutAnimationDriver(surface)) {
+        if (auto liveRenderer = findRenderer(surface)) {
+          const RendererGeometry geometry(*liveRenderer, /*inCommit*/ true);
+          driver->processBatch(surface, batch, geometry);
+        }
+      }
       delegate->loomApplyBatch(surface, std::move(batch));
 #if LOOM_WORKER
       // Only this surface's overlays can be replayed onto this surface, so the
@@ -1337,23 +1614,17 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
         static_cast<int>(tag),
         static_cast<int>(surface));
   };
-  operations.updateState = [this](
-                               SurfaceId surface,
-                               Tag tag,
-                               const std::string& componentName,
-                               const folly::dynamic& props,
-                               const AttributedString& attributedString,
-                               const ParagraphAttributes& paragraphAttributes,
-                               const LoomTextMeasurement& prepared) {
+  operations.updateState = [this](LoomTextStateUpdate update) {
     if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomUpdateState(
-          surface,
-          tag,
-          componentName,
-          props,
-          attributedString,
-          paragraphAttributes,
-          prepared);
+      delegate->loomUpdateState(update);
+    }
+  };
+  operations.updateComponentState = [this](
+                                        SurfaceId surface,
+                                        Tag tag,
+                                        State::Shared state) {
+    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
+      delegate->loomUpdateComponentState(surface, tag, state);
     }
   };
   operations.updateScrollContentBounds = [this](
@@ -1405,6 +1676,7 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   // Only pure text preparation callbacks remain executable during computation.
   // All native state/event/view effects are built into the owning UI result.
   operations.failSurface = worker_->defer(std::move(operations.failSurface));
+  operations.applyBatchEarly = worker_->early(operations.applyBatch);
   operations.applyBatch = worker_->defer(std::move(operations.applyBatch));
   operations.registerEventTarget =
       worker_->defer(std::move(operations.registerEventTarget));
@@ -1419,6 +1691,8 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   operations.reportUnsupportedIntrinsicMeasurement = worker_->defer(
       std::move(operations.reportUnsupportedIntrinsicMeasurement));
   operations.updateState = worker_->defer(std::move(operations.updateState));
+  operations.updateComponentState =
+      worker_->defer(std::move(operations.updateComponentState));
   operations.updateScrollContentBounds =
       worker_->defer(std::move(operations.updateScrollContentBounds));
   operations.commitFinished = {};
@@ -1426,6 +1700,14 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   auto created =
       std::make_shared<LoomRenderer>(surfaceId, std::move(operations));
   created->setPointScaleFactor(directPointScaleFactorValue());
+  {
+    std::lock_guard state(stateMutex_);
+    if (compat_ == nullptr) {
+      compat_ =
+          std::make_shared<LoomCompat>(getUIManager().getContextContainer());
+    }
+    created->setCompat(compat_);
+  }
 
   // Constraints can arrive after the surface starts but before the first
   // commit, so a fresh renderer is initialized from whatever is known now.
@@ -1528,12 +1810,17 @@ void LoomBinding::publishWorkerCommit(
     }
   } jankCommitTimer;
 #endif
+  // First commit: React only renders once startup has finished, so the
+  // delegate is fully constructed now. Resolving here also seeds the text
+  // capability answer from the UI thread.
+  (void)platformUIExecutor();
   auto packet = std::make_unique<WorkerCommit>();
   packet->surfaceId = surfaceId;
   packet->token = tokenFor(surfaceId);
+  packet->animationFrame = AnimationFrameWork::active();
   // Draft data is built once by the host. Freeze each version; appendChild
   // thereafter creates a new version and copies only its changed child list.
-  auto identities = std::make_shared<std::unordered_map<Tag, uint64_t>>();
+  auto identities = std::make_shared<TagMap<uint64_t>>();
   // The versions this publish newly freezes, i.e. the changed part of the graph.
   // They are marked committed once the commit has been applied, which is what lets
   // a later reconcile stop at an unchanged subtree.
@@ -1623,9 +1910,9 @@ void LoomBinding::publishWorkerCommit(
   // Insert only the tags this walk newly published. `freeze` skips unchanged
   // subtrees, so the map it produces is a delta rather than the whole graph, and
   // erasing the surface first would drop the entry for every skipped subtree.
-  // Stale entries are harmless: both reads validate the stored identity against
-  // the live draft (see `setWorkerNativeProps`), so a removed or reused tag simply
-  // fails the comparison, and surface teardown prunes by surface.
+  // Reads validate the stored identity against the live draft (see
+  // `setWorkerNativeProps`); `applyPublishedIdentities` erases an entry once the
+  // version is mounted or removed.
   {
     std::lock_guard state(stateMutex_);
     for (const auto& [tag, identity] : *identities)
@@ -1658,8 +1945,17 @@ void LoomBinding::publishWorkerCommit(
     owner = renderers_.at(surfaceId);
   }
   auto token = packet->token;
-  auto applied = [this, token, identities, committedDrafts] {
-    applyPublishedIdentities(token, *identities, *committedDrafts);
+  // Filled by the compute step: the tags the renderer dropped, or nothing with
+  // `fullIdentities` set when that commit walked the whole tree.
+  auto removedTags = std::make_shared<std::vector<Tag>>();
+  auto fullIdentities = std::make_shared<bool>(false);
+  auto applied = [this, token, identities, committedDrafts, removedTags,
+                  fullIdentities] {
+    applyPublishedIdentities(
+        token,
+        *identities,
+        *committedDrafts,
+        *fullIdentities ? nullptr : removedTags.get());
   };
   // The worker pauses after all preceding UI results. A synchronous job borrows
   // the same renderer on UI for its ENTIRE reconciliation/style/layout/diff.
@@ -1681,10 +1977,16 @@ void LoomBinding::publishWorkerCommit(
                                                packet = std::move(packet),
                                                identities,
                                                publishIdentities = applied,
+                                               removedTags,
+                                               fullIdentities,
                                                forceSync,
                                                smallCommit] {
     const auto computeStart = std::chrono::steady_clock::now();
+    const bool fullCommit = owner->nextCommitIsFull() ||
+        packet->documentHandle != nullptr;
+    owner->setAnimationFrameCommit(packet->animationFrame);
     reconcileWorkerCommit(*owner, *packet);
+    owner->setAnimationFrameCommit(false);
     if (smallCommit) {
       // Keeps the budget test honest on this device right now: a cold CPU, or
       // a large tree whose fixed per-commit cost dominates, turns it off.
@@ -1697,6 +1999,18 @@ void LoomBinding::publishWorkerCommit(
           std::memory_order_relaxed);
     }
 
+    // An incremental commit reports a delta: the versions it published are
+    // already in `identities`, and the renderer lists the tags it dropped.
+    // Only a full commit re-collects the whole live set (and then reconciles
+    // removals against it), which is what every commit used to do.
+    *removedTags = owner->takeDroppedTags();
+    if (!fullCommit) {
+      if (forceSync)
+        publishIdentities();
+      return;
+    }
+    *fullIdentities = true;
+    removedTags->clear();
     // Include children retained through compatibility/native DOM snapshots.
     // This metadata is result-owned and is never read concurrently by UI.
     identities->clear();
@@ -1731,19 +2045,55 @@ void LoomBinding::publishWorkerCommit(
 
 void LoomBinding::applyPublishedIdentities(
     const std::shared_ptr<SurfaceToken>& token,
-    const std::unordered_map<Tag, uint64_t>& identities,
-    const std::vector<std::shared_ptr<DraftNode>>& committedDrafts) {
+    const TagMap<uint64_t>& identities,
+    const std::vector<std::shared_ptr<DraftNode>>& committedDrafts,
+    const std::vector<Tag>* removedTags) {
   std::lock_guard state(stateMutex_);
+  if (removedTags != nullptr) {
+    // Delta: drop exactly the tags the renderer removed (when this surface
+    // still owns them), then upsert the published versions below.
+    for (const auto tag : *removedTags) {
+      const auto mountedToken = mountedTokens_.find(tag);
+      if (mountedToken != mountedTokens_.end() &&
+          mountedToken->second->surfaceId == token->surfaceId) {
+        mountedTokens_.erase(mountedToken);
+        mountedIdentities_.erase(tag);
+      }
+    }
+  }
+  if (hasFabricFamilies_.load(std::memory_order_relaxed)) {
+    releaseFabricFamilies(token->surfaceId, removedTags, identities);
+  }
   // Erase only what this commit no longer contains. This pass is what discovers
   // removals, and it stays correct because `identities` is the full live set
   // rather than the freeze walk's output.
-  for (auto it = mountedTokens_.begin(); it != mountedTokens_.end();) {
+  for (auto it = mountedTokens_.begin();
+       removedTags == nullptr && it != mountedTokens_.end();) {
     if (it->second->surfaceId == token->surfaceId &&
         identities.find(it->first) == identities.end()) {
       mountedIdentities_.erase(it->first);
       it = mountedTokens_.erase(it);
     } else {
       ++it;
+    }
+  }
+  // [LoomMemory] These versions are mounted now (or gone), so they no longer
+  // count as "submitted": `setWorkerNativeProps` finds them through
+  // `mountedIdentities_`. Entries were only ever dropped with the surface, i.e.
+  // one per tag the surface ever published.
+  if (auto surfaceSubmitted = submittedIdentities_.find(token->surfaceId);
+      surfaceSubmitted != submittedIdentities_.end()) {
+    auto& submitted = surfaceSubmitted->second;
+    if (removedTags != nullptr) {
+      for (const auto tag : *removedTags) {
+        submitted.erase(tag);
+      }
+    }
+    for (const auto& [tag, identity] : identities) {
+      if (auto entry = submitted.find(tag);
+          entry != submitted.end() && entry->second == identity) {
+        submitted.erase(entry);
+      }
     }
   }
   // Write only the entries that actually differ. Every commit used to erase and
@@ -1883,10 +2233,14 @@ LoomBinding::selectCommitDrafts(
 
   CommitSelection selection;
   auto& selected = selection.selected;
-  std::unordered_map<Tag, SelectionRecord> selectionByTag;
+  TagMap<SelectionRecord> selectionByTag;
 
   std::function<void(const std::shared_ptr<DraftNode>&)> selectDraft;
   std::function<void(Tag)> retainLiveSubtree;
+  // A retained child is unchanged live structure: recording its root is
+  // enough. Its subtree is not walked - that walk made every commit cost the
+  // whole tree, and nothing below an unchanged node can be added, removed or
+  // re-parented without React cloning the node (which makes it a draft).
   retainLiveSubtree = [&](Tag tag) {
     auto& record = selectionByTag[tag];
     if (record.visit == SelectionRecord::Visit::Active) {
@@ -1897,13 +2251,6 @@ LoomBinding::selectCommitDrafts(
     }
     record.identity = liveRenderer.identityOf(tag);
     record.selected = true;
-    record.visit = SelectionRecord::Visit::Active;
-    if (const auto* children = liveRenderer.childrenOfRef(tag);
-        children != nullptr) {
-      for (const auto child : *children) {
-        retainLiveSubtree(child);
-      }
-    }
     record.visit = SelectionRecord::Visit::Done;
   };
   selectDraft = [&](const std::shared_ptr<DraftNode>& draft) {
@@ -2009,10 +2356,11 @@ LoomBinding::selectCommitDrafts(
     }
     selection.selectedIdentities.emplace(tag, record.identity);
   }
-  // Borrowed views for the attachment scan: it only reads a name and a child
-  // list per node, so materialising both for every selected node copied a
-  // string and a vector per node on every commit.
-  const auto componentNamePointer = [&](Tag tag) -> const std::string* {
+  // Removal roots and the inline-attachment check, both limited to the parents
+  // whose child lists changed. Only such a parent can drop a child or gain an
+  // unsupported one: an unchanged parent keeps its (already validated)
+  // children.
+  const auto nameOf = [&](Tag tag) -> const std::string* {
     const auto record = selectionByTag.find(tag);
     if (record != selectionByTag.end() &&
         record->second.selectedIndex != noSelectedIndex) {
@@ -2021,24 +2369,59 @@ LoomBinding::selectCommitDrafts(
         return draft->componentName.get();
       }
     }
-    // A retained node carries no name on its draft, so the live renderer
-    // answers - exactly as the copying form did. Returning null here would make
-    // a retained paragraph look like an unsupported inline attachment and fail
-    // the surface.
     return liveRenderer.componentNameRef(tag);
   };
-  const auto childrenPointer = [&](Tag tag) -> const std::vector<Tag>* {
-    const auto record = selectionByTag.find(tag);
-    if (record != selectionByTag.end() &&
-        record->second.selectedIndex != noSelectedIndex &&
-        selected[record->second.selectedIndex].childrenChanged) {
-      return &selected[record->second.selectedIndex].childTags;
+  const auto noteRemovedChildren = [&](Tag parentTag,
+                                       const std::vector<Tag>& next) {
+    const auto* live = liveRenderer.childrenOfRef(parentTag);
+    if (live == nullptr || live->empty()) {
+      return;
     }
-    return liveRenderer.childrenOfRef(tag);
+    if (*live == next) {
+      return;
+    }
+    std::unordered_set<Tag> keep(next.begin(), next.end());
+    for (const auto child : *live) {
+      if (keep.count(child) == 0) {
+        selection.removalRoots.push_back(child);
+      }
+    }
   };
-  selection.unsupportedAttachmentTag =
-      LoomRenderer::findUnsupportedInlineAttachment(
-          selection.rootChildren, componentNamePointer, childrenPointer);
+  noteRemovedChildren(selection.rootTag, selection.rootChildren);
+  static const std::string emptyName;
+  for (const auto& entry : selected) {
+    const auto& draft = *entry.draft;
+    const auto liveIdentity = liveRenderer.identityOf(draft.tag);
+    if (liveIdentity != 0 && liveIdentity != draft.identity) {
+      // The old version of a replaced node leaves the tree as a whole.
+      selection.removalRoots.push_back(draft.tag);
+    } else if (entry.childrenChanged) {
+      noteRemovedChildren(draft.tag, entry.childTags);
+    }
+    if (!entry.childrenChanged || selection.unsupportedAttachmentTag != 0) {
+      continue;
+    }
+    const auto* parentNamePointer = nameOf(draft.tag);
+    const auto& parentName =
+        parentNamePointer == nullptr ? emptyName : *parentNamePointer;
+    const bool parentInsideText = loom::isParagraphName(parentName) ||
+        loom::isVirtualTextName(parentName) ||
+        parentName.find("TextInput") != std::string::npos;
+    if (!parentInsideText) {
+      continue;
+    }
+    for (const auto child : entry.childTags) {
+      const auto* childNamePointer = nameOf(child);
+      const auto& childName =
+          childNamePointer == nullptr ? emptyName : *childNamePointer;
+      if (!loom::isParagraphName(childName) &&
+          !loom::isVirtualTextName(childName) &&
+          !loom::isRawTextName(childName)) {
+        selection.unsupportedAttachmentTag = child;
+        break;
+      }
+    }
+  }
   return selection;
 }
 
@@ -2052,7 +2435,8 @@ void LoomBinding::reconcileSelectedDrafts(
   const auto& selected = selection.selected;
 
   // Preserve cleanup edges owned by a parent that the selected graph removes.
-  liveRenderer.captureRemovedMountedEdges(selection.selectedIdentities);
+  liveRenderer.captureRemovedMountedEdgesFrom(
+      selection.selectedIdentities, selection.removalRoots);
 
   for (const auto& entry : selected) {
     const auto& draft = *entry.draft;
@@ -2097,6 +2481,9 @@ void LoomBinding::reconcileSelectedDrafts(
       } else {
         liveRenderer.cloneNodeWithNewProps(draft.tag, (*patch)->props);
       }
+    }
+    if (draft.compatProps != nullptr) {
+      liveRenderer.setCompatProps(draft.tag, draft.compatProps);
     }
   }
 
@@ -2299,6 +2686,8 @@ void LoomBinding::publishRootCommit(
     // This path owns the renderer outright, so it compacts the drafts it
     // commits: the live node is now the source of truth for every applied patch.
     reconcileSelectedDrafts(liveRenderer, surfaceId, commitSelection, true);
+    // This path keeps no mounted-identity delta; drop the record.
+    (void)liveRenderer.takeDroppedTags();
 #if LOOM_PROFILE
     // Reconciliation and the root commit are one atomic step now, so this marks
     // the end of both.
@@ -2389,6 +2778,74 @@ void LoomBinding::drainPendingRootCommits(SurfaceId surfaceId) {
   drainingRootCommits_.erase(surfaceId);
 }
 
+#if LOOM_WORKER
+void LoomBinding::flushPendingPatches(SurfaceId surfaceId) {
+  auto pending = pendingPatches_.find(surfaceId);
+  if (pending == pendingPatches_.end()) {
+    return;
+  }
+  auto patches = std::make_shared<std::vector<PendingPatch>>(
+      std::move(pending->second));
+  pendingPatches_.erase(pending);
+  if (patches->empty()) {
+    return;
+  }
+  std::shared_ptr<LoomRenderer> owner;
+  std::shared_ptr<SurfaceToken> token;
+  {
+    std::lock_guard state(stateMutex_);
+    const auto renderer = renderers_.find(surfaceId);
+    const auto surfaceToken = surfaceTokens_.find(surfaceId);
+    if (renderer == renderers_.end() || surfaceToken == surfaceTokens_.end() ||
+        !surfaceToken->second->active) {
+      return;
+    }
+    owner = renderer->second;
+    token = surfaceToken->second;
+  }
+  auto job = std::make_unique<LoomWorker::Job>();
+  // Queued like a commit, so it applies after every commit React made before
+  // it, and its view operations reach the UI thread the same way.
+  job->compute = [owner, patches] {
+    std::vector<std::pair<Tag, folly::dynamic>> props;
+    bool text = false;
+    for (auto& patch : *patches) {
+      // A node that is gone, or whose tag now names another node, is skipped.
+      if (owner->identityOf(patch.tag) != patch.identity) {
+        continue;
+      }
+      if (patch.rawText.has_value()) {
+        owner->updateRawText(patch.tag, std::move(*patch.rawText));
+        text = true;
+      } else {
+        props.emplace_back(patch.tag, std::move(patch.props));
+      }
+    }
+    if (!text && !props.empty() && owner->tryCommitPaintOnlyProps(props)) {
+      return;
+    }
+    for (const auto& [tag, patch] : props) {
+      owner->cloneNodeWithNewProps(tag, patch);
+    }
+    if (text || !props.empty()) {
+      owner->reflow(); // runs a commit over what was just marked
+    }
+  };
+  job->applied = [] {};
+  submitWorkerJob(std::move(token), std::move(job));
+}
+#endif
+
+std::shared_ptr<LoomBinding::NodeRef> LoomBinding::makeNodeRef(
+    const NodeRef& source,
+    std::shared_ptr<DraftNode> draft) {
+  if (source.surfaceToken != nullptr && source.surfaceToken->active) {
+    return std::make_shared<NodeRef>(
+        source.surfaceId, source.tag, source.surfaceToken, std::move(draft));
+  }
+  return makeNodeRef(source.surfaceId, source.tag, std::move(draft));
+}
+
 std::shared_ptr<LoomBinding::NodeRef>
 LoomBinding::makeNodeRef(
     SurfaceId surfaceId,
@@ -2414,6 +2871,51 @@ LoomBinding::tokenFor(SurfaceId surfaceId) {
   token->generation = generation;
   surfaceTokens_[surfaceId] = token;
   return token;
+}
+
+const ComponentDescriptor* LoomBinding::compatDescriptorFor(
+    const std::shared_ptr<const std::string>& componentName) {
+  auto found = compatDescriptorByName_.find(componentName.get());
+  if (found != compatDescriptorByName_.end()) {
+    return found->second;
+  }
+  std::shared_ptr<LoomCompat> compat;
+  {
+    std::lock_guard state(stateMutex_);
+    compat = compat_;
+  }
+  if (compat == nullptr) {
+    // No renderer yet: decide on a later createNode.
+    return nullptr;
+  }
+  const auto* descriptor = compat->descriptorFor(*componentName);
+  compatDescriptorByName_.emplace(componentName.get(), descriptor);
+  return descriptor;
+}
+
+void LoomBinding::parseCompatProps(
+    jsi::Runtime& rt,
+    DraftNode& draft,
+    const jsi::Value& value) {
+  std::shared_ptr<LoomCompat> compat;
+  {
+    std::lock_guard state(stateMutex_);
+    compat = compat_;
+  }
+  if (compat == nullptr || !value.isObject()) {
+    return;
+  }
+  try {
+    PropsParserContext context{draft.surfaceId, compat->contextContainer()};
+    draft.compatProps = draft.compatDescriptor->cloneProps(
+        context, draft.compatProps, RawProps(rt, value));
+  } catch (const std::exception& error) {
+    // The renderer falls back to parsing the merged folly props.
+    LOG(ERROR) << "Loom compat: cannot parse props for "
+               << (draft.componentName ? *draft.componentName : "?") << ": "
+               << error.what();
+    draft.compatProps.reset();
+  }
 }
 
 std::shared_ptr<LoomBinding::DraftNode>
@@ -2641,6 +3143,19 @@ jsi::Value LoomBinding::get(
 #endif
   const auto method = name.utf8(runtime);
 
+  // Read once at module load by the Lists override: JavaScript shares the main
+  // thread with the UI, so long synchronous render passes block frames.
+  if (method == "loomJsOnMain") {
+    return jsi::Value(LoomWorker::kJavaScriptOnUIThread);
+  }
+
+  // Read once at module load by the React renderer override: lets it use the
+  // host operations only this renderer guarantees (updating a raw text node in
+  // place, for one).
+  if (method == "loomRenderer") {
+    return jsi::Value(true);
+  }
+
   // React Native's Pressability and other legacy UIManager call sites still
   // measure by React tag through FabricUIManager.measure(). In Loom renderer
   // mode, findShadowNodeByTag_DEPRECATED returns a NodeRef, but falling through
@@ -2717,8 +3232,14 @@ jsi::Value LoomBinding::get(
           draft->identity = ++nextDraftIdentity_[surface];
           draft->tag = tag;
           const auto componentName = stringFromValue(rt, arguments[1]);
-          draft->componentName =
-              std::make_shared<const std::string>(componentName);
+          // One shared name per component type instead of an allocation per
+          // node; React only creates a handful of distinct host types.
+          auto& interned = internedComponentNames_[componentName];
+          if (interned == nullptr) {
+            interned = std::make_shared<const std::string>(componentName);
+          }
+          draft->componentName = interned;
+          draft->compatDescriptor = compatDescriptorFor(interned);
           const auto rawText =
               (componentName == "RCTRawText" || componentName == "RawText")
               ? rawTextFromValue(rt, arguments[3])
@@ -2733,10 +3254,15 @@ jsi::Value LoomBinding::get(
                 propsFromValue(rt, arguments[3]));
           }
           draft->hasInitialProps = true;
+          if (draft->compatDescriptor != nullptr) {
+            parseCompatProps(rt, *draft, arguments[3]);
+          }
           draft->instanceHandle =
               instanceHandleFromValue(rt, arguments[4], arguments[0]);
           return jsi::Object::createFromHostObject(
-              rt, makeNodeRef(surface, tag, std::move(draft)));
+              rt,
+              std::make_shared<NodeRef>(
+                  surface, tag, std::move(token), std::move(draft)));
         });
   }
 
@@ -2759,7 +3285,7 @@ jsi::Value LoomBinding::get(
               profile, *this, ref->surfaceId, ProfiledHostMethod::CloneNode);
           auto draft = cloneDraft(ref);
           return jsi::Object::createFromHostObject(
-              rt, makeNodeRef(ref->surfaceId, ref->tag, std::move(draft)));
+              rt, makeNodeRef(*ref, std::move(draft)));
         });
   }
 
@@ -2791,11 +3317,14 @@ jsi::Value LoomBinding::get(
           if (!patch->rawText.has_value()) {
             patch->props = propsFromValue(rt, arguments[1]);
             patch->unsafeText = propsContainTextEffects(patch->props);
+            if (draft->compatDescriptor != nullptr) {
+              parseCompatProps(rt, *draft, arguments[1]);
+            }
           }
           linkPendingPatches(*draft, *patch);
           draft->propsTail = std::move(patch);
           return jsi::Object::createFromHostObject(
-              rt, makeNodeRef(ref->surfaceId, ref->tag, std::move(draft)));
+              rt, makeNodeRef(*ref, std::move(draft)));
         });
   }
 
@@ -2832,7 +3361,7 @@ jsi::Value LoomBinding::get(
             }
           }
           return jsi::Object::createFromHostObject(
-              rt, makeNodeRef(ref->surfaceId, ref->tag, std::move(draft)));
+              rt, makeNodeRef(*ref, std::move(draft)));
         });
   }
 
@@ -2882,13 +3411,192 @@ jsi::Value LoomBinding::get(
           if (!patch->rawText.has_value()) {
             patch->props = propsFromValue(rt, propsValue);
             patch->unsafeText = propsContainTextEffects(patch->props);
+            if (draft->compatDescriptor != nullptr) {
+              parseCompatProps(rt, *draft, propsValue);
+            }
           }
           linkPendingPatches(*draft, *patch);
           draft->propsTail = std::move(patch);
           return jsi::Object::createFromHostObject(
-              rt, makeNodeRef(ref->surfaceId, ref->tag, std::move(draft)));
+              rt, makeNodeRef(*ref, std::move(draft)));
         });
   }
+
+  // Loom: clone a parent whose host children are the same nodes in the same
+  // order, swapping in the new versions of only the children React cloned.
+  // React calls this instead of cloneNodeWithNewChildren(AndProps) plus one
+  // appendChild per child. Returns null when the source version does not hold
+  // an explicit child list, or a changed child is not one of its children, and
+  // React then takes the regular path.
+  //   cloneNodeReplacingChildren(node, changedChildren, propsOrNull)
+  if (method == "cloneNodeReplacingChildren") {
+    return jsi::Function::createFromHostFunction(
+        runtime,
+        name,
+        3,
+        [this](
+            jsi::Runtime& rt,
+            const jsi::Value&,
+            const jsi::Value* arguments,
+            size_t count) -> jsi::Value {
+          requireArguments(rt, "cloneNodeReplacingChildren", 2, count);
+          auto ref = nodeRef(rt, arguments[0]);
+          if (ref == nullptr || ref->draft == nullptr ||
+              !ref->draft->childrenExplicit ||
+              ref->draft->retainedLiveChildren != nullptr) {
+            return jsi::Value::null();
+          }
+          LOOM_HOST_CALL_SCOPE(
+              profile,
+              *this,
+              ref->surfaceId,
+              ProfiledHostMethod::CloneNodeWithNewChildren);
+          // The changed children arrive as null (none), a single node (the
+          // common case, no array to build or read through JSI), or an array.
+          std::vector<std::shared_ptr<DraftNode>> changed;
+          const auto acceptChild = [&](const jsi::Value& value) {
+            auto child = nodeRef(rt, value);
+            if (child == nullptr || child->draft == nullptr ||
+                child->surfaceToken != ref->surfaceToken) {
+              return false;
+            }
+            changed.push_back(child->draft);
+            return true;
+          };
+          if (arguments[1].isObject()) {
+            auto object = arguments[1].asObject(rt);
+            if (object.isHostObject(rt)) {
+              if (!acceptChild(arguments[1])) {
+                return jsi::Value::null();
+              }
+            } else if (object.isArray(rt)) {
+              auto changedArray = object.getArray(rt);
+              const auto changedCount = changedArray.size(rt);
+              changed.reserve(changedCount);
+              for (size_t index = 0; index < changedCount; ++index) {
+                if (!acceptChild(changedArray.getValueAtIndex(rt, index))) {
+                  return jsi::Value::null();
+                }
+              }
+            } else {
+              return jsi::Value::null();
+            }
+          } else if (!arguments[1].isNull() && !arguments[1].isUndefined()) {
+            return jsi::Value::null();
+          }
+          const auto& sourceChildren = *ref->draft->children;
+          std::shared_ptr<std::vector<std::shared_ptr<DraftNode>>> children;
+          if (!changed.empty()) {
+            children =
+                std::make_shared<std::vector<std::shared_ptr<DraftNode>>>(
+                    sourceChildren);
+            size_t replaced = 0;
+            if (changed.size() <= 8) {
+              for (auto& slot : *children) {
+                if (slot == nullptr) {
+                  continue;
+                }
+                for (const auto& next : changed) {
+                  if (slot->tag == next->tag) {
+                    slot = next;
+                    ++replaced;
+                    break;
+                  }
+                }
+              }
+            } else {
+              TagMap<size_t> changedIndex;
+              changedIndex.reserve(changed.size());
+              for (size_t index = 0; index < changed.size(); ++index) {
+                changedIndex.emplace(changed[index]->tag, index);
+              }
+              for (auto& slot : *children) {
+                if (slot == nullptr) {
+                  continue;
+                }
+                const auto found = changedIndex.find(slot->tag);
+                if (found != changedIndex.end()) {
+                  slot = changed[found->second];
+                  ++replaced;
+                }
+              }
+            }
+            if (replaced != changed.size()) {
+              return jsi::Value::null();
+            }
+          }
+          auto draft = cloneDraft(ref);
+          if (draft == nullptr) {
+            return jsi::Value::null();
+          }
+          if (children != nullptr) {
+            draft->children = std::move(children);
+          }
+          if (count > 2 && arguments[2].isObject()) {
+            auto patch = std::make_shared<PropsPatch>();
+            patch->props = propsFromValue(rt, arguments[2]);
+            patch->unsafeText = propsContainTextEffects(patch->props);
+            if (draft->compatDescriptor != nullptr) {
+              parseCompatProps(rt, *draft, arguments[2]);
+            }
+            linkPendingPatches(*draft, *patch);
+            draft->propsTail = std::move(patch);
+          }
+          return jsi::Object::createFromHostObject(
+              rt, makeNodeRef(*ref, std::move(draft)));
+        });
+  }
+
+#if LOOM_WORKER
+  // In-place updates (see `pendingPatches_`).
+  //   loomPatchNode(node, payload): payload is a props diff, or a string for
+  //   a raw text node. Returns true when recorded.
+  if (method == "loomPatchNode") {
+    return jsi::Function::createFromHostFunction(
+        runtime,
+        name,
+        2,
+        [this](
+            jsi::Runtime& rt,
+            const jsi::Value&,
+            const jsi::Value* arguments,
+            size_t count) -> jsi::Value {
+          requireArguments(rt, "loomPatchNode", 2, count);
+          auto ref = nodeRef(rt, arguments[0]);
+          if (ref == nullptr || ref->draft == nullptr) {
+            return jsi::Value(false);
+          }
+          PendingPatch patch;
+          patch.tag = ref->tag;
+          patch.identity = ref->draft->identity;
+          if (arguments[1].isString()) {
+            patch.rawText = arguments[1].asString(rt).utf8(rt);
+          } else if (arguments[1].isObject()) {
+            patch.props = propsFromValue(rt, arguments[1]);
+          } else {
+            return jsi::Value(false);
+          }
+          pendingPatches_[ref->surfaceId].push_back(std::move(patch));
+          return jsi::Value(true);
+        });
+  }
+  //   loomFlushPatches(surfaceId)
+  if (method == "loomFlushPatches") {
+    return jsi::Function::createFromHostFunction(
+        runtime,
+        name,
+        1,
+        [this](
+            jsi::Runtime& rt,
+            const jsi::Value&,
+            const jsi::Value* arguments,
+            size_t count) -> jsi::Value {
+          requireArguments(rt, "loomFlushPatches", 1, count);
+          flushPendingPatches(surfaceIdFromValue(rt, arguments[0]));
+          return jsi::Value::undefined();
+        });
+  }
+#endif
 
   if (method == "createChildSet") {
     return jsi::Function::createFromHostFunction(
@@ -3087,6 +3795,9 @@ jsi::Value LoomBinding::get(
           ++hostProfile.methods[completeRootProfileIndex].calls;
 #endif
 #if LOOM_WORKER
+          // In-place patches recorded by this commit go first, so they are
+          // never queued behind (or merged into) the structural commit.
+          flushPendingPatches(surface);
           const bool forceSync = forceNextCommitSync_ ||
               (count > 2 && arguments[2].isBool() && arguments[2].getBool());
           forceNextCommitSync_ = false;

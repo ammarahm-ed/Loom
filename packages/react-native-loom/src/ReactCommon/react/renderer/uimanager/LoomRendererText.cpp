@@ -145,6 +145,7 @@ void LoomRenderer::markTextDirty(Tag tag) {
     }
     if (node->textRoot) {
       node->textDirty = true;
+      markNeedsPrepare(*node);
       return;
     }
     if (!node->textLike) {
@@ -158,7 +159,8 @@ TextAttributes LoomRenderer::attributesFor(
     Node& node,
     const TextAttributes& inherited) {
   const bool isParagraph = node.textRoot;
-  auto& cached = node.parsedTextAttributes;
+  auto& text = node.ensureText();
+  auto& cached = text.parsedTextAttributes;
   // The parse depends only on these three, so a match means the previous answer
   // is still exact. That matters because a text root rebuilds its whole subtree
   // and each node in it would otherwise cross the bridge again, even the ones
@@ -166,7 +168,7 @@ TextAttributes LoomRenderer::attributesFor(
   if (cached.valid && cached.propsGeneration == node.propsGeneration &&
       cached.textRoot == isParagraph && cached.inherited == inherited) {
     if (isParagraph) {
-      node.paragraphAttributes = cached.paragraphAttributes;
+      text.paragraphAttributes = cached.paragraphAttributes;
     }
     return cached.attributes;
   }
@@ -181,14 +183,14 @@ TextAttributes LoomRenderer::attributesFor(
             isParagraph ? &paragraphAttributes : nullptr)
       : inherited;
   if (isParagraph) {
-    node.paragraphAttributes = std::move(paragraphAttributes);
+    text.paragraphAttributes = std::move(paragraphAttributes);
   }
   cached.valid = true;
   cached.propsGeneration = node.propsGeneration;
   cached.textRoot = isParagraph;
   cached.inherited = inherited;
   cached.attributes = attributes;
-  cached.paragraphAttributes = node.paragraphAttributes;
+  cached.paragraphAttributes = text.paragraphAttributes;
   return attributes;
 }
 
@@ -221,8 +223,9 @@ void LoomRenderer::appendTextContent(
     if (child->textLike) {
       // Nested text applies its own attributes on top of what it inherits,
       // so that an unset attribute keeps the enclosing span's value.
-      child->textAttributes = attributesFor(*child, inherited);
-      appendTextContent(*child, child->textAttributes, out);
+      auto childAttributes = attributesFor(*child, inherited);
+      child->text->textAttributes = childAttributes;
+      appendTextContent(*child, childAttributes, out);
       continue;
     }
 
@@ -243,7 +246,8 @@ void LoomRenderer::buildTextContent(Node& root) {
       attributesFor(root, TextAttributes::defaultTextAttributes());
   textAttributes.layoutDirection =
       isRTL_ ? LayoutDirection::RightToLeft : LayoutDirection::LeftToRight;
-  root.textAttributes = textAttributes;
+  auto& text = root.ensureText();
+  text.textAttributes = textAttributes;
 
   auto attributedString = AttributedString{};
   const bool textInput = isTextInputName(root.componentName);
@@ -269,27 +273,31 @@ void LoomRenderer::buildTextContent(Node& root) {
     appendTextContent(root, textAttributes, attributedString);
   }
   attributedString.setBaseTextAttributes(textAttributes);
+  // The one allocation and the one copy of this change's string; everything
+  // below shares it.
+  const std::shared_ptr<const AttributedString> built =
+      std::make_shared<const AttributedString>(std::move(attributedString));
   const bool measurementInputsChanged = !root.hasTextMeasurementCache ||
-      !sameTextMeasurementContent(
-          root.measuredAttributedString, attributedString) ||
-      root.measuredParagraphAttributes != root.paragraphAttributes;
-  root.attributedString = std::move(attributedString);
+      !sameTextMeasurementContent(text.measuredAttributedString, built) ||
+      text.measuredParagraphAttributes != text.paragraphAttributes;
+  text.attributedString = built;
   // What Yoga measures. For an empty input with a hint this is the hint, which
   // is what keeps an auto-height `TextInput` from collapsing to zero height;
   // `attributedString` above stays the real content so the state we publish is
   // the user's text and the host draws its own placeholder. Mirrors Fabric's
   // `attributedStringBoxToMeasure` / `getPlaceholderAttributedString` split.
-  root.measurementAttributedString = root.attributedString;
-  if (textInput && root.measurementAttributedString.isEmpty()) {
+  text.measurementAttributedString = built;
+  if (textInput && built->isEmpty()) {
     const auto* placeholder = findProp(root.props, "placeholder");
     if (placeholder != nullptr && placeholder->isString() &&
         !placeholder->getString().empty()) {
+      auto withHint = std::make_shared<AttributedString>(*built);
       auto fragment = AttributedString::Fragment{};
       fragment.string = placeholder->getString();
-      fragment.textAttributes = root.measurementAttributedString
-                                    .getBaseTextAttributes();
+      fragment.textAttributes = built->getBaseTextAttributes();
       fragment.parentShadowView = shadowView(root.tag);
-      root.measurementAttributedString.appendFragment(std::move(fragment));
+      withHint->appendFragment(std::move(fragment));
+      text.measurementAttributedString = std::move(withHint);
     }
   }
   root.textDirty = false;
@@ -297,8 +305,12 @@ void LoomRenderer::buildTextContent(Node& root) {
     root.needsState = true;
     stateUpdates_.push_back(root.tag);
   }
-  if (measurementInputsChanged && root.yogaNode != nullptr) {
-    YGNodeMarkDirty(root.yogaNode);
+  if (measurementInputsChanged) {
+    // Every cached measurement was taken for the previous content.
+    ++root.measurementContentGeneration;
+    if (root.yogaNode != nullptr) {
+      YGNodeMarkDirty(root.yogaNode);
+    }
   }
 }
 
@@ -308,13 +320,15 @@ LoomRenderer::TextMeasurement LoomRenderer::measureTextNode(
     const Size& maximumSize) const {
   // Content and attributes must match before any entry below can be trusted;
   // they are shared by every constraint pair measured for this text.
+  // The content compare runs once, when the text is rebuilt, and moves the
+  // generation on a change; Yoga can call this several times per layout, so
+  // each call checks one integer instead of comparing every fragment again.
+  const auto& text = node.textOrEmpty();
   const bool cacheableContent = node.hasTextMeasurementCache &&
-      sameTextMeasurementContent(
-          node.measuredAttributedString, node.measurementAttributedString) &&
-      node.measuredParagraphAttributes == node.paragraphAttributes;
+      node.measuredContentGeneration == node.measurementContentGeneration;
   if (cacheableContent) {
-    for (size_t index = 0; index < node.recentTextMeasurementCount_; ++index) {
-      const auto& entry = node.recentTextMeasurements_[index];
+    for (size_t index = 0; index < text.recentTextMeasurementCount_; ++index) {
+      const auto& entry = text.recentTextMeasurements_[index];
       if (entry.minimumSize == minimumSize &&
           entry.maximumSize == maximumSize &&
           std::abs(entry.pointScaleFactor - pointScaleFactor_) <= 0.0001f) {
@@ -326,99 +340,130 @@ LoomRenderer::TextMeasurement LoomRenderer::measureTextNode(
     }
   }
   if (cacheableContent &&
-      node.measuredMinimumSize == minimumSize &&
-      node.measuredMaximumSize == maximumSize &&
-      std::abs(node.measuredPointScaleFactor - pointScaleFactor_) <= 0.0001f) {
+      text.measuredMinimumSize == minimumSize &&
+      text.measuredMaximumSize == maximumSize &&
+      std::abs(text.measuredPointScaleFactor - pointScaleFactor_) <= 0.0001f) {
 #if LOOM_PROFILE
     ++profileTextMeasureCacheHits_;
 #endif
-    return node.measuredText;
+    return text.measuredText;
   }
-  if (operations_.prepareText || operations_.measureText) {
-#if LOOM_PROFILE
-    const auto measureStart = std::chrono::steady_clock::now();
-#endif
-    TextMeasurement measurement;
-    if (operations_.prepareText) {
-      measurement.prepared = operations_.prepareText(
-          surfaceId_,
-          node.measurementAttributedString,
-          node.paragraphAttributes,
-          minimumSize,
-          maximumSize);
-      if (measurement.prepared.valid) {
-#if LOOM_PROFILE
-        const auto& profile = measurement.prepared.profile;
-        profileTextSpannableBuildNanos_ += profile.spannableBuildNanos;
-        profileTextPaintSetupNanos_ += profile.paintSetupNanos;
-        profileTextLayoutCreateNanos_ += profile.layoutCreateNanos;
-        profileTextIsBoringNanos_ += profile.isBoringNanos;
-        profileTextBoringMakeNanos_ += profile.boringMakeNanos;
-        profileTextMeasurementResultNanos_ += profile.measurementResultNanos;
-        profileSimplePlainTextLayouts_ += profile.simplePlainTextFastPath ? 1 : 0;
-        profileTextBoringLayouts_ += profile.layoutKind == 1 ? 1 : 0;
-        profileTextStaticLayouts_ += profile.layoutKind == 2 ? 1 : 0;
-#endif
-        measurement.width = measurement.prepared.size.width;
-        measurement.height = measurement.prepared.size.height;
-        measurement.valid = true;
-      }
-    }
-    if (!measurement.valid && operations_.measureText) {
-      measurement = operations_.measureText(
-          surfaceId_,
-          node.measurementAttributedString,
-          node.paragraphAttributes,
-          minimumSize,
-          maximumSize);
-    }
-#if LOOM_PROFILE
-    profileTextMeasureNanoseconds_ += static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - measureStart)
-            .count());
-    ++profileTextMeasureCalls_;
-#endif
+  if (speculativeTextRequests_ != nullptr) {
+    // Estimating pass of `speculateTextMeasurements`: remember what Yoga asks
+    // for and answer with an estimate; nothing is cached.
+    speculativeTextRequests_->push_back({&node, minimumSize, maximumSize});
+  } else if (operations_.prepareText || operations_.measureText) {
+    auto measurement = measureTextWithPlatform(node, minimumSize, maximumSize);
     if (measurement.valid) {
-      node.measuredAttributedString = node.measurementAttributedString;
-      node.measuredParagraphAttributes = node.paragraphAttributes;
-      node.measuredMinimumSize = minimumSize;
-      node.measuredMaximumSize = maximumSize;
-      node.measuredPointScaleFactor = pointScaleFactor_;
-      node.measuredText = measurement;
-      node.hasTextMeasurementCache = true;
-      node.preparedAttributedString = node.measurementAttributedString;
-      node.preparedParagraphAttributes = node.paragraphAttributes;
-      // Remember this constraint pair too, so the next pass that asks for it
-      // again does not rebuild the platform layout.
-      const auto slot = node.recentTextMeasurementCount_ <
-              Node::kTextMeasurementCacheEntries
-          ? node.recentTextMeasurementCount_++
-          : Node::kTextMeasurementCacheEntries - 1;
-      auto& entry = node.recentTextMeasurements_[slot];
-      entry.minimumSize = minimumSize;
-      entry.maximumSize = maximumSize;
-      entry.pointScaleFactor = pointScaleFactor_;
-      entry.measurement = measurement;
+      storeTextMeasurement(node, minimumSize, maximumSize, measurement);
       return measurement;
     }
   }
   const bool bounded =
       std::isfinite(maximumSize.width) && maximumSize.width > 0;
   auto estimate = estimateTextMeasurement(
-      node.textAttributes,
-      node.measurementAttributedString,
+      text.textAttributes,
+      Node::TextData::stringOf(text.measurementAttributedString),
       maximumSize.width,
       bounded);
-  if (!node.measurementAttributedString.getString().empty() &&
+  if (!Node::TextData::stringOf(text.measurementAttributedString)
+           .getString()
+           .empty() &&
       estimate.height <= 0) {
-    const auto fontSize = std::isnan(node.textAttributes.fontSize) ||
-            node.textAttributes.fontSize <= 0
+    const auto fontSize = std::isnan(text.textAttributes.fontSize) ||
+            text.textAttributes.fontSize <= 0
         ? 14.0f
-        : node.textAttributes.fontSize;
+        : text.textAttributes.fontSize;
     estimate.height = fontSize * 1.2f;
   }
   return estimate;
+}
+
+LoomRenderer::TextMeasurement LoomRenderer::measureTextWithPlatform(
+    const Node& node,
+    const Size& minimumSize,
+    const Size& maximumSize) const {
+  const auto& text = node.textOrEmpty();
+  TextMeasurement measurement;
+  if (!operations_.prepareText && !operations_.measureText) {
+    return measurement;
+  }
+#if LOOM_PROFILE
+  const auto measureStart = std::chrono::steady_clock::now();
+#endif
+  if (operations_.prepareText) {
+    measurement.prepared = operations_.prepareText(
+        surfaceId_,
+        Node::TextData::stringOf(text.measurementAttributedString),
+        text.paragraphAttributes,
+        minimumSize,
+        maximumSize);
+    if (measurement.prepared.valid) {
+#if LOOM_PROFILE
+      const auto& profile = measurement.prepared.profile;
+      profileTextSpannableBuildNanos_ += profile.spannableBuildNanos;
+      profileTextPaintSetupNanos_ += profile.paintSetupNanos;
+      profileTextLayoutCreateNanos_ += profile.layoutCreateNanos;
+      profileTextIsBoringNanos_ += profile.isBoringNanos;
+      profileTextBoringMakeNanos_ += profile.boringMakeNanos;
+      profileTextMeasurementResultNanos_ += profile.measurementResultNanos;
+      profileSimplePlainTextLayouts_ += profile.simplePlainTextFastPath ? 1 : 0;
+      profileTextBoringLayouts_ += profile.layoutKind == 1 ? 1 : 0;
+      profileTextStaticLayouts_ += profile.layoutKind == 2 ? 1 : 0;
+#endif
+      measurement.width = measurement.prepared.size.width;
+      measurement.height = measurement.prepared.size.height;
+      measurement.valid = true;
+    }
+  }
+  if (!measurement.valid && operations_.measureText) {
+    measurement = operations_.measureText(
+        surfaceId_,
+        Node::TextData::stringOf(text.measurementAttributedString),
+        text.paragraphAttributes,
+        minimumSize,
+        maximumSize);
+  }
+#if LOOM_PROFILE
+  profileTextMeasureNanoseconds_ += static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - measureStart)
+          .count());
+  ++profileTextMeasureCalls_;
+#endif
+  return measurement;
+}
+
+void LoomRenderer::storeTextMeasurement(
+    const Node& node,
+    const Size& minimumSize,
+    const Size& maximumSize,
+    const TextMeasurement& measurement) const {
+  if (!node.text) {
+    return;
+  }
+  auto& text = *node.text;
+  text.measuredAttributedString = text.measurementAttributedString;
+  text.measuredParagraphAttributes = text.paragraphAttributes;
+  text.measuredMinimumSize = minimumSize;
+  text.measuredMaximumSize = maximumSize;
+  text.measuredPointScaleFactor = pointScaleFactor_;
+  text.measuredText = measurement;
+  node.hasTextMeasurementCache = true;
+  node.measuredContentGeneration = node.measurementContentGeneration;
+  text.preparedAttributedString = text.measurementAttributedString;
+  text.preparedParagraphAttributes = text.paragraphAttributes;
+  // Remember this constraint pair too, so the next pass that asks for it
+  // again does not rebuild the platform layout.
+  const auto slot = text.recentTextMeasurementCount_ <
+          Node::TextData::kTextMeasurementCacheEntries
+      ? text.recentTextMeasurementCount_++
+      : Node::TextData::kTextMeasurementCacheEntries - 1;
+  auto& entry = text.recentTextMeasurements_[slot];
+  entry.minimumSize = minimumSize;
+  entry.maximumSize = maximumSize;
+  entry.pointScaleFactor = pointScaleFactor_;
+  entry.measurement = measurement;
 }
 
 YGSize LoomRenderer::measureText(

@@ -74,6 +74,27 @@ class FrameCallbackScope final {
 };
 
 /*
+ * Loom: whether the JS work running now comes from a requestAnimationFrame
+ * callback: the callback itself, or a task it scheduled, directly or through
+ * other such tasks (React renders a callback's updates in a later task). The
+ * scheduler carries the mark from task to task. A React commit made while it is
+ * set is a frame of a JS-driven animation (LoomMountBatch::animationFrame), so
+ * its text is drawn in that frame. Per thread: only the JS thread sets it.
+ */
+class AnimationFrameWork final {
+ public:
+  static void set(bool active) noexcept {
+    active_ = active;
+  }
+  static bool active() noexcept {
+    return active_;
+  }
+
+ private:
+  static inline thread_local bool active_ = false;
+};
+
+/*
  * Loom: where the display's frames are, as far as the JS scheduler can tell.
  *
  * Fed with each Choreographer frame's start time (CLOCK_MONOTONIC, which is what

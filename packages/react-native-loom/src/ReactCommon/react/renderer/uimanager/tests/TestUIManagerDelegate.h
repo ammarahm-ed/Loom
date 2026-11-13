@@ -69,6 +69,8 @@ struct TestUIManagerDelegate : public UIManagerDelegate {
   void uiManagerShouldSynchronouslyUpdateViewOnUIThread(
       Tag,
       const folly::dynamic&) override {}
+  void uiManagerShouldSynchronouslyUpdateAnimatedProps(
+      const std::unordered_map<Tag, AnimatedProps>&) override {}
   void uiManagerDidUpdateShadowTree(
       const std::unordered_map<Tag, folly::dynamic>&) override {}
   void uiManagerShouldAddEventListener(
@@ -77,7 +79,6 @@ struct TestUIManagerDelegate : public UIManagerDelegate {
       const std::shared_ptr<const EventListener>&) override {}
   void uiManagerDidStartSurface(const ShadowTree&) override {}
   void uiManagerDidFinishReactCommit(const ShadowTree&) override {}
-  void uiManagerDidPromoteReactRevision(const ShadowTree&) override {}
   void uiManagerShouldAddOnSurfaceStartCallback(
       OnSurfaceStartCallback&&) override {}
   void uiManagerDidCaptureViewSnapshot(Tag, SurfaceId) override {}

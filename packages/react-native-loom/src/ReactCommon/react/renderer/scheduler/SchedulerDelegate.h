@@ -34,7 +34,7 @@ struct AnimatedProps;
  */
 class SchedulerDelegate {
  public:
-#if LOOM_RENDERER
+// Loom delegate methods: declared in every build so the class has one layout for code compiled without LOOM_RENDERER (third-party libraries).
   // Forwarded straight through from `UIManagerDelegate`; see that header for
   // the meaning of each one.
   virtual void loomSetConstraints(
@@ -88,14 +88,11 @@ class SchedulerDelegate {
       const Size&) {
     return {};
   }
-  virtual void loomUpdateState(
+  virtual void loomUpdateState(const LoomTextStateUpdate&) {}
+  virtual void loomUpdateComponentState(
       SurfaceId,
       Tag,
-      const std::string&,
-      const folly::dynamic&,
-      const AttributedString&,
-      const ParagraphAttributes&,
-      const LoomTextMeasurement&) {}
+      const std::shared_ptr<const State>&) {}
   virtual void loomUpdateScrollContentBounds(
       SurfaceId,
       Tag,
@@ -115,7 +112,7 @@ class SchedulerDelegate {
   virtual void loomSendAccessibilityEvent(
       SurfaceId, Tag, const std::string&) {}
   virtual void loomSetIsJSResponder(SurfaceId, Tag, bool, bool) {}
-#endif
+// (end of Loom delegate methods)
   /*
    * Called right after Scheduler computed (and laid out) a new updated version
    * of the tree and calculated a set of mutations which are sufficient

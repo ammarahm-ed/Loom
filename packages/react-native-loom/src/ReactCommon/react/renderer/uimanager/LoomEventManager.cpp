@@ -196,12 +196,14 @@ void LoomEventManager::dispatch(
   } else {
     eventDispatcher_->dispatchEvent(std::move(event));
   }
-#if defined(__ANDROID__) && !LOOM_JS_ON_MAIN
+#if (defined(__ANDROID__) && !LOOM_JS_ON_MAIN) || \
+    (defined(__APPLE__) && defined(LOOM_JS_ON_MAIN) && !LOOM_JS_ON_MAIN)
   // A synchronous event blocks the calling (UI) thread until JavaScript has
   // handled it. With JavaScript on its own thread that wait can deadlock against
   // a JS thread that is itself waiting for the UI thread to apply worker
   // results, so the event is delivered asynchronously instead. Waits go from JS
   // to UI only.
+#if defined(__ANDROID__)
   if (synchronous) {
     static std::once_flag logged;
     std::call_once(logged, [] {
@@ -211,6 +213,7 @@ void LoomEventManager::dispatch(
           "synchronous events are delivered asynchronously when JavaScript is not on the UI thread");
     });
   }
+#endif
 #else
   if (synchronous) {
     eventDispatcher_->experimental_flushSync(tag);

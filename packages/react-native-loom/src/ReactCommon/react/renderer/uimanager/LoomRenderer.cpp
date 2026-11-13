@@ -1,6 +1,9 @@
 /* Copyright (c) Meta Platforms, Inc. and affiliates. */
 
 #include "LoomRenderer.h"
+#if defined(__APPLE__)
+#include <dispatch/dispatch.h>
+#endif
 #include "LoomRendererInternals.h"
 #include "LoomWorkerProfile.h"
 
@@ -20,6 +23,8 @@
 #include <limits>
 #include <tuple>
 #include <utility>
+
+
 
 #if LOOM_RENDERER
 namespace facebook::react {
@@ -249,6 +254,11 @@ folly::dynamic hoistProps(const folly::dynamic& props) {
   return flattened;
 }
 
+/** True when the payload has no nested `style`, so it is already host-ready. */
+bool isFlatProps(const folly::dynamic& props) {
+  return props.isObject() && props.count("style") == 0;
+}
+
 bool isConservativePaintOnlyPatch(const folly::dynamic& patch) {
   const auto flattened = hoistProps(patch);
   if (!flattened.isObject()) {
@@ -264,6 +274,18 @@ bool isConservativePaintOnlyPatch(const folly::dynamic& patch) {
     }
   }
   return true;
+}
+
+/** O(1) membership test for `kStyleProps` names. */
+bool isStylePropName(const std::string& key) {
+  static const std::unordered_set<std::string> names = [] {
+    std::unordered_set<std::string> set;
+    for (const auto& entry : kStyleProps) {
+      set.insert(entry.name);
+    }
+    return set;
+  }();
+  return names.count(key) != 0;
 }
 
 bool isLayoutOnlyView(
@@ -295,11 +317,7 @@ bool isLayoutOnlyView(
         key == "positionType") {
       continue;
     }
-    const auto style = std::find_if(
-        kStyleProps.begin(), kStyleProps.end(), [&](const auto& entry) {
-          return key == entry.name;
-        });
-    if (style != kStyleProps.end() && key.rfind("border", 0) != 0) {
+    if (isStylePropName(key) && key.rfind("border", 0) != 0) {
       continue;
     }
     // Unknown props are native-visible by default. This intentionally keeps
@@ -311,6 +329,22 @@ bool isLayoutOnlyView(
 }
 
 /** Paragraph components: text roots that own a host view. */
+
+bool samePreparedTextContent(
+    const AttributedString& left,
+    const AttributedString& right);
+
+bool samePreparedTextContent(
+    const std::shared_ptr<const AttributedString>& left,
+    const std::shared_ptr<const AttributedString>& right) {
+  if (left == right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return samePreparedTextContent(*left, *right);
+}
 
 bool samePreparedTextContent(
     const AttributedString& left,
@@ -333,6 +367,22 @@ bool samePreparedTextContent(
     }
   }
   return true;
+}
+
+LoomTextStateKind textStateKindFor(const std::string& name) {
+  if (name == "RCTText") {
+    return LoomTextStateKind::Text;
+  }
+  if (name == "Paragraph" || name == "Text") {
+    return LoomTextStateKind::Paragraph;
+  }
+  if (name == "RCTSelectableText" || name == "SelectableParagraph") {
+    return LoomTextStateKind::SelectableParagraph;
+  }
+  if (name.find("TextInput") != std::string::npos) {
+    return LoomTextStateKind::TextInput;
+  }
+  return LoomTextStateKind::Other;
 }
 
 bool isTextInputName(const std::string& componentName) {
@@ -402,7 +452,13 @@ AnimatedPropClass classifyAnimatedPropKey(const std::string& key) {
 ClassifiedAnimatedProps classifyAnimatedProps(const folly::dynamic& props) {
   ClassifiedAnimatedProps classified;
   // The host sees hoisted props, so the classes are decided on the same keys.
-  const auto flattened = hoistProps(props);
+  // A flat payload (the Native Animated case) is read in place, not copied.
+  folly::dynamic hoisted;
+  const bool flat = isFlatProps(props);
+  if (!flat) {
+    hoisted = hoistProps(props);
+  }
+  const folly::dynamic& flattened = flat ? props : hoisted;
   if (!flattened.isObject()) {
     return classified;
   }
@@ -499,6 +555,9 @@ LoomRenderer::LoomRenderer(
     : surfaceId_(surfaceId),
       operations_(std::move(operations)),
       yogaConfig_(YGConfigNew()) {
+  // A power-of-two bucket count keeps `nodes_` on mask-based indexing (see TagHash).
+  nodes_.reserve(1024);
+  rawTextLeaves_.reserve(256);
   // Match YogaLayoutableShadowNode::initializeYogaConfig and its legacy
   // compatibility configuration used by the normal Fabric renderer.
   YGConfigSetUseWebDefaults(yogaConfig_, false);
@@ -526,10 +585,27 @@ LoomRenderer::~LoomRenderer() {
       entry.second->yogaNode = nullptr;
     }
   }
+  // Shapes own Yoga template nodes; release them while the config is alive.
+  shapeCache_.clear();
+  for (auto& entry : nodes_) {
+    entry.second->shape.reset();
+  }
   YGConfigFree(yogaConfig_);
 }
 
 #pragma mark Props
+
+// Which components take only the changed keys on update (see `Node::roleSendsPropDiffs`).
+// Depends on the component name alone, so `createNode` evaluates it once and `mergeProps`
+// builds the delta only for nodes that will ship it.
+static bool componentSendsPropDiffs(const std::string& name) {
+#if defined(__APPLE__)
+  return name.find("Image") == std::string::npos;
+#else
+  return name == "RCTView" || name == "RCTImageView" ||
+      name == "RCTScrollView" || name == "AndroidHorizontalScrollView";
+#endif
+}
 
 void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
   if (!patch.isObject() || !node.props.isObject()) {
@@ -540,8 +616,16 @@ void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
     if (!key.isString()) {
       continue;
     }
+    // [LoomMemory] The delta is a second copy of every changed key; only
+    // components that ship diffs ever read it.
+    if (node.collectPropsDelta && !node.propsDelta.isObject()) {
+      node.propsDelta = folly::dynamic::object();
+    }
     if (key.getString() == "style") {
       mergeStyleInto(node.props, item.second);
+      if (node.collectPropsDelta) {
+        mergeStyleInto(node.propsDelta, item.second);
+      }
       ++node.propsGeneration;
       continue;
     }
@@ -553,6 +637,9 @@ void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
     // only thing that tells the host to clear the previous value, so pruning
     // applied null keys is safe only once updates carry a diff instead.
     node.props[key] = item.second;
+    if (node.collectPropsDelta) {
+      node.propsDelta[key] = item.second;
+    }
     ++node.propsGeneration;
   }
   node.propsDirty = true;
@@ -564,6 +651,7 @@ void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
   // This is load-bearing and the suite proves it: with this line removed,
   // `PaintPatchCannotLeaveLayoutOnlyNodeUnmaterialized` fails.
   node.roleFlagsValid = false;
+  markNeedsPrepare(node);
 }
 
 /**
@@ -602,7 +690,7 @@ void LoomRenderer::refreshStyle(Node& node) {
     node.styleDirty = true;
   }
   auto nextDirection = YGDirectionInherit;
-  const auto direction = stringProp(node.props, "direction");
+  const auto& direction = stringProp(node.props, "direction");
   if (direction == "ltr") {
     nextDirection = YGDirectionLTR;
   } else if (direction == "rtl") {
@@ -621,6 +709,135 @@ void LoomRenderer::refreshStyle(Node& node) {
     node.styleDirty = true;
   }
   node.displayNone = stringProp(node.props, "display") == "none";
+}
+
+namespace {
+
+/** Keys whose values feed layout parsing or the layout-related role flags. */
+bool isLayoutShapeKey(const std::string& key) {
+  static const std::unordered_set<std::string> names = [] {
+    std::unordered_set<std::string> set;
+    for (const auto& entry : kStyleProps) {
+      set.insert(entry.name);
+    }
+    for (const char* extra :
+         {"direction", "boxSizing", "display", "flexDirection", "flexWrap",
+          "justifyContent", "alignItems", "alignContent", "alignSelf",
+          "position", "positionType", "overflow", "zIndex", "collapsable",
+          "collapsableChildren", "onLayout"}) {
+      set.insert(extra);
+    }
+    return set;
+  }();
+  return names.count(key) != 0;
+}
+
+constexpr size_t kLayoutShapeCacheLimit = 256;
+
+} // namespace
+
+/**
+ * [LoomPerf item 2] `refreshStyle` for a freshly created node. Rows are
+ * near-identical, so the parse is looked up by a structural hash of the
+ * layout-relevant props and verified entry by entry on a hit; a node whose
+ * props cannot be summarised cheaply falls back to the plain path.
+ */
+void LoomRenderer::refreshStyleCached(Node& node) {
+  if (node.hostOwned || !node.props.isObject()) {
+    refreshStyle(node);
+    return;
+  }
+  std::vector<std::pair<const std::string*, const folly::dynamic*>> picked;
+  picked.reserve(16);
+  bool hasOtherKeys = false;
+  uint64_t entriesHash = 0;
+  for (const auto& item : node.props.items()) {
+    if (!item.first.isString()) {
+      refreshStyle(node);
+      return;
+    }
+    const auto& key = item.first.getString();
+    if (!isLayoutShapeKey(key)) {
+      hasOtherKeys = true;
+      continue;
+    }
+    const auto& value = item.second;
+    if (value.isObject() || value.isArray()) {
+      refreshStyle(node);
+      return;
+    }
+    picked.emplace_back(&key, &value);
+    // Order independent, so map iteration order cannot split a shape.
+    entriesHash += (std::hash<std::string>{}(key) * 0x9E3779B97F4A7C15ull) ^
+        (static_cast<uint64_t>(value.hash()) * 0xC2B2AE3D27D4EB4Full +
+         static_cast<uint64_t>(value.type()));
+  }
+  const uint64_t hash = entriesHash * 31 +
+      std::hash<std::string>{}(node.componentName) + (hasOtherKeys ? 7 : 0) +
+      picked.size();
+
+  const auto matches = [&](const LayoutShape& shape) {
+    if (shape.hasOtherKeys != hasOtherKeys ||
+        shape.entries.size() != picked.size() ||
+        shape.componentName != node.componentName) {
+      return false;
+    }
+    for (const auto& entry : picked) {
+      bool found = false;
+      for (const auto& cached : shape.entries) {
+        if (cached.first == *entry.first) {
+          found = cached.second.type() == entry.second->type() &&
+              cached.second == *entry.second;
+          break;
+        }
+      }
+      if (!found) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  auto cached = shapeCache_.find(hash);
+  if (cached != shapeCache_.end() && matches(*cached->second)) {
+    const auto& shape = *cached->second;
+    node.style = shape.style;
+    node.direction = shape.direction;
+    node.boxSizing = shape.boxSizing;
+    node.displayNone = shape.displayNone;
+    node.styleDirty = true;
+    node.shape = cached->second;
+    node.shapeGeneration = node.propsGeneration;
+    return;
+  }
+
+  refreshStyle(node);
+  auto shape = std::make_shared<LayoutShape>();
+  shape->entries.reserve(picked.size());
+  for (const auto& entry : picked) {
+    shape->entries.emplace_back(*entry.first, *entry.second);
+  }
+  shape->componentName = node.componentName;
+  shape->hasOtherKeys = hasOtherKeys;
+  shape->style = node.style;
+  shape->direction = node.direction;
+  shape->boxSizing = node.boxSizing;
+  shape->displayNone = node.displayNone;
+  shape->layoutOnly = isLayoutOnlyView(node.componentName, node.props);
+  shape->zIndex = numberProp(node.props, "zIndex").value_or(0);
+  if (const auto* overflow = findProp(node.props, "overflow");
+      overflow != nullptr && overflow->isString()) {
+    const auto& value = overflow->getString();
+    shape->clipsOverflow = value == "hidden" || value == "scroll";
+  }
+  if (cached == shapeCache_.end()) {
+    if (shapeCache_.size() >= kLayoutShapeCacheLimit) {
+      shapeCache_.clear();
+    }
+    shapeCache_.emplace(hash, shape);
+  }
+  node.shape = std::move(shape);
+  node.shapeGeneration = node.propsGeneration;
 }
 
 void LoomRenderer::applyYogaProps(Node& node) {
@@ -886,7 +1103,7 @@ void LoomRenderer::applyYogaProps(Node& node) {
 
   // Enumerated styles. Yoga's C API has no "unset" for these, so an absent prop
   // is written back as React Native's default.
-  const auto flexDirection = stringProp(node.props, "flexDirection");
+  const auto& flexDirection = stringProp(node.props, "flexDirection");
   if (flexDirection == "row") {
     YGNodeStyleSetFlexDirection(yogaNode, YGFlexDirectionRow);
   } else if (flexDirection == "row-reverse") {
@@ -901,7 +1118,7 @@ void LoomRenderer::applyYogaProps(Node& node) {
     YGNodeStyleSetFlexDirection(yogaNode, YGFlexDirectionColumn);
   }
 
-  const auto flexWrap = stringProp(node.props, "flexWrap");
+  const auto& flexWrap = stringProp(node.props, "flexWrap");
   if (flexWrap == "wrap") {
     YGNodeStyleSetFlexWrap(yogaNode, YGWrapWrap);
   } else if (flexWrap == "wrap-reverse") {
@@ -912,7 +1129,7 @@ void LoomRenderer::applyYogaProps(Node& node) {
     YGNodeStyleSetFlexWrap(yogaNode, YGWrapNoWrap);
   }
 
-  const auto justifyContent = stringProp(node.props, "justifyContent");
+  const auto& justifyContent = stringProp(node.props, "justifyContent");
   if (justifyContent == "center") {
     YGNodeStyleSetJustifyContent(yogaNode, YGJustifyCenter);
   } else if (justifyContent == "flex-end") {
@@ -956,15 +1173,15 @@ void LoomRenderer::applyYogaProps(Node& node) {
     }
     return YGAlignStretch;
   };
-  const auto alignItems = stringProp(node.props, "alignItems");
+  const auto& alignItems = stringProp(node.props, "alignItems");
   YGNodeStyleSetAlignItems(
       yogaNode,
       alignItems.empty() ? YGAlignStretch : alignFromString(alignItems));
-  const auto alignContent = stringProp(node.props, "alignContent");
+  const auto& alignContent = stringProp(node.props, "alignContent");
   YGNodeStyleSetAlignContent(
       yogaNode,
       alignContent.empty() ? YGAlignFlexStart : alignFromString(alignContent));
-  const auto alignSelf = stringProp(node.props, "alignSelf");
+  const auto& alignSelf = stringProp(node.props, "alignSelf");
   const bool hasExplicitAlignSelf = !alignSelf.empty() && alignSelf != "auto";
   YGNodeStyleSetAlignSelf(
       yogaNode,
@@ -986,7 +1203,7 @@ void LoomRenderer::applyYogaProps(Node& node) {
   YGNodeStyleSetDisplay(
       yogaNode, node.displayNone ? YGDisplayNone : YGDisplayFlex);
 
-  const auto overflow = stringProp(node.props, "overflow");
+  const auto& overflow = stringProp(node.props, "overflow");
   if (overflow == "hidden") {
     YGNodeStyleSetOverflow(yogaNode, YGOverflowHidden);
   } else if (overflow == "scroll") {
@@ -1005,11 +1222,48 @@ void LoomRenderer::refreshRoleFlags(Node& node) {
   node.roleIsText = isTextComponentName(name);
   node.roleIsParagraph = isParagraphName(name);
   node.roleIsTextInput = isTextInputName(name);
+  node.roleStateKind = textStateKindFor(name);
   node.roleRequiresIntrinsicMeasurement = requiresIntrinsicMeasurement(name);
   node.roleRequiresGenericStateWrapper = requiresGenericStateWrapper(name);
   // The expensive one: see the field comment. Computed once per props version
   // rather than once per commit per node.
-  node.roleIsLayoutOnlyView = isLayoutOnlyView(name, node.props);
+  const bool useShape = shapeValid(node);
+  node.roleIsLayoutOnlyView =
+      useShape ? node.shape->layoutOnly : isLayoutOnlyView(name, node.props);
+  // `display: contents` boxes no view of its own, whatever the component:
+  // Fabric force-flattens it (ShadowNodeTraits::ForceFlattenView), and a host
+  // view for it would be a 0x0 parent that Android routes no touches through.
+  if (!node.roleIsLayoutOnlyView && !node.roleIsText && !node.roleIsParagraph &&
+      !node.roleIsTextInput) {
+    if (const auto* display = findProp(node.props, "display");
+        display != nullptr && display->isString() &&
+        display->getString() == "contents") {
+      node.roleIsLayoutOnlyView = true;
+    }
+  }
+  node.roleZIndex = useShape ? node.shape->zIndex
+                             : numberProp(node.props, "zIndex").value_or(0);
+#if defined(__APPLE__)
+  // iOS applies an update as `cloneProps(oldProps, rawProps)`, which keeps every
+  // key the raw props leave out - the same thing Fabric does with React's diff -
+  // so every component can take only the changed keys. Image is the exception:
+  // its state is rebuilt from the raw props the applier was given.
+  node.roleSendsPropDiffs = name.find("Image") == std::string::npos;
+#else
+  // Text is left out: one of its managers reads the stored props in
+  // updateState, which would then see only the last delta.
+  node.roleSendsPropDiffs = name == "RCTView" || name == "RCTImageView" ||
+      name == "RCTScrollView" || name == "AndroidHorizontalScrollView";
+#endif
+  if (useShape) {
+    node.roleClipsOverflow = node.shape->clipsOverflow;
+  } else if (const auto* overflow = findProp(node.props, "overflow");
+             overflow != nullptr && overflow->isString()) {
+    const auto& value = overflow->getString();
+    node.roleClipsOverflow = value == "hidden" || value == "scroll";
+  } else {
+    node.roleClipsOverflow = false;
+  }
   node.roleFlagsValid = true;
 }
 
@@ -1023,6 +1277,14 @@ void LoomRenderer::prepare(
   traversal.push_back(node.tag);
   nodes.push_back(&node);
   node.visitedStamp = commitStamp_;
+  const bool hadPrepared = node.preparedOnce;
+  const bool wasVirtual = node.virtualNode;
+  const bool wasLayoutOnly = node.layoutOnlyNode;
+  node.prepareSelf = false;
+  node.prepareDescendant = false;
+  node.preparedOnce = true;
+  node.lastInsideText = insideText;
+  node.lastParentViewTag = parentView.tag;
 
   if (!node.roleFlagsValid) {
     refreshRoleFlags(node);
@@ -1032,12 +1294,25 @@ void LoomRenderer::prepare(
   const bool textInput = node.roleIsTextInput;
 
   node.textLike = text;
+  if (node.text && !text && !paragraph && !textInput) {
+    // The node stopped being text (its component changed); drop the block.
+    node.text.reset();
+    node.hasTextMeasurementCache = false;
+  }
   node.inlineAttachment = insideText && !node.hostOwned && !text;
   node.textRoot = !node.hostOwned && (paragraph || textInput) && !insideText;
   node.virtualNode = !node.hostOwned &&
       (node.inlineAttachment || insideText || (text && !node.textRoot));
   node.layoutOnlyNode =
       !node.hostOwned && !node.virtualNode && node.roleIsLayoutOnlyView;
+  // A role change moves this node in or out of its host parent's mounted
+  // list (or flattens its children into it); the parent must re-derive it.
+  if (hadPrepared &&
+      (wasVirtual != node.virtualNode || wasLayoutOnly != node.layoutOnlyNode)) {
+    if (auto* parentNode = find(node.parent); parentNode != nullptr) {
+      parentNode->childrenDirty = true;
+    }
+  }
   const bool nextHostLayoutable = !node.virtualNode && !node.layoutOnlyNode;
   if (node.hostCreated && node.hostLayoutable != nextHostLayoutable) {
     emitDelete(node.tag);
@@ -1061,6 +1336,14 @@ void LoomRenderer::prepare(
       continue;
     }
     if (auto* child = find(childTag); child != nullptr) {
+      // An unchanged subtree prepared in the same context keeps everything
+      // this walk would compute for it, so it is not visited at all.
+      if (!fullPrepare_ && !child->prepareSelf && !child->prepareDescendant &&
+          child->preparedOnce &&
+          child->lastInsideText == childrenInsideText &&
+          child->lastParentViewTag == childParentView.tag) {
+        continue;
+      }
       prepare(
           *child,
           childrenInsideText,
@@ -1075,6 +1358,7 @@ void LoomRenderer::prepare(
   }
   if (!node.hostOwned && !node.textRoot &&
       node.roleRequiresIntrinsicMeasurement &&
+      !(node.compat != nullptr && node.compat->measurable()) &&
       findProp(node.props, "width") == nullptr &&
       findProp(node.props, "height") == nullptr &&
       !node.intrinsicMeasurementReported) {
@@ -1088,7 +1372,7 @@ void LoomRenderer::prepare(
     buildTextContent(node);
   }
   if (!node.hostOwned && !node.textRoot &&
-      node.roleRequiresGenericStateWrapper &&
+      node.roleRequiresGenericStateWrapper && node.compat == nullptr &&
       !node.genericStateInitialized) {
     node.needsState = true;
     // Deduplicated by the set itself.
@@ -1106,11 +1390,13 @@ void LoomRenderer::emitCreate(Node& node) {
   // available. Raw text leaves are stored separately and never reach here.
   // View-less tags are not inserted, which keeps text spans out of the native
   // view hierarchy.
+  node.propsDelta = nullptr;
   pendingOperations_.append(DirectCreateOperation{
       node.tag,
       !node.virtualNode && !node.layoutOnlyNode,
       hostComponentName(node.componentName),
-      node.layoutOnlyNode ? folly::dynamic::object() : node.props});
+      node.layoutOnlyNode ? folly::dynamic::object() : node.props,
+      currentCompatProps(node)});
   pendingOperations_.requiresTagReplacement =
       pendingOperations_.requiresTagReplacement ||
       node.replacesHostTagThisCommit;
@@ -1125,8 +1411,39 @@ void LoomRenderer::emitUpdateProps(Node& node) {
   if (node.hostOwned || node.layoutOnlyNode || !node.propsDirty) {
     return;
   }
-  pendingOperations_.append(DirectUpdatePropsOperation{node.tag, node.props});
+#if defined(__ANDROID__) || defined(__APPLE__)
+  if (!node.roleFlagsValid) {
+    refreshRoleFlags(node);
+  }
+  if (node.roleSendsPropDiffs && node.propsDelta.isObject() &&
+      !node.propsDelta.empty()) {
+    pendingOperations_.append(DirectUpdatePropsOperation{
+        node.tag, std::move(node.propsDelta), currentCompatProps(node)});
+    node.propsDelta = nullptr;
+    node.propsDirty = false;
+    return;
+  }
+#endif
+  pendingOperations_.append(
+      DirectUpdatePropsOperation{node.tag, node.props, currentCompatProps(node)});
+  node.propsDelta = nullptr;
   node.propsDirty = false;
+}
+
+std::shared_ptr<const Props> LoomRenderer::currentCompatProps(const Node& node) {
+  return node.compatProps != nullptr &&
+          node.compatPropsGeneration == node.propsGeneration
+      ? node.compatProps
+      : nullptr;
+}
+
+void LoomRenderer::setCompatProps(Tag tag, std::shared_ptr<const Props> props) {
+  auto* node = find(tag);
+  if (node == nullptr) {
+    return;
+  }
+  node->compatProps = std::move(props);
+  node->compatPropsGeneration = node->propsGeneration;
 }
 
 void LoomRenderer::emitRemovals(
@@ -1255,6 +1572,16 @@ void LoomRenderer::emitLayout(
     node.hasMountedInsets = true;
   }
 
+#if defined(__APPLE__)
+  // iOS paragraph views lay their text out in the state's content size, so a
+  // resize must republish it even when the text itself is unchanged.
+  if (node.textRoot && (changed || insetsChanged) &&
+      node.hasTextMeasurementCache) {
+    node.needsState = true;
+    stateUpdates_.push_back(node.tag);
+  }
+#endif
+
   if (!changed) {
     return;
   }
@@ -1336,6 +1663,7 @@ void LoomRenderer::failSurface(const std::string& reason) noexcept {
   surfaceFailed_ = true;
   insideCommit_ = false;
   commitPending_ = false;
+  fullPrepare_ = true;
   stateUpdates_.clear();
   pendingOperations_.clear();
   layoutEvents_.clear();
@@ -1437,6 +1765,7 @@ void LoomRenderer::detachFromParent(Node& node) {
         parent->children.end());
     parent->childrenDirty =
         parent->childrenDirty || parent->children.size() != oldSize;
+    markNeedsPrepare(*parent);
     // A move can target a new parent whose subtree is prepared before the old
     // parent is visited (or the old parent may itself be removed). Detach the
     // Yoga edge here, while the old owner is still known, so Yoga never sees a
@@ -1451,18 +1780,21 @@ void LoomRenderer::detachFromParent(Node& node) {
     }
   }
   node.parent = 0;
+  noteOrphanCandidate(node.tag);
 }
 
 void LoomRenderer::dropSubtree(Tag tag) {
   if (auto* leaf = findRawText(tag); leaf != nullptr) {
     detachRawTextFromParent(*leaf);
     rawTextLeaves_.erase(tag);
+    droppedTags_.push_back(tag);
     return;
   }
   auto* node = find(tag);
   if (node == nullptr) {
     return;
   }
+  droppedTags_.push_back(tag);
   // Native hierarchy removals are emitted from mountedChildren during the
   // commit diff (including captured edges for removed parents). `node.parent`
   // is the React/Yoga parent and may be a flattened layout-only node, so it is
@@ -1488,6 +1820,7 @@ void LoomRenderer::dropSubtree(Tag tag) {
     YGNodeFree(node->yogaNode);
     node->yogaNode = nullptr;
   }
+  invalidateFindCache(tag);
   nodes_.erase(tag);
 }
 
@@ -1496,6 +1829,26 @@ void LoomRenderer::collectUnreachable() {
   if (root == nullptr) {
     return;
   }
+  if (!fullPrepare_) {
+    // Nodes leave the tree only by being detached (or never attached), and
+    // each of those records itself as a candidate; anything still without a
+    // parent now is the root of an unreachable subtree. A candidate that was
+    // re-attached elsewhere has a parent again and is skipped.
+    auto candidates = std::exchange(orphanCandidates_, {});
+    for (const Tag tag : candidates) {
+      if (tag == rootTag_ || !exists(tag) || parentOfAny(tag) != 0) {
+        continue;
+      }
+      if (const auto* node = find(tag); node != nullptr && node->hostOwned) {
+        continue;
+      }
+      dropSubtree(tag);
+    }
+    // dropSubtree detaches nodes, which notes them again; they are gone now.
+    orphanCandidates_.clear();
+    return;
+  }
+  orphanCandidates_.clear();
   std::vector<Tag> unreachable;
   for (const auto& entry : nodes_) {
     if (entry.second->visitedStamp != commitStamp_) {
@@ -1522,6 +1875,7 @@ void LoomRenderer::collectUnreachable() {
     }
     dropSubtree(tag);
   }
+  orphanCandidates_.clear();
 }
 
 bool LoomRenderer::wasVisitedThisCommit(Tag tag) const {
@@ -1547,6 +1901,153 @@ void LoomRenderer::commit() {
     return;
   calculateCommitLayout();
   finishCommitAfterLayout();
+}
+
+namespace {
+// Below these, a commit is small enough that the hand-off costs more than the
+// overlap gains.
+constexpr size_t kEarlyCreateMinimum = 48;
+constexpr size_t kParallelTextMinimum = 12;
+} // namespace
+
+void LoomRenderer::emitEarlyCreates() {
+  if (!operations_.applyBatchEarly ||
+      !LoomStartupOptions::earlyCreate.load(std::memory_order_relaxed)) {
+    return;
+  }
+  const auto earlyCreatable = [](const Node& node) {
+    return !node.hostCreated && !node.hostOwned &&
+        !node.replacesHostTagThisCommit;
+  };
+  size_t count = 0;
+  for (const auto* node : commitNodes_) {
+    count += earlyCreatable(*node) ? 1 : 0;
+  }
+  if (count < kEarlyCreateMinimum) {
+    return;
+  }
+  // Creates carry everything a view needs before layout: its component and its
+  // props. Whatever `prepare` already queued (deletes of re-roled nodes) stays
+  // in this commit's own batch, and so do re-roled nodes themselves: their old
+  // incarnation's delete has to be applied in the same batch as their create.
+  auto queued = std::move(pendingOperations_);
+  pendingOperations_.clear();
+  for (auto* node : commitNodes_) {
+    if (earlyCreatable(*node)) {
+      emitCreate(*node);
+    }
+  }
+  auto early = std::move(pendingOperations_);
+  pendingOperations_ = std::move(queued);
+  operations_.applyBatchEarly(surfaceId_, std::move(early));
+}
+
+void LoomRenderer::speculateTextMeasurements() {
+  if ((!operations_.prepareText && !operations_.measureText) ||
+      !LoomStartupOptions::parallelText.load(std::memory_order_relaxed)) {
+    return;
+  }
+#if !defined(__APPLE__)
+  if (!LoomStartupOptions::parallelFor) {
+    return;
+  }
+#endif
+  // For new paragraphs only (a first screen, a navigation): text that changes
+  // in views that already exist is measured once per update by the real pass,
+  // and an extra estimating pass plus speculative measurements on every update
+  // cost far more CPU than the parallelism saves.
+  size_t unmeasured = 0;
+  for (const auto* node : commitNodes_) {
+    if (node->textRoot && node->yogaNode != nullptr &&
+        (node->createdThisCommit || !node->hostCreated) &&
+        !(node->hasTextMeasurementCache &&
+          node->measuredContentGeneration ==
+              node->measurementContentGeneration)) {
+      ++unmeasured;
+    }
+  }
+  if (unmeasured < kParallelTextMinimum) {
+    return;
+  }
+  // 1. Lay out with estimated text sizes, recording the constraints Yoga asks
+  //    each paragraph for. They are usually the real ones: a paragraph's width
+  //    comes from its ancestors, rarely from the size of other text.
+  std::vector<SpeculativeTextRequest> requests;
+  requests.reserve(unmeasured * 2);
+  speculativeTextRequests_ = &requests;
+  try {
+    layoutTree();
+  } catch (...) {
+    speculativeTextRequests_ = nullptr;
+    throw;
+  }
+  speculativeTextRequests_ = nullptr;
+  const auto sameRequest = [](const SpeculativeTextRequest& left,
+                              const SpeculativeTextRequest& right) {
+    return left.node == right.node && left.minimumSize == right.minimumSize &&
+        left.maximumSize == right.maximumSize;
+  };
+  std::vector<SpeculativeTextRequest> unique;
+  unique.reserve(requests.size());
+  for (const auto& request : requests) {
+    bool seen = false;
+    for (auto index = unique.size(); index-- > 0 && !seen;) {
+      if (unique[index].node != request.node) {
+        break; // Yoga asks for one node's sizes back to back.
+      }
+      seen = sameRequest(unique[index], request);
+    }
+    if (!seen) {
+      unique.push_back(request);
+    }
+  }
+  // 2. Measure them for real, in parallel. The first one runs alone so lazily
+  //    created platform text state comes up on one thread.
+  std::vector<TextMeasurement> results(unique.size());
+  if (!unique.empty()) {
+    results[0] = measureTextWithPlatform(
+        *unique[0].node, unique[0].minimumSize, unique[0].maximumSize);
+  }
+  if (unique.size() > 1) {
+#if defined(__APPLE__)
+    struct Context {
+      const LoomRenderer* renderer;
+      const std::vector<SpeculativeTextRequest>* requests;
+      std::vector<TextMeasurement>* results;
+    } context{this, &unique, &results};
+    dispatch_apply_f(
+        unique.size() - 1,
+        dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0),
+        &context,
+        [](void* raw, size_t index) {
+          auto* context = static_cast<Context*>(raw);
+          const auto& request = (*context->requests)[index + 1];
+          (*context->results)[index + 1] =
+              context->renderer->measureTextWithPlatform(
+                  *request.node, request.minimumSize, request.maximumSize);
+        });
+#else
+    LoomStartupOptions::parallelFor(unique.size() - 1, [&](size_t index) {
+      const auto& request = unique[index + 1];
+      results[index + 1] = measureTextWithPlatform(
+          *request.node, request.minimumSize, request.maximumSize);
+    });
+#endif
+  }
+  for (size_t index = 0; index < unique.size(); ++index) {
+    if (results[index].valid) {
+      storeTextMeasurement(
+          *unique[index].node,
+          unique[index].minimumSize,
+          unique[index].maximumSize,
+          results[index]);
+    }
+  }
+  // 3. Every paragraph Yoga sized from an estimate is measured again by the
+  //    real pass; constraints that match hit the entries stored above.
+  for (const auto& request : unique) {
+    YGNodeMarkDirty(request.node->yogaNode);
+  }
 }
 
 bool LoomRenderer::beginCommitLayout() {
@@ -1588,12 +2089,15 @@ bool LoomRenderer::beginCommitLayout() {
     // starts above zero, and zero is what an untouched node still carries, so a
     // node that was reached in commit k is not mistaken for one reached in k+1.
     ++commitStamp_;
+    // Contents are dead here; release capacity a big commit left behind. No
+    // eager reserve: the vectors keep their capacity between commits, and
+    // reserving the whole tree would defeat the trim for small commits.
+    trimScratch(commitTraversal_);
+    trimScratch(commitNodes_);
+    trimScratch(commitLayoutParents_);
     commitTraversal_.clear();
     commitNodes_.clear();
     commitLayoutParents_.clear();
-    commitTraversal_.reserve(nodes_.size());
-    commitNodes_.reserve(nodes_.size());
-    commitLayoutParents_.reserve(nodes_.size());
     prepare(
         *root,
         false,
@@ -1608,6 +2112,7 @@ bool LoomRenderer::beginCommitLayout() {
     profileAfterPrepare_ = std::chrono::steady_clock::now();
 #endif
     commitPrepared_ = true;
+    emitEarlyCreates();
   } catch (const std::exception& error) {
     insideCommit_ = false;
     failSurface(error.what());
@@ -1624,6 +2129,7 @@ void LoomRenderer::calculateCommitLayout() {
   if (!commitPrepared_)
     return;
   try {
+    speculateTextMeasurements();
     layoutTree();
     workerLaidOutAt_ = LoomWorkerProfile::enabled()
         ? LoomWorkerProfile::Clock::now()
@@ -1684,12 +2190,18 @@ void LoomRenderer::finishCommitAfterLayout() {
     // already-correct subsequence; only removed or moved children need host
     // operations. This avoids rebuilding child vectors and repeatedly searching
     // the wide mounted/next lists for each individual child.
-    std::vector<Tag> nextMountedChildren;
-    nextMountedChildren.reserve(nodes_.size());
-    std::vector<size_t> childStarts(commitTraversal_.size());
-    std::vector<size_t> childCounts(commitTraversal_.size());
-    std::vector<uint8_t> childOrderUnchanged(commitTraversal_.size(), 1);
-    std::unordered_set<uint64_t> stationaryChildren;
+    // Scratch lives on the renderer: these were four heap vectors plus a hash
+    // set sized to the whole tree on every commit. Trimmed after the diff.
+    auto& nextMountedChildren = scratchMounted_;
+    auto& childStarts = scratchChildStarts_;
+    auto& childCounts = scratchChildCounts_;
+    auto& childOrderUnchanged = scratchChildUnchanged_;
+    auto& stationaryChildren = scratchStationary_;
+    nextMountedChildren.clear();
+    childStarts.assign(commitTraversal_.size(), 0);
+    childCounts.assign(commitTraversal_.size(), 0);
+    childOrderUnchanged.assign(commitTraversal_.size(), 1);
+    stationaryChildren.clear();
     const auto appendMounted = [&](const auto& self,
                                    const Node& parent) -> void {
       for (const Tag childTag : parent.children) {
@@ -1705,10 +2217,28 @@ void LoomRenderer::finishCommitAfterLayout() {
       }
     };
 
+    // A flattened (layout-only) node's children are mounted in its host
+    // ancestor, so a change in its list is a change in that ancestor's list.
+    // Children come after parents in the traversal, so walk it backwards.
+    if (!fullPrepare_) {
+      for (size_t index = commitNodes_.size(); index-- > 0;) {
+        auto* node = commitNodes_[index];
+        if (node->childrenDirty && node->layoutOnlyNode) {
+          if (auto* parentNode = find(node->parent); parentNode != nullptr) {
+            parentNode->childrenDirty = true;
+          }
+        }
+      }
+    }
     for (size_t traversalIndex = 0; traversalIndex < commitTraversal_.size();
          ++traversalIndex) {
       auto* node = commitNodes_[traversalIndex];
       childStarts[traversalIndex] = nextMountedChildren.size();
+      if (!fullPrepare_ && !node->childrenDirty) {
+        // Same children, same roles: the mounted list is still correct.
+        childCounts[traversalIndex] = 0;
+        continue;
+      }
       if (!node->virtualNode && !node->layoutOnlyNode) {
         appendMounted(appendMounted, *node);
       }
@@ -1719,7 +2249,19 @@ void LoomRenderer::finishCommitAfterLayout() {
       // view for both drawing and touch targeting.
       const auto childStart = childStarts[traversalIndex];
       const auto childEnd = nextMountedChildren.size();
+      // Nearly every sibling group has no zIndex at all; the stable sort of an
+      // all-zero key leaves React order unchanged, so check before decorating.
+      bool anyZIndex = false;
       if (childEnd - childStart > 1) {
+        for (auto index = childStart; index < childEnd && !anyZIndex; ++index) {
+          auto* child = find(nextMountedChildren[index]);
+          if (child != nullptr && !child->roleFlagsValid) {
+            refreshRoleFlags(*child);
+          }
+          anyZIndex = child != nullptr && child->roleZIndex != 0.0f;
+        }
+      }
+      if (anyZIndex) {
         // Decorate once rather than looking up both nodes and both prop maps on
         // every comparison. That comparator resolved a hash entry for each tag and
         // then a dynamic-map entry for `zIndex` - four lookups per comparison, so
@@ -1732,11 +2274,11 @@ void LoomRenderer::finishCommitAfterLayout() {
         ordered.reserve(childCount);
         for (auto index = childStart; index < childEnd; ++index) {
           const auto tag = nextMountedChildren[index];
-          const auto* child = find(tag);
-          ordered.emplace_back(
-              child == nullptr ? 0.0f
-                               : numberProp(child->props, "zIndex").value_or(0),
-              tag);
+          auto* child = find(tag);
+          if (child != nullptr && !child->roleFlagsValid) {
+            refreshRoleFlags(*child);
+          }
+          ordered.emplace_back(child == nullptr ? 0.0f : child->roleZIndex, tag);
         }
         std::stable_sort(
             ordered.begin(),
@@ -1763,7 +2305,7 @@ void LoomRenderer::finishCommitAfterLayout() {
       }
       childOrderUnchanged[traversalIndex] = 0;
 
-      std::unordered_map<Tag, size_t> oldIndices;
+      TagMap<size_t> oldIndices;
       oldIndices.reserve(mounted.size());
       for (size_t index = 0; index < mounted.size(); ++index) {
         oldIndices.emplace(mounted[index], index);
@@ -1816,6 +2358,9 @@ void LoomRenderer::finishCommitAfterLayout() {
           : nextMountedChildren.data() + childStarts[traversalIndex];
       emitInsertions(*node, next, count, stationaryChildren);
     }
+    trimScratch(scratchChildStarts_);
+    trimScratch(scratchChildCounts_);
+    trimScratch(scratchChildUnchanged_);
     // Overflow bounds are a post-layout, bottom-up property. Cache one result
     // per node so nested subtrees are not rescanned once for every ancestor. The
     // memo lives on the node rather than in a tag-keyed map: the map cost an
@@ -1831,10 +2376,16 @@ void LoomRenderer::finishCommitAfterLayout() {
       if (owner->overflowStamp == commitStamp_) {
         return owner->commitOverflow;
       }
+      // Overflow depends only on the subtree's geometry and props. A node the
+      // post-layout walk did not reach has neither, so its last result holds.
+      if (owner->layoutVisitStamp != commitStamp_ && owner->overflowStamp != 0) {
+        return owner->commitOverflow;
+      }
       std::array<float, 4> result{};
-      if (owner->yogaNode == nullptr ||
-          stringProp(owner->props, "overflow") == "hidden" ||
-          stringProp(owner->props, "overflow") == "scroll") {
+      if (!owner->roleFlagsValid) {
+        refreshRoleFlags(*owner);
+      }
+      if (owner->yogaNode == nullptr || owner->roleClipsOverflow) {
         owner->commitOverflow = result;
         owner->overflowStamp = commitStamp_;
         return result;
@@ -1870,15 +2421,25 @@ void LoomRenderer::finishCommitAfterLayout() {
       owner->overflowStamp = commitStamp_;
       return result;
     };
-    for (size_t index = 0; index < commitTraversal_.size(); ++index) {
-      auto* node = commitNodes_[index];
+    layoutNodes_.clear();
+    layoutNodeParents_.clear();
+    if (auto* layoutRoot = find(rootTag_); layoutRoot != nullptr) {
+      collectLayoutNodes(*layoutRoot, LayoutParent{layoutRoot->tag, 0, 0}, false);
+    }
+    for (size_t index = 0; index < layoutNodes_.size(); ++index) {
+      auto* node = layoutNodes_[index];
       if (!node->virtualNode) {
         emitLayout(
-            *node, commitLayoutParents_[index], calculateOverflow(node->tag));
+            *node, layoutNodeParents_[index], calculateOverflow(node->tag));
       }
     }
-    for (size_t index = 0; index < commitTraversal_.size(); ++index) {
-      auto* node = commitNodes_[index];
+    for (auto* node : layoutNodes_) {
+      if (node->yogaNode != nullptr) {
+        YGNodeSetHasNewLayout(node->yogaNode, false);
+      }
+    }
+    for (size_t index = 0; index < layoutNodes_.size(); ++index) {
+      auto* node = layoutNodes_[index];
       if (node->componentName != "RCTScrollView" ||
           node->yogaNode == nullptr) {
         continue;
@@ -1922,6 +2483,7 @@ void LoomRenderer::finishCommitAfterLayout() {
       emitDelete(tag);
     }
     collectUnreachable();
+    releaseSlack();
     // Keep captured edges alive through collectUnreachable(): dropping a
     // removed parent walks its old children too, but those edges were already
     // emitted above. dropSubtree uses this list to avoid duplicate native
@@ -1939,6 +2501,7 @@ void LoomRenderer::finishCommitAfterLayout() {
         ? WorkerProfile::Clock::now()
         : WorkerProfile::Clock::time_point{};
     flush();
+    fullPrepare_ = false;
     if (workerProfiling) {
       auto& metrics = WorkerProfile::metrics();
       metrics.prepare +=
@@ -2041,12 +2604,24 @@ void LoomRenderer::flush() {
     }
     hasPendingState = true;
     node->needsState = false;
+    if (node->compat != nullptr) {
+      // The component's own state object, so the host view and the library's
+      // native code see exactly what Fabric would have mounted.
+      if (operations_.updateComponentState && node->compat->state()) {
+        operations_.updateComponentState(
+            surfaceId_, tag, node->compat->state());
+      }
+      node->compat->stateDirty = false;
+      node->genericStateInitialized = true;
+      continue;
+    }
     if (operations_.updateState) {
 #if LOOM_PROFILE
       const auto profileStateStart = std::chrono::steady_clock::now();
 #endif
       LoomTextMeasurement preparedState;
-      const auto& candidate = node->measuredText.prepared;
+      const auto& text = node->textOrEmpty();
+      const auto& candidate = text.measuredText.prepared;
       if (node->textRoot && node->yogaNode != nullptr) {
         const auto expectedWidth = YGNodeLayoutGetRawWidth(node->yogaNode) -
             node->mountedContentInsets[0] - node->mountedContentInsets[2];
@@ -2056,15 +2631,15 @@ void LoomRenderer::flush() {
         const bool measurementMatchesCurrentText =
             node->hasTextMeasurementCache &&
             sameTextMeasurementContent(
-                node->measuredAttributedString, node->attributedString) &&
-            node->measuredParagraphAttributes == node->paragraphAttributes &&
-            std::abs(node->measuredPointScaleFactor - pointScaleFactor_) <=
+                text.measuredAttributedString, text.attributedString) &&
+            text.measuredParagraphAttributes == text.paragraphAttributes &&
+            std::abs(text.measuredPointScaleFactor - pointScaleFactor_) <=
                 0.0001f;
         const bool preparedMatchesCurrentText = candidate.valid &&
             candidate.preparedLayout &&
-            samePreparedTextContent(node->preparedAttributedString,
-                                    node->attributedString) &&
-            node->preparedParagraphAttributes == node->paragraphAttributes;
+            samePreparedTextContent(text.preparedAttributedString,
+                                    text.attributedString) &&
+            text.preparedParagraphAttributes == text.paragraphAttributes;
         if (measurementMatchesCurrentText && preparedMatchesCurrentText &&
             std::abs(candidate.size.width - expectedWidth) <= layoutEpsilon &&
             std::abs(candidate.size.height - expectedHeight) <= layoutEpsilon) {
@@ -2083,8 +2658,8 @@ void LoomRenderer::flush() {
           if (operations_.prepareTextForMount) {
             preparedState = operations_.prepareTextForMount(
                 surfaceId_,
-                node->attributedString,
-                node->paragraphAttributes,
+                Node::TextData::stringOf(text.attributedString),
+                text.paragraphAttributes,
                 finalContentSize,
                 finalContentSize);
             if (preparedState.valid && preparedState.preparedLayout) {
@@ -2099,8 +2674,8 @@ void LoomRenderer::flush() {
               operations_.prepareText) {
             auto measuredPreparedState = operations_.prepareText(
                 surfaceId_,
-                node->attributedString,
-                node->paragraphAttributes,
+                Node::TextData::stringOf(text.attributedString),
+                text.paragraphAttributes,
                 finalContentSize,
                 finalContentSize);
             if (measuredPreparedState.valid &&
@@ -2113,23 +2688,51 @@ void LoomRenderer::flush() {
             }
           }
           if (preparedState.valid && preparedState.preparedLayout) {
-            node->measuredText.prepared = preparedState;
-            node->preparedAttributedString = node->attributedString;
-            node->preparedParagraphAttributes = node->paragraphAttributes;
+            auto& textMutable = node->ensureText();
+            textMutable.measuredText.prepared = preparedState;
+            textMutable.preparedAttributedString = text.attributedString;
+            textMutable.preparedParagraphAttributes = text.paragraphAttributes;
 #if LOOM_PROFILE
             ++profilePreparedTextStateCount_;
 #endif
           }
         }
       }
-      operations_.updateState(
-          surfaceId_,
-          tag,
-          node->componentName,
-          node->props,
-          node->attributedString,
-          node->paragraphAttributes,
-          preparedState);
+#if defined(__APPLE__)
+      if (!preparedState.valid && node->textRoot && node->yogaNode != nullptr) {
+        // Hosts without a prepared layout (iOS) still need the final content
+        // box: it is the size the paragraph view lays its text out in.
+        preparedState.size = Size{
+            std::max(0.0f, YGNodeLayoutGetRawWidth(node->yogaNode) -
+                               node->mountedContentInsets[0] -
+                               node->mountedContentInsets[2]),
+            std::max(0.0f, YGNodeLayoutGetRawHeight(node->yogaNode) -
+                               node->mountedContentInsets[1] -
+                               node->mountedContentInsets[3])};
+      }
+#endif
+      if (!node->roleFlagsValid) {
+        refreshRoleFlags(*node);
+      }
+      LoomTextStateUpdate update;
+      update.surfaceId = surfaceId_;
+      update.tag = tag;
+      update.kind = node->roleStateKind;
+      if (update.kind != LoomTextStateKind::Other) {
+        // Shared with the node, not copied.
+        update.attributedString = text.attributedString
+            ? text.attributedString
+            : std::make_shared<const AttributedString>();
+        update.paragraphAttributes = text.paragraphAttributes;
+      }
+      if (update.kind == LoomTextStateKind::TextInput) {
+        if (const auto* count = findProp(node->props, "mostRecentEventCount");
+            count != nullptr && (count->isInt() || count->isDouble())) {
+          update.mostRecentEventCount = count->asInt();
+        }
+      }
+      update.prepared = std::move(preparedState);
+      operations_.updateState(std::move(update));
 #if LOOM_PROFILE
       profileStateUpdateNanoseconds_ += static_cast<uint64_t>(
           std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -2153,6 +2756,7 @@ void LoomRenderer::flush() {
 #if LOOM_PROFILE
       const auto applyBatchStart = std::chrono::steady_clock::now();
 #endif
+      pendingOperations_.animationFrame = animationFrameCommit_;
       operations_.applyBatch(surfaceId_, std::move(pendingOperations_));
 #if LOOM_PROFILE
       profileApplyBatchNanoseconds_ += static_cast<uint64_t>(
@@ -2169,10 +2773,13 @@ void LoomRenderer::flush() {
     return;
   }
   stateUpdates_.clear();
-  for (auto& entry : nodes_) {
-    entry.second->createdThisCommit = false;
-    entry.second->replacesHostTagThisCommit = false;
-    entry.second->childrenDirty = false;
+  // Only nodes this commit's prepare walk reached can carry these marks: every
+  // write that sets one also marks the node for that walk. A full commit
+  // reached every live node, so this covers what the whole-map loop did.
+  for (auto* node : commitNodes_) {
+    node->createdThisCommit = false;
+    node->replacesHostTagThisCommit = false;
+    node->childrenDirty = false;
   }
 
   // Batch, text state, and layout notifications form one synchronous UI-thread
@@ -2241,6 +2848,7 @@ bool LoomRenderer::setPointScaleFactor(float pointScaleFactor) {
   for (auto& entry : nodes_) {
     entry.second->hasTextMeasurementCache = false;
   }
+  fullPrepare_ = true;
   return true;
 }
 
@@ -2254,7 +2862,10 @@ void LoomRenderer::createNode(
     const folly::dynamic& props,
     InstanceHandle::Shared instanceHandle) {
   if (isRawTextComponentName(componentName)) {
-    createRawTextNode(tag, stringProp(hoistProps(props), "text"));
+    createRawTextNode(
+        tag,
+        isFlatProps(props) ? stringProp(props, "text")
+                           : stringProp(hoistProps(props), "text"));
     return;
   }
 
@@ -2290,9 +2901,11 @@ void LoomRenderer::createNode(
   }
 
   node->componentName = hostComponentName(componentName);
+  node->collectPropsDelta = componentSendsPropDiffs(node->componentName);
   if (node->parent != 0) {
     if (auto* parent = find(node->parent); parent != nullptr) {
       parent->childrenDirty = true;
+      markNeedsPrepare(*parent);
     }
   }
   if (node->parent == 0) {
@@ -2305,6 +2918,7 @@ void LoomRenderer::createNode(
       tag == surfaceId_ || node->componentName == kRootComponentName;
   node->childrenDirty = true;
   node->props = hoistProps(props);
+  node->propsDelta = nullptr;
   // Both inputs of the role flags change here, so the cache must not survive.
   node->roleFlagsValid = false;
   ++node->propsGeneration;
@@ -2313,7 +2927,13 @@ void LoomRenderer::createNode(
   node->textDirty = true;
   node->genericStateInitialized = false;
   node->intrinsicMeasurementReported = false;
-  refreshStyle(*node);
+  node->shape.reset();
+  // A (re)created node starts a new family: its compat ShadowNode, if any, is
+  // rebuilt from these props on the next prepare.
+  node->compat.reset();
+  node->compatDescriptor = nullptr;
+  node->compatChecked = false;
+  refreshStyleCached(*node);
 
   node->instanceHandle = instanceHandle;
   if (instanceHandle != nullptr && operations_.registerEventTarget) {
@@ -2323,6 +2943,12 @@ void LoomRenderer::createNode(
 
   if (node->hostOwned && rootTag_ == 0) {
     rootTag_ = tag;
+  }
+  // A recreated node is a new version: prepare it and its children afresh.
+  node->preparedOnce = false;
+  markNeedsPrepare(*node);
+  if (node->parent == 0) {
+    noteOrphanCandidate(tag);
   }
 }
 
@@ -2339,6 +2965,7 @@ void LoomRenderer::createRawTextNode(Tag tag, std::string text) {
     if (oldNode->yogaNode != nullptr) {
       YGNodeFree(oldNode->yogaNode);
     }
+    invalidateFindCache(tag);
     nodes_.erase(tag);
   }
   if (auto* oldLeaf = findRawText(tag); oldLeaf != nullptr) {
@@ -2353,6 +2980,11 @@ void LoomRenderer::createRawTextNode(Tag tag, std::string text) {
   leaf.text = std::move(text);
   rawTextLeaves_.emplace(tag, std::move(leaf));
   markTextDirty(parent);
+  if (parent == 0) {
+    noteOrphanCandidate(tag);
+  } else if (auto* parentNode = find(parent); parentNode != nullptr) {
+    markNeedsPrepare(*parentNode);
+  }
 }
 
 void LoomRenderer::updateRawText(Tag tag, std::string text) {
@@ -2401,7 +3033,7 @@ void LoomRenderer::setIdentity(Tag tag, uint64_t identity) {
 }
 
 void LoomRenderer::captureRemovedMountedEdges(
-    const std::unordered_map<Tag, uint64_t>& selectedIdentities) {
+    const TagMap<uint64_t>& selectedIdentities) {
   std::unordered_set<Tag> visited;
   std::function<void(Tag)> visit = [&](Tag parentTag) {
     if (!visited.insert(parentTag).second) {
@@ -2436,6 +3068,79 @@ void LoomRenderer::captureRemovedMountedEdges(
 }
 
 
+void LoomRenderer::captureRemovedMountedEdgesFrom(
+    const TagMap<uint64_t>& keptIdentities,
+    const std::vector<Tag>& removalRoots) {
+  // Same per-node rule and children-first order as the whole-tree walk above,
+  // restricted to the subtrees that can actually lose nodes. A kept node ends
+  // the walk: its subtree is unchanged, or it is a selected draft whose own
+  // removed children are listed as roots separately.
+  std::unordered_set<Tag> visited;
+  const auto visit = [&](const auto& self, Tag parentTag) -> void {
+    const auto* parent = find(parentTag);
+    if (parent == nullptr || !visited.insert(parentTag).second) {
+      return;
+    }
+    const auto kept = keptIdentities.find(parentTag);
+    if (kept != keptIdentities.end() && kept->second == parent->identity) {
+      return;
+    }
+    for (const auto childTag : parent->children) {
+      self(self, childTag);
+    }
+    const auto& mounted = parent->mountedChildren;
+    for (size_t index = mounted.size(); index-- > 0;) {
+      const auto childTag = mounted[index];
+      const auto edgeKey = (static_cast<uint64_t>(parentTag) << 32) |
+          static_cast<uint64_t>(childTag);
+      if (removedMountedEdgeKeys_.insert(edgeKey).second) {
+        removedMountedEdges_.push_back({parentTag, childTag, index});
+      }
+    }
+  };
+  for (const auto root : removalRoots) {
+    visit(visit, root);
+  }
+}
+
+void LoomRenderer::collectLayoutNodes(
+    Node& node,
+    LayoutParent parentView,
+    bool ancestorOffsetChanged) {
+  node.layoutVisitStamp = commitStamp_;
+  layoutNodes_.push_back(&node);
+  layoutNodeParents_.push_back(parentView);
+  // A layout-only view is flattened away, so its children are positioned in
+  // the host parent through it: if it moved, all of them moved there too. A
+  // host view resets that, since its children are positioned inside it.
+  bool offsetChanged = false;
+  if (node.layoutOnlyNode && node.yogaNode != nullptr) {
+    constexpr float epsilon = 0.01f;
+    offsetChanged = ancestorOffsetChanged || !node.hasMountedLayout ||
+        std::abs(YGNodeLayoutGetLeft(node.yogaNode) - node.mountedLeft) >
+            epsilon ||
+        std::abs(YGNodeLayoutGetTop(node.yogaNode) - node.mountedTop) > epsilon;
+  } else if (node.virtualNode) {
+    offsetChanged = ancestorOffsetChanged;
+  }
+  const auto childParentView = (!node.virtualNode && !node.layoutOnlyNode)
+      ? LayoutParent{node.tag, 0, 0}
+      : parentView;
+  for (const Tag childTag : node.children) {
+    auto* child = find(childTag);
+    if (child == nullptr || child->yogaNode == nullptr) {
+      continue;
+    }
+    // Yoga only re-lays out dirty nodes and the children of nodes it laid out,
+    // flagging exactly those with a new layout; anything else kept its frame.
+    if (fullPrepare_ || offsetChanged ||
+        child->visitedStamp == commitStamp_ ||
+        YGNodeGetHasNewLayout(child->yogaNode)) {
+      collectLayoutNodes(*child, childParentView, offsetChanged);
+    }
+  }
+}
+
 void LoomRenderer::cloneNodeWithNewProps(
     Tag tag,
     const folly::dynamic& propsPatch) {
@@ -2456,7 +3161,14 @@ void LoomRenderer::cloneNodeWithNewProps(
 void LoomRenderer::patchProps(
     Node& node,
     const folly::dynamic& propsPatch) {
-  auto hoisted = hoistProps(propsPatch);
+  // [LoomMemory] Flat patches (nearly all of them) are used in place; `hoistProps`
+  // returns by value, so every patch used to be deep-copied first.
+  folly::dynamic hoistedStorage;
+  const bool flat = isFlatProps(propsPatch);
+  if (!flat) {
+    hoistedStorage = hoistProps(propsPatch);
+  }
+  const folly::dynamic& hoisted = flat ? propsPatch : hoistedStorage;
   // A patch of paint-only keys (the allow-list the paint-only commit uses)
   // affects neither Yoga style nor text, so re-parsing the node's whole style
   // and invalidating text would change nothing: skip both. The node conditions
@@ -2464,7 +3176,7 @@ void LoomRenderer::patchProps(
   const bool paintOnly = !node.virtualNode && !node.layoutOnlyNode &&
       !isParagraphName(node.componentName) &&
       isConservativePaintOnlyPatch(hoisted);
-  mergeProps(node, std::move(hoisted));
+  mergeProps(node, hoisted);
   if (!paintOnly) {
     refreshStyle(node);
     markTextDirty(node.tag);
@@ -2477,6 +3189,12 @@ void LoomRenderer::setChildren(
     const std::vector<Tag>& children) {
   auto* parent = find(parentTag);
   if (parent == nullptr) {
+    return;
+  }
+  // The common case is an unchanged list (the root on every commit, a parent
+  // cloned for a child's sake). The current list is already normalized, so an
+  // identical request needs no hash set, no copy and no work.
+  if (parent->children == children) {
     return;
   }
   std::vector<Tag> normalizedChildren;
@@ -2498,14 +3216,17 @@ void LoomRenderer::setChildren(
       if (parentOfAny(childTag) == parentTag) {
         if (auto* child = find(childTag); child != nullptr) {
           child->parent = 0;
+          noteOrphanCandidate(childTag);
         } else if (auto* leaf = findRawText(childTag); leaf != nullptr) {
           leaf->parent = 0;
+          noteOrphanCandidate(childTag);
         }
       }
     }
   }
   parent->children.clear();
   parent->childrenDirty = true;
+  markNeedsPrepare(*parent);
   for (const Tag childTag : normalizedChildren) {
     auto* child = find(childTag);
     auto* rawText = findRawText(childTag);
@@ -2520,7 +3241,14 @@ void LoomRenderer::setChildren(
       }
     }
     if (child != nullptr) {
+      const bool attached = child->parent != parentTag;
       child->parent = parentTag;
+      if (attached) {
+        // Its context (inside text, host parent) may differ under the new
+        // parent; re-prepare it rather than trust the cached answers.
+        child->preparedOnce = false;
+        markNeedsPrepare(*child);
+      }
     } else {
       rawText->parent = parentTag;
     }
@@ -2558,6 +3286,23 @@ void LoomRenderer::completeRoot(
     Tag containerTag,
     const std::vector<Tag>& children) {
   completeRoot(containerTag, children, true);
+}
+
+bool LoomRenderer::applyComponentState(const StateUpdate& update) {
+  if (update.family == nullptr || !isSurfaceActive()) {
+    return false;
+  }
+  auto* node = find(update.family->getTag());
+  if (node == nullptr || node->compat == nullptr ||
+      !node->compat->updateState(update)) {
+    return false;
+  }
+  // The new revision ran `adopt`, which may have changed the node's Yoga
+  // style; the commit re-copies it, lays out and publishes the new state
+  // together with the layout it caused.
+  markNeedsPrepare(*node);
+  commit();
+  return true;
 }
 
 void LoomRenderer::completeRoot(
@@ -2599,7 +3344,11 @@ void LoomRenderer::foldPaintProps(
     // visible to Yoga and the host already applied the values to the native
     // view (design §3.2). `mergeProps` still marks the node props-dirty, so the
     // next real commit ships the merged set, exactly as a normal patch would.
-    mergeProps(*node, hoistProps(patch));
+    if (isFlatProps(patch)) {
+      mergeProps(*node, patch);
+    } else {
+      mergeProps(*node, hoistProps(patch));
+    }
   }
 }
 
@@ -2621,7 +3370,10 @@ void LoomRenderer::applyAnimationFrame(
     // frame however many nodes are animating (design §5.2).
     patchProps(*node, patch);
   }
+  // The batch this commit flushes is an animation frame (LoomMountBatch).
+  animationFrameCommit_ = true;
   commit();
+  animationFrameCommit_ = false;
 }
 
 bool LoomRenderer::tryCommitPaintOnlyProps(
@@ -2725,6 +3477,32 @@ SurfaceId LoomRenderer::surfaceId() const {
 
 Tag LoomRenderer::rootTag() const {
   return rootTag_;
+}
+
+// Memory slack: a commit that touched a huge tree leaves capacity behind in
+// scratch buffers and bucket arrays. Release it once the live size is far
+// below it, so a long-lived app that returns to a small screen goes back to a
+// small footprint. The thresholds keep steady-state commits allocation free.
+void LoomRenderer::releaseSlack() {
+  trimScratch(scratchMounted_);
+  if (scratchStationary_.bucket_count() > 512 &&
+      scratchStationary_.size() * 8 < scratchStationary_.bucket_count()) {
+    std::unordered_set<uint64_t>().swap(scratchStationary_);
+  }
+  const auto shrinkTable = [](auto& table) {
+    const auto buckets = table.bucket_count();
+    if (buckets > 1024 && table.size() * 8 < buckets) {
+      size_t target = 64;
+      while (target < table.size() * 2) {
+        target <<= 1;
+      }
+      table.rehash(target);
+    }
+  };
+  shrinkTable(nodes_);
+  shrinkTable(rawTextLeaves_);
+  trimScratch(layoutNodes_);
+  trimScratch(layoutNodeParents_);
 }
 
 } // namespace facebook::react

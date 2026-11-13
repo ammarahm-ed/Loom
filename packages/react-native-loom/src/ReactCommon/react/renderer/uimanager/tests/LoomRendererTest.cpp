@@ -619,7 +619,7 @@ TEST(LoomRendererTest, PaintOnlyPropsCommitSkipsLayoutAndKeepsFullProps) {
   };
   LoomRenderer renderer(1, std::move(operations));
   makeRoot(renderer);
-  renderer.createNode(2, "RCTView", sizedProps(100));
+  renderer.createNode(2, "LoomTestLibraryView", sizedProps(100));
   renderer.completeRoot(1, {2});
 
   batch = folly::dynamic::array();
@@ -732,7 +732,7 @@ TEST(LoomRendererTest, PaintOnlySetNativePropsMergesPropsWithoutStructuralWork) 
   };
   LoomRenderer renderer(1, std::move(operations));
   makeRoot(renderer);
-  renderer.createNode(2, "RCTView", sizedProps(100));
+  renderer.createNode(2, "LoomTestLibraryView", sizedProps(100));
   renderer.completeRoot(1, {2});
 
   batches.clear();
@@ -835,14 +835,7 @@ TEST(LoomRendererTest, SurfaceStopDuringStateApplicationAbortsTheBatch) {
   operations.isSurfaceActive = [&surfaceActive](SurfaceId) {
     return surfaceActive;
   };
-  operations.updateState = [&surfaceActive, &stateUpdates](
-                               SurfaceId,
-                               Tag,
-                               const std::string&,
-                               const folly::dynamic&,
-                               const AttributedString&,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement&) {
+  operations.updateState = [&surfaceActive, &stateUpdates](LoomTextStateUpdate update) {
     ++stateUpdates;
     surfaceActive = false;
   };
@@ -881,13 +874,7 @@ TEST(LoomRendererTest, StateFailureFailStopsSurfaceAndResetsCommitGuard) {
   operations.isSurfaceActive = [&surfaceActive](SurfaceId) {
     return surfaceActive;
   };
-  operations.updateState = [](SurfaceId,
-                              Tag,
-                              const std::string&,
-                              const folly::dynamic&,
-                              const AttributedString&,
-                              const ParagraphAttributes&,
-                              const LoomTextMeasurement&) {
+  operations.updateState = [](LoomTextStateUpdate update) {
     throw std::runtime_error("state preparation failed");
   };
   operations.failSurface = [&surfaceActive, &failureReason](
@@ -1094,14 +1081,8 @@ TEST(
     result.preparedLayout = std::make_shared<int>(42);
     return result;
   };
-  operations.updateState = [&preparedStatePublished](
-                               SurfaceId,
-                               Tag,
-                               const std::string&,
-                               const folly::dynamic&,
-                               const AttributedString&,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement& prepared) {
+  operations.updateState = [&preparedStatePublished](LoomTextStateUpdate update) {
+    const auto& prepared = update.prepared;
     preparedStatePublished =
         preparedStatePublished || (prepared.valid && prepared.preparedLayout);
   };
@@ -1169,14 +1150,9 @@ TEST(
     prepared.maximumSize = maximum;
     return prepared;
   };
-  operations.updateState = [&publishedColors](
-                               SurfaceId,
-                               Tag,
-                               const std::string&,
-                               const folly::dynamic&,
-                               const AttributedString& text,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement& prepared) {
+  operations.updateState = [&publishedColors](LoomTextStateUpdate update) {
+    const auto& prepared = update.prepared;
+    const auto& text = *update.attributedString;
     ASSERT_TRUE(prepared.valid);
     ASSERT_FALSE(text.getFragments().empty());
     publishedColors.push_back(
@@ -1237,14 +1213,8 @@ TEST(
     measurement.valid = true;
     return measurement;
   };
-  operations.updateState = [&stateReceivedPreparedLayout](
-                               SurfaceId,
-                               Tag,
-                               const std::string&,
-                               const folly::dynamic&,
-                               const AttributedString&,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement& prepared) {
+  operations.updateState = [&stateReceivedPreparedLayout](LoomTextStateUpdate update) {
+    const auto& prepared = update.prepared;
     stateReceivedPreparedLayout = prepared.valid && prepared.preparedLayout;
   };
 
@@ -1419,15 +1389,9 @@ TEST(LoomRendererTest, FontSizeChangeInvalidatesTextMeasurement) {
 TEST(LoomRendererTest, ControlledTextInputStateTracksItsValueProp) {
   std::vector<std::string> publishedValues;
   auto operations = testOperations();
-  operations.updateState = [&publishedValues](
-                               SurfaceId,
-                               Tag,
-                               const std::string& componentName,
-                               const folly::dynamic&,
-                               const AttributedString& text,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement&) {
-    ASSERT_EQ(componentName, "AndroidTextInput");
+  operations.updateState = [&publishedValues](LoomTextStateUpdate update) {
+    const auto& text = *update.attributedString;
+    ASSERT_EQ(update.kind, LoomTextStateKind::TextInput);
     std::string value;
     for (const auto& fragment : text.getFragments()) {
       value += fragment.string;
@@ -1493,14 +1457,8 @@ TEST(LoomRendererTest, EmptyTextInputMeasuresItsPlaceholderButPublishesNothing) 
     result.valid = true;
     return result;
   };
-  operations.updateState = [&publishedValues](
-                               SurfaceId,
-                               Tag,
-                               const std::string&,
-                               const folly::dynamic&,
-                               const AttributedString& text,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement&) {
+  operations.updateState = [&publishedValues](LoomTextStateUpdate update) {
+    const auto& text = *update.attributedString;
     std::string value;
     for (const auto& fragment : text.getFragments()) {
       value += fragment.string;
@@ -1544,7 +1502,7 @@ TEST(
   makeRoot(renderer);
   renderer.createNode(
       2,
-      "RCTView",
+      "LoomTestLibraryView",
       folly::dynamic::object(
           "style",
           folly::dynamic::object("width", 100.0)("backgroundColor", "red")));
@@ -1582,6 +1540,50 @@ TEST(
   EXPECT_TRUE(patches[0]["width"].isNull());
   EXPECT_TRUE(patches[0]["backgroundColor"].isNull());
 }
+
+#if defined(__ANDROID__)
+// Core Android view managers apply props incrementally, so an update to an
+// existing core view carries only the keys that changed (resets as explicit
+// nulls). Library components keep receiving the full merged set (above).
+TEST(LoomRendererTest, CoreViewsReceiveOnlyChangedPropsAndExplicitResets) {
+  folly::dynamic batch = folly::dynamic::array();
+  auto operations = testOperations();
+  operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
+    batch = encodeForTest(next);
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer);
+  renderer.createNode(
+      2,
+      "RCTView",
+      folly::dynamic::object(
+          "style",
+          folly::dynamic::object("width", 100.0)("backgroundColor", "red")));
+  renderer.completeRoot(1, {2});
+
+  batch = folly::dynamic::array();
+  renderer.cloneNodeWithNewProps(
+      2,
+      folly::dynamic::object(
+          "style", folly::dynamic::object("backgroundColor", "blue")));
+  renderer.completeRoot(1, {2});
+  auto patches = updatedProps(batch);
+  ASSERT_EQ(patches.size(), 1u);
+  ASSERT_EQ(patches[0].size(), 1u);
+  EXPECT_EQ(patches[0]["backgroundColor"].asString(), "blue");
+
+  batch = folly::dynamic::array();
+  renderer.cloneNodeWithNewProps(
+      2,
+      folly::dynamic::object(
+          "style", folly::dynamic::object("backgroundColor", nullptr)));
+  renderer.completeRoot(1, {2});
+  patches = updatedProps(batch);
+  ASSERT_EQ(patches.size(), 1u);
+  ASSERT_EQ(patches[0].size(), 1u);
+  EXPECT_TRUE(patches[0]["backgroundColor"].isNull());
+}
+#endif
 
 TEST(LoomRendererTest, TagReuseIsMarkedOnlyOnReplacementBatch) {
   std::vector<bool> replacementBatches;
@@ -1733,14 +1735,8 @@ TEST(LoomRendererTest, RepreparesTextForYogaClampedContentSize) {
     }
     return result;
   };
-  operations.updateState = [&preparedStatePublished](
-                               SurfaceId,
-                               Tag,
-                               const std::string&,
-                               const folly::dynamic&,
-                               const AttributedString&,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement& prepared) {
+  operations.updateState = [&preparedStatePublished](LoomTextStateUpdate update) {
+    const auto& prepared = update.prepared;
     preparedStatePublished =
         preparedStatePublished || (prepared.valid && prepared.preparedLayout);
   };
@@ -1833,14 +1829,8 @@ TEST(LoomRendererTest, TypedRawTextUpdateInvalidatesOnlyItsParagraph) {
   operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
     batch = encodeForTest(next);
   };
-  operations.updateState = [&mountedText](
-                               SurfaceId,
-                               Tag,
-                               const std::string&,
-                               const folly::dynamic&,
-                               const AttributedString& text,
-                               const ParagraphAttributes&,
-                               const LoomTextMeasurement&) {
+  operations.updateState = [&mountedText](LoomTextStateUpdate update) {
+    const auto& text = *update.attributedString;
     mountedText.clear();
     for (const auto& fragment : text.getFragments()) {
       mountedText += fragment.string;
@@ -2548,7 +2538,7 @@ struct LoomBindingTestAccess {
   static void applyPublishedIdentities(
       Binding& binding,
       std::shared_ptr<Token> token,
-      const std::unordered_map<Tag, uint64_t>& identities,
+      const TagMap<uint64_t>& identities,
       const std::vector<std::shared_ptr<Draft>>& committedDrafts = {}) {
     binding.applyPublishedIdentities(token, identities, committedDrafts);
   }

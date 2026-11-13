@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <folly/dynamic.h>
+#include <react/renderer/core/Props.h>
 #include <react/renderer/core/ReactPrimitives.h>
 
 namespace facebook::react {
@@ -44,11 +45,18 @@ struct DirectCreateOperation {
   bool layoutable;
   std::string componentName;
   folly::dynamic props;
+  /**
+   * For a component with its own descriptor: the props that descriptor parsed
+   * from the JSI value. A host that builds Props objects uses these instead of
+   * re-parsing `props`, which cannot carry JS-only values.
+   */
+  std::shared_ptr<const Props> parsedProps{};
 };
 
 struct DirectUpdatePropsOperation {
   Tag tag;
   folly::dynamic props;
+  std::shared_ptr<const Props> parsedProps{};
 };
 
 struct DirectInsertOperation {
@@ -115,6 +123,12 @@ struct LoomMountBatch {
   size_t instructionCount{0};
   size_t objectCount{0};
   bool requiresTagReplacement{false};
+  /**
+   * The batch is a frame of an animation (Loom's animation lane, a layout
+   * animation driver), not a React commit. Text resized by it is drawn in the
+   * same frame; text resized by a commit can be drawn in the background.
+   */
+  bool animationFrame{false};
 
   void append(DirectMountOperation operation) {
     const auto operationIndex = operations.size();
@@ -171,6 +185,7 @@ struct LoomMountBatch {
     instructionCount = 0;
     objectCount = 0;
     requiresTagReplacement = false;
+    animationFrame = false;
   }
 };
 

@@ -27,6 +27,9 @@
 #include <react/renderer/uimanager/LayoutEventEmitter.h>
 #include <react/renderer/uimanager/UIManager.h>
 #include <react/renderer/uimanager/UIManagerBinding.h>
+#if LOOM_RENDERER
+#include <react/renderer/uimanager/LoomBinding.h>
+#endif
 #include <react/renderer/viewtransition/ViewTransitionModule.h>
 #include <mutex>
 
@@ -103,6 +106,14 @@ Scheduler::Scheduler(
   };
 
   auto statePipe = [uiManager](const StateUpdate& stateUpdate) {
+#if LOOM_RENDERER
+    // Loom compatibility layer: a state update for a node of a Loom surface
+    // belongs to that node's ShadowNode in the Loom renderer, not to the
+    // (unused) Fabric shadow tree of the surface.
+    if (LoomBinding::dispatchComponentState(stateUpdate)) {
+      return;
+    }
+#endif
     uiManager->updateState(stateUpdate);
   };
 
@@ -351,7 +362,8 @@ TextAttributes Scheduler::loomParseTextAttributes(SurfaceId s, const std::string
 std::optional<Size> Scheduler::loomMeasureText(SurfaceId s, const AttributedString& a, const ParagraphAttributes& p, const Size& minSize, const Size& maxSize) { return delegate_ ? delegate_->loomMeasureText(s, a, p, minSize, maxSize) : std::nullopt; }
 LoomTextMeasurement Scheduler::loomPrepareText(SurfaceId s, const AttributedString& a, const ParagraphAttributes& p, const Size& minSize, const Size& maxSize) { return delegate_ ? delegate_->loomPrepareText(s, a, p, minSize, maxSize) : LoomTextMeasurement{}; }
 LoomTextMeasurement Scheduler::loomPrepareTextForMount(SurfaceId s, const AttributedString& a, const ParagraphAttributes& p, const Size& minSize, const Size& maxSize) { return delegate_ ? delegate_->loomPrepareTextForMount(s, a, p, minSize, maxSize) : LoomTextMeasurement{}; }
-void Scheduler::loomUpdateState(SurfaceId s, Tag t, const std::string& name, const folly::dynamic& props, const AttributedString& a, const ParagraphAttributes& p, const LoomTextMeasurement& prepared) { if (delegate_) delegate_->loomUpdateState(s, t, name, props, a, p, prepared); }
+void Scheduler::loomUpdateState(const LoomTextStateUpdate& update) { if (delegate_) delegate_->loomUpdateState(update); }
+void Scheduler::loomUpdateComponentState(SurfaceId s, Tag t, const std::shared_ptr<const State>& state) { if (delegate_) delegate_->loomUpdateComponentState(s, t, state); }
 void Scheduler::loomUpdateScrollContentBounds(SurfaceId s, Tag t, const folly::dynamic& props, const Rect& bounds) { if (delegate_) delegate_->loomUpdateScrollContentBounds(s, t, props, bounds); }
 std::pair<float, float> Scheduler::loomGetScrollOffset(SurfaceId s, Tag t) { return delegate_ ? delegate_->loomGetScrollOffset(s, t) : std::pair<float, float>{0, 0}; }
 std::optional<std::pair<float, float>> Scheduler::loomGetViewLocationInSurface(SurfaceId s, Tag t) { return delegate_ ? delegate_->loomGetViewLocationInSurface(s, t) : std::nullopt; }
