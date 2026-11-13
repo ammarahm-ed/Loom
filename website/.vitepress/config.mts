@@ -1,13 +1,17 @@
 import {defineConfig} from 'vitepress';
 
+// Served from https://ammarahm-ed.github.io/loom/ on GitHub Pages; `/` for local dev and preview.
+const base = process.env.LOOM_DOCS_BASE ?? '/';
+
 export default defineConfig({
+  base,
   title: 'Loom',
   description: 'A faster renderer for React Native: instant updates, unchanged libraries, and JavaScript on the thread you choose.',
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ['link', {rel: 'icon', type: 'image/png', href: '/favicon.png'}],
-    ['meta', {property: 'og:image', content: '/social-preview.png'}],
+    ['link', {rel: 'icon', type: 'image/png', href: `${base}favicon.png`}],
+    ['meta', {property: 'og:image', content: `${base}social-preview.png`}],
     ['meta', {name: 'theme-color', content: '#61DAFB'}],
   ],
   themeConfig: {
