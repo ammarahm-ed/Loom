@@ -48,146 +48,14 @@
 
 #if LOOM_RENDERER
 #include <react/renderer/uimanager/LoomRenderer.h>
-#include <pthread.h>
-#include <sys/system_properties.h>
-#include <condition_variable>
+#include <react/renderer/uimanager/LoomHost.h>
 #include <mutex>
 #include <thread>
+#include "LoomAndroidHost.h"
 
-namespace {
-
-// `adb shell setprop debug.loom.<name> 0` turns a Loom startup switch off (read at install).
-bool loomSystemFlag(const char* name, bool fallback) {
-  char value[PROP_VALUE_MAX] = {0};
-  if (__system_property_get(name, value) <= 0) {
-    return fallback;
-  }
-  return value[0] == '1' || value[0] == 't' || value[0] == 'y';
-}
-
-// Loom: threads for the renderer's parallel text measurement
-// (LoomStartupOptions::parallelFor). Text is measured by Java (StaticLayout)
-// through JNI, so each thread stays attached to the JVM, with the app's class
-// loader, for its whole life. One job at a time; the calling thread works on it
-// too.
-class LoomTextPool {
- public:
-  static LoomTextPool& shared() {
-    static auto* pool = new LoomTextPool();
-    return *pool;
-  }
-
-  void run(size_t count, const std::function<void(size_t)>& body) {
-    std::lock_guard<std::mutex> serial(runMutex_);
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      body_ = &body;
-      count_ = count;
-      next_ = 0;
-      pending_ = count;
-      ++generation_;
-    }
-    wake_.notify_all();
-    work();
-    std::unique_lock<std::mutex> lock(mutex_);
-    done_.wait(lock, [this] { return pending_ == 0; });
-    body_ = nullptr;
-  }
-
- private:
-  LoomTextPool() {
-    const unsigned cores = std::thread::hardware_concurrency();
-    const unsigned threads = cores > 2 ? std::min(cores - 2, 5u) : 1u;
-    for (unsigned index = 0; index < threads; ++index) {
-      std::thread([this] {
-        pthread_setname_np(pthread_self(), "loom.text");
-        facebook::jni::ThreadScope::WithClassLoader([this] { loop(); });
-      }).detach();
-    }
-  }
-
-  void loop() {
-    uint64_t seen = 0;
-    for (;;) {
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        wake_.wait(lock, [&] { return generation_ != seen; });
-        seen = generation_;
-      }
-      work();
-    }
-  }
-
-  void work() {
-    for (;;) {
-      size_t index;
-      const std::function<void(size_t)>* body;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (body_ == nullptr || next_ >= count_) {
-          return;
-        }
-        index = next_++;
-        body = body_;
-      }
-      try {
-        (*body)(index);
-      } catch (...) {
-        // That paragraph stays unmeasured; the real layout pass measures it.
-      }
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (--pending_ == 0) {
-        done_.notify_all();
-      }
-    }
-  }
-
-  std::mutex runMutex_;
-  std::mutex mutex_;
-  std::condition_variable wake_;
-  std::condition_variable done_;
-  const std::function<void(size_t)>* body_{nullptr};
-  size_t count_{0};
-  size_t next_{0};
-  size_t pending_{0};
-  uint64_t generation_{0};
-};
-
-} // namespace
 #endif
 
 namespace facebook::react {
-#if LOOM_RENDERER
-namespace {
-
-/**
- * A prop class's `RawProps` parser, prepared once.
- *
- * `Props` constructors read `RawProps` through such a parser, and
- * `ConcreteComponentDescriptor::cloneProps` calls `RawProps::parse` with its own
- * before every construction. Constructing the props directly, without that
- * step, leaves the parser pointer null and crashes on first access.
- */
-template <typename PropsT>
-struct PreparedPropsParser {
-  RawPropsParser parser;
-  PreparedPropsParser() {
-    parser.prepare<PropsT>();
-  }
-};
-
-const RawPropsParser& paragraphPropsParser() {
-  static const PreparedPropsParser<ParagraphProps> prepared;
-  return prepared.parser;
-}
-
-const RawPropsParser& textPropsParser() {
-  static const PreparedPropsParser<TextProps> prepared;
-  return prepared.parser;
-}
-
-} // namespace
-#endif // LOOM_RENDERER
 
 void FabricUIManagerBinding::initHybrid(jni::alias_ref<jhybridobject> jobj) {
   setCxxInstance(jobj);
@@ -591,7 +459,7 @@ void FabricUIManagerBinding::startSurfaceWithConstraints(
   // The Loom renderer does not consume SurfaceHandler's legacy Fabric
   // revision/layout publication. Give it the initial viewport explicitly,
   // already converted to DIP so that everything downstream is in one space.
-  loomSetConstraints(
+  LoomBinding::setSurfaceConstraints(
       surfaceId,
       minimumSize.width,
       minimumSize.height,
@@ -770,7 +638,7 @@ void FabricUIManagerBinding::setConstraints(
                                               : LayoutDirection::LeftToRight;
 
 #if LOOM_RENDERER
-  loomSetConstraints(
+  LoomBinding::setSurfaceConstraints(
       surfaceId,
       minimumSize.width,
       minimumSize.height,
@@ -870,6 +738,12 @@ void FabricUIManagerBinding::installFabricUIManager(
 
   toolbox.animationChoreographer = animationChoreographer_;
 
+#if LOOM_RENDERER
+  // Registered before the scheduler exists: the Loom binding reads its host
+  // from the context container when the JS runtime installs it.
+  loomHost_ = std::make_shared<LoomAndroidHost>(this, contextContainer);
+  LoomHost::registerIn(*contextContainer, loomHost_);
+#endif
   animationDriver_ = std::make_shared<LayoutAnimationDriver>(
       runtimeExecutor, contextContainer, this);
   scheduler_ =
@@ -878,16 +752,13 @@ void FabricUIManagerBinding::installFabricUIManager(
   directTextLayoutManager_ =
       std::make_shared<const TextLayoutManager>(contextContainer);
   eventManager_ = std::make_shared<LoomEventManager>(scheduler_->getEventDispatcher());
-  LoomStartupOptions::earlyCreate.store(loomSystemFlag("debug.loom.earlycreate", true));
-  // Off by default: on a low-end phone (Infinix X6516, 8 slow cores) the pool
-  // competed with the UI thread's early view creation and lost more than it
-  // won. `setprop debug.loom.paralleltext 1` turns it on.
-  LoomStartupOptions::parallelText.store(loomSystemFlag("debug.loom.paralleltext", false));
-  if (LoomStartupOptions::parallelText.load() && !LoomStartupOptions::parallelFor) {
-    LoomTextPool::shared(); // threads up before the first surface measures
-    LoomStartupOptions::parallelFor = [](size_t count, const std::function<void(size_t)>& body) {
-      LoomTextPool::shared().run(count, body);
-    };
+  // Off by default: parallelText on a low-end phone (Infinix X6516, 8 slow
+  // cores) competed with the UI thread's early view creation and lost more
+  // than it won; `Loom.parallelText = true` or `setprop debug.loom.paralleltext 1`
+  // turns it on.
+  LoomAndroidHost::loadSettings(globalJavaUiManager);
+  if (LoomSettings::enabled(LoomSettingId::ParallelText)) {
+    LoomAndroidHost::warmUpTextPool(); // threads up before the first surface measures
   }
 #endif
 }
@@ -907,6 +778,10 @@ void FabricUIManagerBinding::uninstallFabricUIManager() {
   std::unique_lock lock(installMutex_);
   animationDriver_ = nullptr;
 #if LOOM_RENDERER
+  if (loomHost_) {
+    loomHost_->invalidate();
+    loomHost_ = nullptr;
+  }
   eventManager_ = nullptr;
   directTextLayoutManager_ = nullptr;
 #endif
@@ -928,26 +803,6 @@ FabricUIManagerBinding::getMountingManager(const char* locationHint) {
 }
 
 #if LOOM_RENDERER
-void FabricUIManagerBinding::loomSetConstraints(
-    SurfaceId surfaceId,
-    float minWidth,
-    float minHeight,
-    float maxWidth,
-    float maxHeight,
-    bool isRTL,
-    float viewportOffsetX,
-    float viewportOffsetY) {
-  LoomBinding::setSurfaceConstraints(
-      surfaceId,
-      minWidth,
-      minHeight,
-      maxWidth,
-      maxHeight,
-      isRTL,
-      viewportOffsetX,
-      viewportOffsetY);
-}
-
 std::function<void(std::function<void()>)> FabricUIManagerBinding::loomGetUIExecutor() {
   return [](std::function<void()> callback) {
     jni::ThreadScope::WithClassLoader([callback = std::move(callback)]() mutable {
@@ -1196,46 +1051,6 @@ void FabricUIManagerBinding::loomReportUnsupportedInlineAttachment(
   LOG(ERROR) << "LOOM_RENDERER does not support inline native text attachment "
              << tag << " on surface " << surfaceId
              << "; use the standard Fabric renderer for this tree";
-}
-
-TextAttributes FabricUIManagerBinding::loomParseTextAttributes(
-    SurfaceId surfaceId,
-    const std::string& componentName,
-    const folly::dynamic& props,
-    const TextAttributes& inherited,
-    ParagraphAttributes& outParagraphAttributes) {
-  auto attributes = inherited;
-
-  auto scheduler = getScheduler();
-  if (!scheduler) {
-    return attributes;
-  }
-
-  // The same view-name conversion the component registry applies, so this
-  // resolves to exactly the props class the shadow-tree path would parse.
-  const auto unifiedName = componentNameByReactViewName(componentName);
-  if (unifiedName != "Paragraph" && unifiedName != "Text") {
-    // Raw text and every non-text component have no attributes of their own;
-    // they show whatever encloses them, which `attributes` already holds.
-    return attributes;
-  }
-
-  PropsParserContext context{surfaceId, *scheduler->getContextContainer()};
-  auto rawProps = RawProps(props);
-
-  if (unifiedName == "Paragraph") {
-    rawProps.parse(paragraphPropsParser());
-    auto parsed = ParagraphProps{context, ParagraphProps{}, rawProps};
-    attributes.apply(parsed.textAttributes);
-    // The same `ParagraphAttributes` the paragraph shadow node would hold.
-    outParagraphAttributes = parsed.paragraphAttributes;
-  } else {
-    rawProps.parse(textPropsParser());
-    auto parsed = TextProps{context, TextProps{}, rawProps};
-    attributes.apply(parsed.textAttributes);
-  }
-
-  return attributes;
 }
 
 void FabricUIManagerBinding::loomUpdateState(
@@ -1666,6 +1481,10 @@ void FabricUIManagerBinding::flushDirectAnimationFrame() {
 }
 
 void FabricUIManagerBinding::registerNatives() {
+#if LOOM_RENDERER
+  // Before any runtime exists: the core reads the traits from its first use.
+  LoomPlatformTraits::install(LoomAndroidHost::platformTraits());
+#endif
   registerHybrid({
       makeNativeMethod("initHybrid", FabricUIManagerBinding::initHybrid),
       makeNativeMethod("recordDirectNativeProps", FabricUIManagerBinding::recordDirectNativeProps),

@@ -284,6 +284,36 @@ public class FabricUIManager
     mReactApplicationContext.registerComponentCallbacks(viewManagerRegistry);
   }
 
+  /**
+   * Loom: an app-manifest `<meta-data>` value for the runtime settings (`loom.<name>`), read by
+   * the native side at startup. Booleans are 0/1; {@code Integer.MIN_VALUE} when absent.
+   */
+  @DoNotStrip
+  public int loomMetaDataInt(String key, int absent) {
+    try {
+      android.content.pm.ApplicationInfo info =
+          mReactApplicationContext
+              .getPackageManager()
+              .getApplicationInfo(
+                  mReactApplicationContext.getPackageName(),
+                  android.content.pm.PackageManager.GET_META_DATA);
+      Object value = info.metaData == null ? null : info.metaData.get(key);
+      if (value instanceof Boolean) {
+        return ((Boolean) value) ? 1 : 0;
+      }
+      if (value instanceof Integer) {
+        return (Integer) value;
+      }
+      if (value instanceof String) {
+        String text = (String) value;
+        return "true".equals(text) ? 1 : "false".equals(text) ? 0 : Integer.parseInt(text);
+      }
+    } catch (Exception e) {
+      // Treated as absent.
+    }
+    return absent;
+  }
+
   @DoNotStrip
   public static void loomDirectScheduleResult(Runnable result) {
     // Asynchronous messages are not held back by the sync barrier ViewRootImpl posts while a

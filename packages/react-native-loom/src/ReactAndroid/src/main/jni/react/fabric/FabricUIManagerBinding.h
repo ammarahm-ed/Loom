@@ -38,6 +38,8 @@ class Instance;
 class LayoutAnimationDriver;
 class Scheduler;
 #if LOOM_RENDERER
+class LoomAndroidHost;
+class LoomAndroidTextServices;
 class TextLayoutManager;
 #endif
 
@@ -104,61 +106,46 @@ class FabricUIManagerBinding : public jni::HybridClass<FabricUIManagerBinding>,
   void schedulerShouldRenderTransactions(
       const std::shared_ptr<const MountingCoordinator> &mountingCoordinator) override;
 #if LOOM_RENDERER
-  void loomSetConstraints(
-      SurfaceId,
-      float minWidth,
-      float minHeight,
-      float maxWidth,
-      float maxHeight,
-      bool isRTL,
-      float viewportOffsetX,
-      float viewportOffsetY) override;
-  std::function<void(std::function<void()>)> loomGetUIExecutor() override;
-  bool loomCanMeasureTextOnWorker() override;
-  void loomApplyBatch(SurfaceId, LoomMountBatch) override;
-  void loomFailSurface(SurfaceId, const std::string&) override;
-  void loomRegisterEventTarget(SurfaceId, Tag, InstanceHandle::Shared) override;
-  void loomUnregisterEventTarget(SurfaceId, Tag) override;
+  std::function<void(std::function<void()>)> loomGetUIExecutor();
+  bool loomCanMeasureTextOnWorker();
+  void loomApplyBatch(SurfaceId, LoomMountBatch);
+  void loomFailSurface(SurfaceId, const std::string&);
+  void loomRegisterEventTarget(SurfaceId, Tag, InstanceHandle::Shared);
+  void loomUnregisterEventTarget(SurfaceId, Tag);
   void loomDispatchEvent(
-      SurfaceId, Tag, const std::string&, folly::dynamic, RawEvent::Category, bool) override;
+      SurfaceId, Tag, const std::string&, folly::dynamic, RawEvent::Category, bool);
   std::optional<Size> loomMeasureText(
       SurfaceId,
       const AttributedString&,
       const ParagraphAttributes&,
       const Size& minimumSize,
-      const Size& maximumSize) override;
+      const Size& maximumSize);
   LoomTextMeasurement loomPrepareText(
       SurfaceId,
       const AttributedString&,
       const ParagraphAttributes&,
       const Size& minimumSize,
-      const Size& maximumSize) override;
+      const Size& maximumSize);
   LoomTextMeasurement loomPrepareTextForMount(
       SurfaceId,
       const AttributedString&,
       const ParagraphAttributes&,
       const Size& minimumSize,
-      const Size& maximumSize) override;
-  std::pair<float, float> loomGetScrollOffset(SurfaceId, Tag) override;
+      const Size& maximumSize);
+  std::pair<float, float> loomGetScrollOffset(SurfaceId, Tag);
   std::optional<std::pair<float, float>>
-  loomGetViewLocationInSurface(SurfaceId, Tag) override;
+  loomGetViewLocationInSurface(SurfaceId, Tag);
   void loomReportUnsupportedInlineAttachment(SurfaceId, Tag);
-  TextAttributes loomParseTextAttributes(
-      SurfaceId,
-      const std::string& componentName,
-      const folly::dynamic& props,
-      const TextAttributes& inherited,
-      ParagraphAttributes& outParagraphAttributes) override;
-  void loomUpdateState(const LoomTextStateUpdate&) override;
+  void loomUpdateState(const LoomTextStateUpdate&);
   void loomUpdateComponentState(
       SurfaceId,
       Tag,
-      const std::shared_ptr<const State>&) override;
+      const std::shared_ptr<const State>&);
   void loomDispatchCommand(
-      SurfaceId, Tag, const std::string&, const folly::dynamic&) override;
+      SurfaceId, Tag, const std::string&, const folly::dynamic&);
   void loomSendAccessibilityEvent(
-      SurfaceId, Tag, const std::string&) override;
-  void loomSetIsJSResponder(SurfaceId, Tag, bool, bool) override;
+      SurfaceId, Tag, const std::string&);
+  void loomSetIsJSResponder(SurfaceId, Tag, bool, bool);
 #endif
 
   void schedulerShouldMergeReactRevision(SurfaceId surfaceId) override;
@@ -243,6 +230,10 @@ class FabricUIManagerBinding : public jni::HybridClass<FabricUIManagerBinding>,
   std::shared_ptr<Scheduler> scheduler_;
 #if LOOM_RENDERER
   std::shared_ptr<LoomEventManager> eventManager_;
+  // Registered in the context container; invalidated when the manager is uninstalled.
+  std::shared_ptr<LoomAndroidHost> loomHost_;
+  friend class LoomAndroidHost;
+  friend class LoomAndroidTextServices;
   std::shared_ptr<const TextLayoutManager> directTextLayoutManager_;
 #endif
 

@@ -39,8 +39,10 @@ public object JankReporterSupport {
 
   // Same default as the C++ side and the web's long-task threshold. A debug build runs unoptimized
   // JS and C++, so a lower bar would report work that is comfortably fast in release.
-  private val budgetMs: Int by lazy { readIntProperty("debug.loom.jank_budget_ms", 50) }
-  private val enabled: Boolean by lazy { readIntProperty("debug.loom.jank", 1) != 0 }
+  // Kept in step with the native settings (`Loom.jankBudgetMs`, `Loom.jankReporter`) through
+  // [configure]: the native side calls it once the settings are resolved and on every JS write.
+  @Volatile private var budgetMs: Int = 50
+  @Volatile private var enabled: Boolean = true
 
   private var context: WeakReference<ReactContext>? = null
   private var lastReportNanos = 0L
@@ -49,15 +51,11 @@ public object JankReporterSupport {
   private var listenerWindow: WeakReference<Window>? = null
   private var listener: Window.OnFrameMetricsAvailableListener? = null
 
-  private fun readIntProperty(name: String, fallback: Int): Int =
-      try {
-        val cls = Class.forName("android.os.SystemProperties")
-        val value = cls.getMethod("get", String::class.java, String::class.java)
-            .invoke(null, name, "") as String
-        if (value.isEmpty()) fallback else value.toInt()
-      } catch (t: Throwable) {
-        fallback
-      }
+  @JvmStatic
+  public fun configure(enabled: Boolean, budgetMs: Int) {
+    this.enabled = enabled
+    this.budgetMs = budgetMs
+  }
 
   @JvmStatic
   public fun isActive(): Boolean = BuildConfig.DEBUG && enabled

@@ -10,6 +10,7 @@
 #include <fbjni/fbjni.h>
 #include <fbjni/NativeRunnable.h>
 #include <jni.h>
+#include <cstdlib>
 #include <react/renderer/runtimescheduler/JankReporter.h>
 #include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
 
@@ -77,13 +78,15 @@ void JJSTimerExecutor::registerNatives() {
   jni::registerNatives(
       "com/facebook/react/modules/core/ReactFrameClock",
       {makeNativeMethod("onFrame", reactFrameClockOnFrame)});
-  FrameClock::delayedPoster() = [](std::function<void()> task, int64_t delayNanos) {
+  LoomRuntimeHooks hooks;
+  hooks.postDelayed = [](std::function<void()> task, int64_t delayNanos) {
     static auto cls =
         jni::findClassStatic("com/facebook/react/modules/core/ReactFrameClock");
     static auto post = cls->getStaticMethod<void(jni::alias_ref<jni::JRunnable::javaobject>, jlong)>(
         "postDelayed");
     post(cls, jni::JNativeRunnable::newObjectCxxArgs(std::move(task)).get(), delayNanos / 1000000);
   };
+  LoomRuntimeHooks::install(hooks);
 #endif
 #if RN_JANK_REPORTER
   // Loom (debug): the watchdog samples the main thread's Java stack
