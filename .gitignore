@@ -42,3 +42,6 @@ coverage/
 reports/
 # Local scratch: docs, notes, logo explorations, benchmark output. Never committed.
 .local/
+
+# Python
+__pycache__/

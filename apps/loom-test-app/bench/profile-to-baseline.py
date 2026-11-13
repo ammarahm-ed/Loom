@@ -1,75 +1,59 @@
 #!/usr/bin/env python3
-"""Converts an ART profile dump into baseline-profile rules (the human-readable format AGP reads).
+"""Turns `cmd package dump-profiles` output into baseline-profile rules.
 
-    adb shell cmd package dump-profiles <package>
-    adb pull /data/misc/profman/<package>-primary.prof.txt
-    python3 bench/profile-to-baseline.py <dump.txt> [prefix ...] > baseline-prof.txt
+    python3 bench/profile-to-baseline.py <prefix> <dump.prof.txt>... > rules.txt
 
-`dump-profiles` prints Java signatures grouped as hot / startup / post startup methods plus loaded
-classes. Each is turned into a rule (`HSPLcom/x/Y;->m(I)V`, `Lcom/x/Y;`). Only classes under the
-given package prefixes are kept (default: com.facebook.), so the rules describe React Native itself
-and can ship inside the ReactAndroid library, where AGP merges them into every app's profile.
+Keeps every method the profile saw run (hot, startup and post-startup), and their classes, whose class starts with
+<prefix> (e.g. com.facebook.react). Output is in baseline-prof.txt format.
 """
 import re
 import sys
 
-PRIMITIVES = {
-    'void': 'V', 'boolean': 'Z', 'byte': 'B', 'char': 'C', 'short': 'S',
-    'int': 'I', 'long': 'J', 'float': 'F', 'double': 'D',
-}
+PRIM = {'void': 'V', 'boolean': 'Z', 'byte': 'B', 'short': 'S', 'char': 'C',
+        'int': 'I', 'long': 'J', 'float': 'F', 'double': 'D'}
 
 
-def descriptor(java_type):
-    java_type = java_type.strip()
+def desc(t):
+    t = t.strip()
     dims = 0
-    while java_type.endswith('[]'):
+    while t.endswith('[]'):
         dims += 1
-        java_type = java_type[:-2]
-    base = PRIMITIVES.get(java_type) or 'L' + java_type.replace('.', '/') + ';'
+        t = t[:-2]
+    base = PRIM.get(t) or ('L' + t.replace('.', '/') + ';')
     return '[' * dims + base
 
 
-def split_params(params):
-    return [p for p in (x.strip() for x in params.split(',')) if p]
-
-
-METHOD = re.compile(r'^(\S+) ([^\s(]+)\.([^.(\s]+)\(([^)]*)\)')
+def split_args(s):
+    return [a for a in (x.strip() for x in s.split(',')) if a]
 
 
 def main():
-    path, prefixes = sys.argv[1], tuple(sys.argv[2:]) or ('com.facebook.',)
-    flags = {}
-    classes = set()
-    section = None
-    for raw in open(path, encoding='utf-8', errors='replace'):
-        line = raw.strip()
-        if line.startswith('=== reference profile'):
-            break
-        if line.endswith('methods:') or line == 'classes:':
-            section = {'hot methods:': 'H', 'startup methods:': 'S',
-                       'post startup methods:': 'P', 'classes:': 'C'}.get(line)
-            continue
-        if not line or section is None or '[index=' in line:
-            continue
-        line = line.rstrip(',').strip()
-        if section == 'C':
-            if line.startswith(prefixes):
-                classes.add(descriptor(line))
-            continue
-        m = METHOD.match(line)
-        if not m:
-            continue
-        ret, owner, name, params = m.groups()
-        if not owner.startswith(prefixes):
-            continue
-        rule = (f'{descriptor(owner)}->{name}('
-                + ''.join(descriptor(p) for p in split_params(params)) + f'){descriptor(ret)}')
-        flags.setdefault(rule, set()).add(section)
-        classes.add(descriptor(owner))
-    for rule in sorted(flags):
-        print(''.join(f for f in 'HSP' if f in flags[rule]) + rule)
-    for cls in sorted(classes):
-        print(cls)
+    prefix = sys.argv[1]
+    out_methods, out_classes = set(), set()
+    pat = re.compile(r'^\s*(\S+) ([\w.$]+)\.([\w$<>]+)\((.*)\)(?:\[[^\]]*\])?,?\s*$')
+    for path in sys.argv[2:]:
+        section = None
+        for line in open(path, errors='replace'):
+            stripped = line.strip()
+            if stripped.endswith(':') and not stripped.startswith(('void ', 'int ')):
+                section = stripped[:-1]
+                continue
+            if section not in ('hot methods', 'startup methods', 'post startup methods'):
+                continue
+            m = pat.match(line)
+            if not m:
+                continue
+            ret, cls, name, args = m.groups()
+            if not cls.startswith(prefix):
+                continue
+            cdesc = 'L' + cls.replace('.', '/') + ';'
+            sig = '(' + ''.join(desc(a) for a in split_args(args)) + ')' + desc(ret)
+            out_methods.add(f'HSP{cdesc}->{name}{sig}')
+            out_classes.add(cdesc)
+    for c in sorted(out_classes):
+        print(c)
+    for m in sorted(out_methods):
+        print(m)
 
 
 if __name__ == '__main__':

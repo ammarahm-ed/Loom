@@ -29,6 +29,9 @@ const ALL_SCENARIOS = [
   'startup',
   'scroll',
   'scroll-busy',
+  'scroll-blank',
+  'scroll-trans',
+  'scroll-blank-trans',
   'anim',
   'anim-busy',
   'js-anim',
@@ -71,13 +74,30 @@ const args = parseArgs(process.argv.slice(2));
 const variants = Object.keys(args.apks);
 const pkg = variant => `com.loomtestapp.bench.${variant}`;
 
-function adb(...cmd) {
-  return execFileSync('adb', ['-s', args.serial, ...cmd], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 64 * 1024 * 1024,
-  });
+// Every adb call has a deadline. Over wireless adb a command can stall forever (seen: a schedstat
+// read that never returned and blocked a run for 33 minutes). On timeout the call throws, and the
+// scenario's try/catch reports that case as failed and moves on.
+const ADB_TIMEOUT_MS = 60_000;
+const ADB_LONG_TIMEOUT_MS = 300_000; // install, ahead-of-time compile
+function adbWithTimeout(timeoutMs, ...cmd) {
+  try {
+    return execFileSync('adb', ['-s', args.serial, ...cmd], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+    });
+  } catch (error) {
+    if (error.code === 'ETIMEDOUT' || error.signal === 'SIGKILL') {
+      const what = cmd.join(' ').slice(0, 120);
+      console.log(`adb timed out after ${timeoutMs / 1000} s: ${what}`);
+      throw new Error(`adb timed out: ${what}`);
+    }
+    throw error;
+  }
 }
+const adb = (...cmd) => adbWithTimeout(ADB_TIMEOUT_MS, ...cmd);
 const shell = command => adb('shell', command);
 // For device preparation that some vendors refuse (OnePlus denies WRITE_SETTINGS and `svc power`).
 function tryShell(command) {
@@ -114,13 +134,24 @@ function waitFor(pattern, timeoutMs) {
 
 function launch(variant, scenario) {
   for (const v of variants) shell(`am force-stop ${pkg(v)}`);
-  adb('logcat', '-c');
+  // Main buffer only: the crash buffer must survive so a crash can be read afterwards.
+  adb('logcat', '-b', 'main', '-c');
   const out = shell(
     `am start -S -W -n ${pkg(variant)}/com.loomtestapp.MainActivity --es scenario ${scenario}`,
   );
-  currentPid = shell(`pidof ${pkg(variant)}`).trim();
+  // `pidof` can briefly list the previous process as well while it exits;
+  // the app just started is the newest one.
+  currentPid = String(
+    Math.max(
+      ...shell(`pidof ${pkg(variant)}`)
+        .trim()
+        .split(/\s+/)
+        .map(Number)
+        .filter(Number.isFinite),
+    ),
+  );
   const total = out.match(/TotalTime: (\d+)/);
-  const ready = waitFor(/ready t=\d+ sinceStart=(\d+)/, 30000);
+  const ready = waitFor(/ready t=\d+ sinceStart=(\d+)/, 90000);
   return { ttidMs: total ? Number(total[1]) : NaN, firstContentMs: Number(ready[1]) };
 }
 
@@ -135,6 +166,21 @@ function memory(variant) {
     nativeHeapKb: kb(/^\s*Native Heap:\s+(\d+)/m),
     javaHeapKb: kb(/^\s*Java Heap:\s+(\d+)/m),
   };
+}
+
+// The refresh rate the display is actually running at right now. A phone that drops to 30 Hz (low
+// power / thermal) shows up as ~32 ms frames at unchanged CPU, which is not a renderer problem.
+function panelHz() {
+  const out = tryShellOut('dumpsys display');
+  const m = out.match(/renderFrameRate ([\d.]+)/);
+  return m ? Math.round(Number(m[1])) : NaN;
+}
+function tryShellOut(command) {
+  try {
+    return shell(command);
+  } catch (e) {
+    return '';
+  }
 }
 
 function frames(variant) {
@@ -159,10 +205,56 @@ function frames(variant) {
     p90Ms: num(/90th percentile: (\d+)ms/),
     p95Ms: num(/95th percentile: (\d+)ms/),
     p99Ms: num(/99th percentile: (\d+)ms/),
+    // Why frames were slow, from gfxinfo: a bad run with normal CPU shows up under missedVsync /
+    // deadlineMissed (pipeline pacing) rather than slowUi (main-thread work).
+    missedVsync: num(/Number Missed Vsync: (\d+)/),
+    slowUi: num(/Number Slow UI thread: (\d+)/),
+    slowDraw: num(/Number Slow issue draw commands: (\d+)/),
+    deadlineMissed: num(/Number Frame deadline missed: (\d+)/),
+    panelHz: panelHz(),
+    ...cpuDelta(),
   };
 }
 
-const resetFrames = variant => shell(`dumpsys gfxinfo ${pkg(variant)} reset`);
+// CPU time (schedstat, ns on CPU) per thread of the app since process start. resetFrames takes a
+// snapshot and frames() reports the delta, so a window's busy time shows next to its jank:
+// mainCpuMs is the UI thread, jsCpuMs the JS thread (0 when JS runs on main), totalCpuMs all threads.
+let cpuBase = null;
+function cpuSnapshot() {
+  let out = '';
+  try {
+    out = shell(
+    `for t in /proc/${currentPid}/task/*; do echo $(basename $t) $(tr ' ' _ < $t/comm) $(cut -d' ' -f1 $t/schedstat); done`,
+    );
+  } catch (e) {}
+  const threads = {};
+  for (const line of String(out || '').split('\n')) {
+    const [tid, name, ns] = line.trim().split(' ');
+    if (tid && ns !== undefined && Number.isFinite(Number(ns))) threads[tid] = { name, ns: Number(ns) };
+  }
+  return threads;
+}
+function cpuDelta() {
+  if (!cpuBase) return {};
+  const now = cpuSnapshot();
+  let main = 0, js = 0, total = 0;
+  for (const [tid, t] of Object.entries(now)) {
+    const d = t.ns - (cpuBase[tid] ? cpuBase[tid].ns : 0);
+    total += d;
+    if (tid === String(currentPid)) main += d;
+    else if (/mqt_v_js|mqt_js|JavaScript/i.test(t.name)) js += d;
+  }
+  return {
+    mainCpuMs: Math.round(main / 1e6),
+    jsCpuMs: Math.round(js / 1e6),
+    totalCpuMs: Math.round(total / 1e6),
+  };
+}
+const resetFrames = variant => {
+  const r = shell(`dumpsys gfxinfo ${pkg(variant)} reset`);
+  cpuBase = cpuSnapshot();
+  return r;
+};
 
 function scenarioStartup(variant) {
   const timing = launch(variant, 'startup');
@@ -175,11 +267,30 @@ function scenarioScroll(variant, scenario) {
   sleep(1500);
   resetFrames(variant);
   for (let i = 0; i < 12; i++) {
-    shell('input swipe 540 1900 540 500 120');
+    shell('input swipe 360 1500 360 400 120');
     sleep(500);
   }
   sleep(1000);
-  return { ...frames(variant), ...memory(variant) };
+  const result = { ...frames(variant), ...memory(variant) };
+  // The app reports its window-update timings at 11 s; they may already be in the log.
+  try {
+    const match = waitFor(/\[bench\] result (\{"scenario":"scroll-stats".*\})/, 15000);
+    const { rows, updates, avgUpdateMs, maxUpdateMs, totalUpdateMs } = JSON.parse(match[1]);
+    Object.assign(result, { rows, updates, avgUpdateMs, maxUpdateMs, totalUpdateMs });
+    if (rows > 0 && result.mainCpuMs !== undefined) {
+      result.mainCpuMsPerRow = +(result.mainCpuMs / rows).toFixed(2);
+    }
+  } catch (e) {}
+  return result;
+}
+
+// Scrolls like `scroll`, then reads the fill-rate result the app reports at 11 s (blank = viewport
+// pixels FlatList had not rendered while scrolling).
+function scenarioScrollBlank(variant, scenario) {
+  const result = scenarioScroll(variant, scenario);
+  const match = waitFor(/\[bench\] result (\{"scenario":"scroll-blank".*\})/, 30000);
+  const { blankPct, anyBlankMs, mostlyBlankMs } = JSON.parse(match[1]);
+  return { ...result, blankPct, anyBlankMs, mostlyBlankMs };
 }
 
 function scenarioAnim(variant, scenario) {
@@ -194,16 +305,25 @@ function scenarioHeavy(variant, scenario) {
   launch(variant, scenario);
   sleep(1500);
   resetFrames(variant);
-  const match = waitFor(/\[bench\] result (\{.*\})/, 60000);
+  const match = waitFor(/\[bench\] result (\{.*\})/, 180000);
   const { landMs, landP90Ms } = JSON.parse(match[1]);
   return { ...frames(variant), landMs, landP90Ms };
 }
 
 function scenarioBurst(variant, scenario) {
   launch(variant, scenario);
-  const match = waitFor(/\[bench\] result (\{.*\})/, 120000);
+  // CPU from launch-ready to the result (includes the 1.5 s settle before the burst starts).
+  cpuBase = cpuSnapshot();
+  const match = waitFor(/\[bench\] result (\{.*\})/, 300000);
   const { totalMs, perCommitMs } = JSON.parse(match[1]);
-  return { totalMs, perCommitMs };
+  return { totalMs, perCommitMs, ...cpuDelta() };
+}
+
+function scenarioMemory(variant, scenario) {
+  launch(variant, scenario);
+  const match = waitFor(/\[bench\] result (\{"scenario":"memory".*\})/, 180000);
+  const { scenario: _s, ...rest } = JSON.parse(match[1]);
+  return rest;
 }
 
 function scenarioLatency(variant, scenario) {
@@ -211,7 +331,7 @@ function scenarioLatency(variant, scenario) {
   sleep(1500);
   const taps = 30;
   for (let i = 0; i < taps; i++) {
-    shell('input tap 540 350');
+    shell('input tap 360 290');
     sleep(350);
   }
   sleep(1500);
@@ -267,9 +387,11 @@ function scenarioLatency(variant, scenario) {
 function runScenario(variant, scenario) {
   const base = scenario.replace(/-busy$/, '');
   if (base === 'startup') return scenarioStartup(variant);
-  if (base === 'scroll') return scenarioScroll(variant, scenario);
+  if (base === 'scroll' || base === 'scroll-trans') return scenarioScroll(variant, scenario);
+  if (base === 'scroll-blank' || base === 'scroll-blank-trans') return scenarioScrollBlank(variant, scenario);
   if (base === 'anim' || base === 'js-anim') return scenarioAnim(variant, scenario);
   if (base === 'transition-heavy' || base === 'heavy-sync') return scenarioHeavy(variant, scenario);
+  if (base.startsWith('memory')) return scenarioMemory(variant, scenario);
   if (base.startsWith('burst')) return scenarioBurst(variant, scenario);
   if (base.startsWith('latency')) return scenarioLatency(variant, scenario);
   throw new Error(`unknown scenario ${scenario}`);
@@ -311,14 +433,17 @@ function prepareDevice() {
 // interpreted or JIT compiled, which makes the Java side of every measurement look slower than it is.
 function installLikeStore(variant, apk) {
   tryShell(`pm uninstall ${pkg(variant)}`);
-  adb('install', apk);
+  adbWithTimeout(ADB_LONG_TIMEOUT_MS, 'install', apk);
   tryShell(
     `am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE ` +
       `-n ${pkg(variant)}/androidx.profileinstaller.ProfileInstallReceiver`,
   );
   sleep(1500);
   shell(`am force-stop ${pkg(variant)}`);
-  shell(`cmd package compile -f -m speed-profile ${pkg(variant)}`);
+  // COMPILE_MODE=speed compiles everything ahead of time, which shows how much
+  // the baseline profile leaves to the interpreter and JIT.
+  const compileMode = process.env.COMPILE_MODE || 'speed-profile';
+  adbWithTimeout(ADB_LONG_TIMEOUT_MS, 'shell', `cmd package compile -f -m ${compileMode} ${pkg(variant)}`);
 }
 
 function summarize(samples) {

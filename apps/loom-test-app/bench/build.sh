@@ -12,10 +12,15 @@ APP="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(cd "$APP/../.." && pwd)/.local/bench"
 mkdir -p "$OUT"
 cd "$APP/android"
-COMMON="-PreactNativeArchitectures=arm64-v8a --console=plain"
+ARCH=${ARCH:-arm64-v8a}
+COMMON="-PreactNativeArchitectures=$ARCH --console=plain $GRADLE_EXTRA"
 for variant in ${@:-stock tuned off on}; do
   {
     start=$(date +%s)
+    # React Native's bundle task does not track files under node_modules, which is where Loom's
+    # JavaScript overrides are materialized; drop its outputs so every build re-bundles.
+    rm -rf app/build/generated/assets/react app/build/generated/res/react \
+      app/build/generated/sourcemaps/react app/build/intermediates/sourcemaps/react
     case $variant in
       stock) env LOOM_BENCH_STOCK=1 ./gradlew :app:assembleRelease -PbenchVariant=stock $COMMON ;;
       tuned) env LOOM_BENCH_STOCK=1 ./gradlew :app:assembleRelease -PbenchVariant=tuned -PbenchTunedFlags=true $COMMON ;;
@@ -29,7 +34,7 @@ for variant in ${@:-stock tuned off on}; do
     mkdir -p "$OUT/sym-$variant"
     # merged_native_libs holds the libraries before stripping; the exact subpath varies across AGP
     # versions, so look it up.
-    libs=$(find app/build/intermediates/merged_native_libs/release -type d -path '*arm64-v8a' | head -1)
+    libs=$(find app/build/intermediates/merged_native_libs/release -type d -path "*$ARCH" | head -1)
     cp "$libs"/*.so "$OUT/sym-$variant/"
     echo "BUILT $variant in $(( $(date +%s) - start ))s"
   }

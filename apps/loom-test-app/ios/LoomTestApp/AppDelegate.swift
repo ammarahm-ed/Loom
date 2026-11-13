@@ -26,18 +26,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     factory.startReactNative(
       withModuleName: "LoomTestApp",
       in: window,
+      initialProperties: initialProperties(),
       launchOptions: launchOptions
     )
 
     return true
   }
+
+  /// Bench pass-through: `xcrun simctl launch <udid> <bundle id> -scenario burst-raf`
+  /// renders Bench.tsx (same as the Android `scenario` intent extra).
+  private func initialProperties() -> [String: Any]? {
+    let args = ProcessInfo.processInfo.arguments
+    guard let i = args.firstIndex(of: "-scenario"), i + 1 < args.count else { return nil }
+    // `-autoscroll`: Bench.tsx drives the scroll scenarios from JS (the benchmark host has no swipe).
+    return ["scenario": args[i + 1], "autoscroll": args.contains("-autoscroll")]
+  }
 }
 
 class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
-  override func sourceURL(for bridge: RCTBridge) -> URL? {
-    self.bundleURL()
-  }
-
   override func bundleURL() -> URL? {
 #if DEBUG
     RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")

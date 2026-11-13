@@ -5,7 +5,9 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableMap
 import com.facebook.react.module.annotations.ReactModule
+import android.os.Debug
 
 /**
  * Reports the Loom switches this binary was actually compiled with, so the smoke screen can show
@@ -31,6 +33,20 @@ class LoomBuildConfigModule(reactContext: ReactApplicationContext) :
     // which uses the prebuilt artifacts from Maven, tells itself apart from an all-off Loom build.
     switches.putBoolean("stock", !hasFlag("LOOM_JS_ON_MAIN"))
     promise.resolve(switches)
+  }
+
+  // Memory for the `memory` scenario: total PSS, native heap allocated and Java heap in use, in KB.
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun memSample(): WritableMap {
+    val info = Debug.MemoryInfo()
+    Debug.getMemoryInfo(info)
+    val map = Arguments.createMap()
+    map.putDouble("footprintKb", info.totalPss.toDouble())
+    map.putDouble("heapKb", (Debug.getNativeHeapAllocatedSize() / 1024).toDouble())
+    map.putDouble("nativeKb", (Debug.getNativeHeapAllocatedSize() / 1024).toDouble())
+    val rt = Runtime.getRuntime()
+    map.putDouble("javaKb", ((rt.totalMemory() - rt.freeMemory()) / 1024).toDouble())
+    return map
   }
 
   // Read reflectively so the same app source compiles against stock React Native too.

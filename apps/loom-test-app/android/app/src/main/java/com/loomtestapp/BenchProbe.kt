@@ -29,6 +29,7 @@ object BenchProbe {
   private var lastProbeAlpha = Float.NaN
 
   fun attach(activity: Activity) {
+    maybeProfileJs(activity)
     val root = activity.window.decorView
     root.viewTreeObserver.addOnPreDrawListener(
         object : ViewTreeObserver.OnPreDrawListener {
@@ -37,6 +38,34 @@ object BenchProbe {
             return true
           }
         })
+  }
+
+  /**
+   * `--ei jsprofile <ms>` (with optional `--ei jsprofileDelay <ms>`, default 2000): samples the
+   * JavaScript stack with Hermes's sampling profiler for that window and writes a Chrome trace to
+   * the app's external files dir (`/sdcard/Android/data/<package>/files/jsprofile.json`), which
+   * `adb pull` can read on a release build. Bench-only; does nothing without the extra.
+   */
+  private fun maybeProfileJs(activity: Activity) {
+    val durationMs = activity.intent.getIntExtra("jsprofile", 0)
+    if (durationMs <= 0) return
+    val delayMs = activity.intent.getIntExtra("jsprofileDelay", 2000).toLong()
+    val out = java.io.File(activity.getExternalFilesDir(null), "jsprofile.json")
+    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    handler.postDelayed(
+        {
+          com.facebook.hermes.instrumentation.HermesSamplingProfiler.enable()
+          Log.i(TAG, "jsprofile start")
+          handler.postDelayed(
+              {
+                com.facebook.hermes.instrumentation.HermesSamplingProfiler.disable()
+                com.facebook.hermes.instrumentation.HermesSamplingProfiler.dumpSampledTraceToFile(
+                    out.absolutePath)
+                Log.i(TAG, "jsprofile written ${out.absolutePath}")
+              },
+              durationMs.toLong())
+        },
+        delayMs)
   }
 
   fun onTouch(event: MotionEvent) {

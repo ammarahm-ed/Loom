@@ -22,13 +22,19 @@ NDK=$(ls -d ~/Library/Android/sdk/ndk/* | sort -V | tail -1)
 SP_DEVICE=/data/local/tmp/simpleperf
 adb() { command adb -s "$SERIAL" "$@"; }
 
-adb push "$NDK/simpleperf/bin/android/arm64/simpleperf" $SP_DEVICE >/dev/null
+# Push the simpleperf build matching the device: 32-bit-only phones (armeabi-v7a) need the arm one.
+case "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" in
+  arm64-v8a) SP_ARCH=arm64 ;; armeabi-v7a|armeabi) SP_ARCH=arm ;; x86_64) SP_ARCH=x86_64 ;; x86) SP_ARCH=x86 ;; *) SP_ARCH=arm64 ;;
+esac
+adb push "$NDK/simpleperf/bin/android/$SP_ARCH/simpleperf" $SP_DEVICE >/dev/null
 adb shell chmod +x $SP_DEVICE
 
 for v in $VARIANTS; do
   PKG=com.loomtestapp.bench.$v
   DATA=/data/local/tmp/prof-$SCENARIO-$v.data
   # Same compilation state as bench/run.js: clean install, baseline profile, speed-profile AOT.
+  # SKIP_INSTALL=1 profiles the build already installed (same APK as the last bench/run.js run).
+  if [ -z "$SKIP_INSTALL" ]; then
   adb uninstall "$PKG" >/dev/null 2>&1 || true
   adb install "$OUT/app-$v.apk" >/dev/null
   adb shell am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE \
@@ -36,6 +42,7 @@ for v in $VARIANTS; do
   sleep 1.5
   adb shell am force-stop "$PKG"
   adb shell cmd package compile -f -m speed-profile "$PKG" >/dev/null
+  fi
   adb shell am force-stop $PKG
   sleep 1
   if [ "$SCENARIO" = startup ]; then
@@ -48,7 +55,14 @@ for v in $VARIANTS; do
   else
     adb shell am start -n $PKG/com.loomtestapp.MainActivity --es scenario "$SCENARIO" >/dev/null
     sleep 2
+    # PROFILE_INPUT: an `adb shell input ...` command repeated every PROFILE_INPUT_EVERY seconds
+    # while recording, for scenarios that need touch (e.g. "swipe 360 1500 360 400 120", "tap 360 290").
+    if [ -n "$PROFILE_INPUT" ]; then
+      ( for _ in $(seq 12); do adb shell input $PROFILE_INPUT; sleep "${PROFILE_INPUT_EVERY:-0.5}"; done ) &
+      INPUT_PID=$!
+    fi
     adb shell $SP_DEVICE record --app $PKG -g -f 4000 --duration 6 -o $DATA
+    [ -n "$PROFILE_INPUT" ] && wait $INPUT_PID
   fi
   adb shell am force-stop $PKG
   adb pull $DATA "$OUT/prof-$SCENARIO-$v.data" >/dev/null

@@ -1,63 +1,73 @@
 #!/usr/bin/env python3
-"""Inclusive CPU time per function for one thread of a bench/profile.sh recording.
+"""Inclusive and self time per function, per thread, for a bench/profile.sh recording.
 
-    python3 bench/profile-inclusive.py <scenario> <variant> <main|worker|js|render> [pattern] [top]
+    python3 bench/profile-inclusive.py <scenario> <variant> [top] [filter]
 
-Each sample counts once for every distinct function on its stack, so a caller's time includes its
-callees. `pattern` (regex) limits which functions are listed, e.g. 'facebook::react|com\\.facebook'.
+`filter` keeps functions whose symbol contains it (default: Loom/RN C++ only).
 """
 import os
-import re
 import sys
 
-NDK = sorted(os.path.join(os.path.expanduser('~/Library/Android/sdk/ndk'), d)
-             for d in os.listdir(os.path.expanduser('~/Library/Android/sdk/ndk')))[-1]
-sys.path.insert(0, os.path.join(NDK, 'simpleperf'))
-from simpleperf_report_lib import ReportLib  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from importlib import import_module  # noqa: E402
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '.local', 'bench')
-SAMPLE_HZ = 4000
+langs = import_module('profile-languages')
+ReportLib, OUT, SAMPLE_HZ = langs.ReportLib, langs.OUT, langs.SAMPLE_HZ
 
 
-def thread_of(sample):
-    if sample.tid == sample.pid:
-        return 'main'
-    name = sample.thread_comm
-    if name.startswith('mqt_v_js') or name.startswith('mqt_js'):
-        return 'js'
-    if name == 'RenderThread':
-        return 'render'
-    if 'bench.' in name:
-        return 'worker'
-    return 'other'
+def short(name):
+    name = name.split('(')[0]
+    for prefix in ('facebook::react::', 'facebook::', 'std::__ndk1::', 'hermes::vm::'):
+        name = name.replace(prefix, '')
+    return name[:100]
 
 
 def main():
-    scenario, variant, thread = sys.argv[1:4]
-    pattern = re.compile(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
-    top = int(sys.argv[5]) if len(sys.argv) > 5 else 40
+    scenario, variant = sys.argv[1], sys.argv[2]
+    top = int(sys.argv[3]) if len(sys.argv) > 3 else 30
+    flt = sys.argv[4] if len(sys.argv) > 4 else None
     lib = ReportLib()
     lib.SetRecordFile(os.path.join(OUT, f'prof-{scenario}-{variant}.data'))
     lib.SetSymfs(os.path.join(OUT, f'binary_cache-{variant}'))
     lib.ShowArtFrames(True)
-    counts, total = {}, 0
+    incl, selfc, totals = {}, {}, {}
     while True:
         sample = lib.GetNextSample()
         if sample is None:
             break
-        if thread_of(sample) != thread:
-            continue
-        total += 1
+        thread = langs.thread_of(sample)
+        totals[thread] = totals.get(thread, 0) + 1
+        sym = lib.GetSymbolOfCurrentSample()
         chain = lib.GetCallChainOfCurrentSample()
-        names = {lib.GetSymbolOfCurrentSample().symbol_name}
-        names.update(chain.entries[i].symbol.symbol_name for i in range(chain.nr))
-        for name in names:
-            if pattern is None or pattern.search(name):
-                counts[name] = counts.get(name, 0) + 1
+        frames = [sym] + [chain.entries[i].symbol for i in range(chain.nr)]
+        seen = set()
+        for depth, f in enumerate(frames):
+            g = langs.group_of(f.dso_name, f.symbol_name)
+            if flt:
+                if flt not in f.symbol_name:
+                    continue
+            elif g != 'C++ (RN + Loom)':
+                continue
+            k = short(f.symbol_name)
+            if k in seen:
+                continue
+            seen.add(k)
+            incl.setdefault(thread, {}).setdefault(k, 0)
+            incl[thread][k] += 1
+            if depth == 0:
+                selfc.setdefault(thread, {}).setdefault(k, 0)
+                selfc[thread][k] += 1
     lib.Close()
-    print(f'{thread}: {total * 1000 / SAMPLE_HZ:.0f} ms CPU')
-    for name, n in sorted(counts.items(), key=lambda kv: -kv[1])[:top]:
-        print(f'{n * 1000 / SAMPLE_HZ:8.0f} ms  {name[:150]}')
+    ms = lambda n: n * 1000.0 / SAMPLE_HZ
+    for thread in sorted(incl, key=lambda t: -totals.get(t, 0)):
+        print(f'\n## {thread}: busy {ms(totals[thread]):.0f} ms')
+        print('  inclusive:')
+        for k, n in sorted(incl[thread].items(), key=lambda kv: -kv[1])[:top]:
+            print(f'{ms(n):7.0f}  {k}')
+        if thread in selfc:
+            print('  self:')
+            for k, n in sorted(selfc[thread].items(), key=lambda kv: -kv[1])[:top // 2]:
+                print(f'{ms(n):7.0f}  {k}')
 
 
 if __name__ == '__main__':
