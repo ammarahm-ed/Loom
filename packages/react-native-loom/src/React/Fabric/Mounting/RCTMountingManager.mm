@@ -307,7 +307,14 @@ static void RCTPerformMountInstructions(
 
   NSSet<NSString *> *propKeys = componentView.propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN ?: [NSSet new];
 
+  // Loom keeps the keys a synchronous update owns even with the shared
+  // animation backend: its renderer, not a shadow-tree commit hook, holds the
+  // animated values, so a later props update must not reset them on the view.
+#if LOOM_RENDERER
+  if (true) {
+#else
   if (!ReactNativeFeatureFlags::useSharedAnimatedBackend()) {
+#endif
     NSArray<NSString *> *propsKeysToBeUpdated = extractKeysFromFollyDynamic(props);
     propKeys = [propKeys setByAddingObjectsFromArray:propsKeysToBeUpdated];
   }

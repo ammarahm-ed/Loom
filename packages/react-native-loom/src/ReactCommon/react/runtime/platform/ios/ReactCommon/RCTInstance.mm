@@ -45,6 +45,12 @@
 #import <react/utils/ManagedObjectWrapper.h>
 
 #import "ObjCTimerRegistry.h"
+
+#if LOOM_RENDERER_IOS && LOOM_JS_ON_MAIN
+#import <QuartzCore/QuartzCore.h>
+#include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
+#include <chrono>
+#endif
 #import "RCTJSThreadManager.h"
 #ifndef RCT_REMOVE_LEGACY_COMPONENT_INTEROP
 #import "RCTLegacyUIManagerConstantsProvider.h"
@@ -58,8 +64,47 @@
 using namespace facebook;
 using namespace facebook::react;
 
+
 @interface RCTInstance () <RCTTurboModuleManagerDelegate>
 @end
+
+#if LOOM_RENDERER_IOS && LOOM_JS_ON_MAIN
+// Loom: feeds FrameClock, so the JS scheduler knows where the display's frames are (the iOS
+// counterpart of ReactFrameClock on Android). React's time slicing uses it to stop deferrable
+// work early enough for the frame to finish. A display link on the main run loop (which is also
+// the JS thread) in common modes, so it keeps ticking while scrolling.
+@interface RCTLoomFrameClockFeeder : NSObject
++ (void)ensureStarted;
+@end
+
+@implementation RCTLoomFrameClockFeeder
++ (void)ensureStarted
+{
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"LoomNoFrameClock"]) {
+      return;
+    }
+    RCTLoomFrameClockFeeder *feeder = [RCTLoomFrameClockFeeder new];
+    CADisplayLink *link = [CADisplayLink displayLinkWithTarget:feeder selector:@selector(tick:)];
+    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    static CADisplayLink *retained;
+    retained = link;
+  });
+}
+
+- (void)tick:(CADisplayLink *)link
+{
+  // CADisplayLink times are on the mach_absolute_time clock; steady_clock may include sleep.
+  // Translate through "how long ago the frame started".
+  const double agoSeconds = CACurrentMediaTime() - link.timestamp;
+  const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                       .count();
+  facebook::react::FrameClock::onFrame(now - (int64_t)(agoSeconds * 1e9));
+}
+@end
+#endif
 
 @implementation RCTInstance {
   std::unique_ptr<ReactInstance> _reactInstance;
@@ -122,8 +167,9 @@ using namespace facebook::react;
     _delegate = delegate;
     _jsRuntimeFactory = jsRuntimeFactory;
     _appTMMDelegate = tmmDelegate;
-#if LOOM_RENDERER_IOS
+#if LOOM_RENDERER_IOS && LOOM_JS_ON_MAIN
     _jsThreadManager = [[RCTJSThreadManager alloc] initWithUseMainThread:YES];
+    [RCTLoomFrameClockFeeder ensureStarted];
 #else
     _jsThreadManager = [RCTJSThreadManager new];
 #endif

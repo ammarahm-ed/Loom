@@ -22,6 +22,10 @@ if ENV['RCT_LOOM_WORKER_IOS'] == '1'
   abort 'RCT_LOOM_WORKER_IOS requires RCT_LOOM_RENDERER_IOS=1' unless ENV['RCT_LOOM_RENDERER_IOS'] == '1'
   direct_renderer_flags += ' LOOM_WORKER=1'
 end
+loom_js = ENV['RCT_LOOM_JS_IOS'] || 'main'
+abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
+abort 'RCT_LOOM_JS_IOS=background requires RCT_LOOM_WORKER_IOS=1' if ENV['RCT_LOOM_RENDERER_IOS'] == '1' && loom_js == 'background' && ENV['RCT_LOOM_WORKER_IOS'] != '1'
+direct_renderer_flags += " LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if ENV['RCT_LOOM_RENDERER_IOS'] == '1'
 
 header_search_paths = [
   "\"$(PODS_TARGET_SRCROOT)/ReactCommon\"",

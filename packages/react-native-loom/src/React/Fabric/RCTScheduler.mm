@@ -7,6 +7,8 @@
 
 #import "RCTScheduler.h"
 
+#import <react/renderer/animationbackend/AnimatedProps.h>
+
 #import <QuartzCore/CADisplayLink.h>
 #import <cxxreact/TraceSection.h>
 #import <react/featureflags/ReactNativeFeatureFlags.h>
@@ -81,6 +83,18 @@ class SchedulerDelegateProxy : public SchedulerDelegate {
     RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
     [scheduler.delegate schedulerDidSynchronouslyUpdateViewOnUIThread:tag props:props];
   }
+
+#if LOOM_RENDERER
+  // Loom: a frame of the shared animation backend arrives as one typed batch
+  // (paint-only views); the presenter writes it without packing and re-parsing
+  // a props dictionary per view.
+  void schedulerShouldSynchronouslyUpdateAnimatedProps(
+      const std::unordered_map<facebook::react::Tag, facebook::react::AnimatedProps> &updates) override
+  {
+    RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
+    [scheduler.delegate schedulerDidSynchronouslyUpdateAnimatedProps:updates];
+  }
+#endif
 
   void schedulerDidUpdateShadowTree(const std::unordered_map<Tag, folly::dynamic> &tagToProps) override
   {
@@ -235,22 +249,16 @@ class SchedulerDelegateProxy : public SchedulerDelegate {
                                                             maximumSize:maximumSize];
   }
 
-  void loomUpdateState(
-      SurfaceId surfaceId,
-      Tag tag,
-      const std::string &componentName,
-      const folly::dynamic &props,
-      const AttributedString &attributedString,
-      const ParagraphAttributes &paragraphAttributes,
-      const LoomTextMeasurement & /*prepared*/) override
+  void loomUpdateState(const LoomTextStateUpdate &update) override
   {
     RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
-    [scheduler.delegate schedulerDirectRendererUpdateTextState:surfaceId
-                                                           tag:tag
-                                                 componentName:componentName
-                                                         props:props
-                                               attributedString:attributedString
-                                                 paragraphAttributes:paragraphAttributes];
+    [scheduler.delegate schedulerDirectRendererUpdateTextState:update];
+  }
+
+  void loomUpdateComponentState(SurfaceId surfaceId, Tag tag, const std::shared_ptr<const State> &state) override
+  {
+    RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
+    [scheduler.delegate schedulerDirectRendererUpdateComponentState:surfaceId tag:tag state:state];
   }
 
   void loomUpdateScrollContentBounds(
@@ -280,6 +288,16 @@ class SchedulerDelegateProxy : public SchedulerDelegate {
   {
     RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
     [scheduler.delegate schedulerDirectRendererAccessibilityEvent:surfaceId tag:tag name:name];
+  }
+
+  std::optional<std::pair<float, float>> loomGetViewLocationInSurface(SurfaceId surfaceId, Tag tag) override
+  {
+    RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
+    CGPoint location;
+    if (![scheduler.delegate schedulerDirectRendererViewLocationInSurface:surfaceId tag:tag location:&location]) {
+      return std::nullopt;
+    }
+    return std::pair<float, float>{static_cast<float>(location.x), static_cast<float>(location.y)};
   }
 
   void loomSetIsJSResponder(SurfaceId surfaceId, Tag tag, bool isResponder, bool blockNativeResponder) override

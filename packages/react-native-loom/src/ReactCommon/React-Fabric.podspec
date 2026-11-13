@@ -31,9 +31,13 @@ Pod::Spec.new do |s|
   direct_renderer_enabled = ENV["RCT_LOOM_RENDERER_IOS"] == "1"
   direct_renderer_worker_enabled = ENV["RCT_LOOM_WORKER_IOS"] == "1"
   abort 'RCT_LOOM_WORKER_IOS requires RCT_LOOM_RENDERER_IOS=1' if direct_renderer_worker_enabled && !direct_renderer_enabled
+  loom_js = ENV["RCT_LOOM_JS_IOS"] || "main"
+  abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
+  abort 'RCT_LOOM_JS_IOS=background requires RCT_LOOM_WORKER_IOS=1' if direct_renderer_enabled && loom_js == "background" && !direct_renderer_worker_enabled
   fabric_definitions = ["$(inherited)"]
   fabric_definitions << "LOOM_RENDERER=1" if direct_renderer_enabled
   fabric_definitions << "LOOM_WORKER=1" if direct_renderer_worker_enabled
+  fabric_definitions << "LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if direct_renderer_enabled
   s.pod_target_xcconfig = { "USE_HEADERMAP" => "YES",
                             "CLANG_CXX_LANGUAGE_STANDARD" => rct_cxx_language_standard(),
                             "DEFINES_MODULE" => "YES",

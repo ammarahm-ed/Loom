@@ -19,6 +19,10 @@
 #import <react/renderer/uimanager/LoomMountBatch.h>
 #import <react/renderer/uimanager/LoomTextMeasurement.h>
 
+namespace facebook::react {
+struct AnimatedProps;
+}
+
 NS_ASSUME_NONNULL_BEGIN
 
 /**
@@ -45,6 +49,12 @@ NS_ASSUME_NONNULL_BEGIN
                        forShadowView:(const facebook::react::ShadowView &)shadowView;
 
 - (void)schedulerDidSynchronouslyUpdateViewOnUIThread:(facebook::react::Tag)reactTag props:(folly::dynamic)props;
+
+#if LOOM_RENDERER
+/** One frame of the shared animation backend for paint-only views (Loom). */
+- (void)schedulerDidSynchronouslyUpdateAnimatedProps:
+    (const std::unordered_map<facebook::react::Tag, facebook::react::AnimatedProps> &)updates;
+#endif
 
 #if LOOM_RENDERER
 - (BOOL)schedulerDirectRendererCanMeasureTextOnWorker;
@@ -83,12 +93,10 @@ NS_ASSUME_NONNULL_BEGIN
                                                                    paragraphAttributes:(const facebook::react::ParagraphAttributes &)paragraphAttributes
                                                                           minimumSize:(const facebook::react::Size &)minimumSize
                                                                           maximumSize:(const facebook::react::Size &)maximumSize;
-- (void)schedulerDirectRendererUpdateTextState:(facebook::react::SurfaceId)surfaceId
-                                            tag:(facebook::react::Tag)tag
-                                  componentName:(const std::string &)componentName
-                                          props:(const folly::dynamic &)props
-                                attributedString:(const facebook::react::AttributedString &)attributedString
-                             paragraphAttributes:(const facebook::react::ParagraphAttributes &)paragraphAttributes;
+- (void)schedulerDirectRendererUpdateTextState:(const facebook::react::LoomTextStateUpdate &)update;
+- (void)schedulerDirectRendererUpdateComponentState:(facebook::react::SurfaceId)surfaceId
+                                                tag:(facebook::react::Tag)tag
+                                              state:(const facebook::react::State::Shared &)state;
 - (void)schedulerDirectRendererUpdateScrollContentBounds:(facebook::react::SurfaceId)surfaceId
                                                      tag:(facebook::react::Tag)tag
                                                     props:(const folly::dynamic &)props
@@ -100,6 +108,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)schedulerDirectRendererAccessibilityEvent:(facebook::react::SurfaceId)surfaceId
                                                tag:(facebook::react::Tag)tag
                                               name:(const std::string &)name;
+/** Origin of `tag`'s view in its surface's root view, on the main thread. NO if it is not mounted. */
+- (BOOL)schedulerDirectRendererViewLocationInSurface:(facebook::react::SurfaceId)surfaceId
+                                                 tag:(facebook::react::Tag)tag
+                                            location:(CGPoint *)location;
 - (void)schedulerDirectRendererSetJSResponder:(facebook::react::SurfaceId)surfaceId
                                            tag:(facebook::react::Tag)tag
                                      isResponder:(BOOL)isResponder

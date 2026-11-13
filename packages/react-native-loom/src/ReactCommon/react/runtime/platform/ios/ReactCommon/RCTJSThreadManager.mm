@@ -36,6 +36,11 @@ static NSString *const RCTJSThreadName = @"com.facebook.react.runtime.JavaScript
     __weak RCTJSThreadManager *weakSelf = self;
 
     dispatch_block_t captureJSThreadRunLoop = ^(void) {
+      if (useMainThread) {
+        // The main thread is the JavaScript thread in this mode. Libraries recognise the
+        // JavaScript thread by this name (Reanimated asserts on it), so it carries it too.
+        NSThread.mainThread.name = RCTJSThreadName;
+      }
       __strong RCTJSThreadManager *strongSelf = weakSelf;
       strongSelf->_jsMessageThread =
           std::make_shared<facebook::react::RCTMessageThread>([NSRunLoop currentRunLoop], ^(NSError *error) {

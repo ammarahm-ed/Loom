@@ -24,14 +24,17 @@
 #import <React/RCTLog.h>
 #import <React/RCTMountingManager.h>
 #import <React/RCTMountingManagerDelegate.h>
+#import <React/RCTMountingTransactionObserving.h>
 #import <React/RCTScheduler.h>
 #import <React/RCTSurfaceRegistry.h>
 #import <React/RCTSurfaceView+Internal.h>
 #import <React/RCTSurfaceView.h>
+#import <React/RCTComponent.h>
 #import <React/RCTUtils.h>
 #import <react/utils/FollyConvert.h>
 
 #import <react/featureflags/ReactNativeFeatureFlags.h>
+#import <react/renderer/animationbackend/AnimatedProps.h>
 #import <react/renderer/componentregistry/ComponentDescriptorFactory.h>
 #import <react/renderer/components/image/ImageComponentDescriptor.h>
 #import <react/renderer/components/image/ImageShadowNode.h>
@@ -47,6 +50,7 @@
 #import <react/renderer/components/view/ViewEventEmitter.h>
 #import <react/renderer/core/DynamicEventPayload.h>
 #import <react/renderer/core/ShadowNodeFamily.h>
+#import <react/renderer/mounting/MountingTransaction.h>
 #import <react/renderer/textlayoutmanager/TextLayoutContext.h>
 #import <react/renderer/textlayoutmanager/TextLayoutManager.h>
 #import <react/renderer/runtimescheduler/RuntimeScheduler.h>
@@ -62,6 +66,7 @@
 #if LOOM_RENDERER
 #import <react/renderer/uimanager/LoomBinding.h>
 #import <react/renderer/uimanager/LoomEventManager.h>
+#import <react/renderer/uimanager/LoomRenderer.h>
 #endif
 #import "AppleEventBeat.h"
 
@@ -112,6 +117,17 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
 };
 } // namespace
 
+
+#if LOOM_RENDERER
+static bool LoomUserDefault(NSString *key, bool fallback)
+{
+  id value = [NSUserDefaults.standardUserDefaults objectForKey:key];
+  return [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : fallback;
+}
+#endif
+
+extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
+
 @implementation RCTSurfacePresenter {
   RCTMountingManager *_mountingManager; // Thread-safe.
   RCTSurfaceRegistry *_surfaceRegistry; // Thread-safe.
@@ -148,12 +164,36 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
   std::unordered_set<Tag> _directViewlessTags;
   std::unordered_set<Tag> _directReplacedTags;
   std::unordered_map<Tag, State::Shared> _directPendingStates;
+  // The last paragraph state delivered per tag, with what it was built from. A republish whose
+  // string (by identity), paragraph attributes and layout size are unchanged reuses it instead of
+  // copying the attributed string into a new ParagraphState.
+  struct DirectTextState {
+    std::shared_ptr<const AttributedString> attributedString;
+    ParagraphAttributes paragraphAttributes;
+    facebook::react::Size layoutSize;
+    ParagraphShadowNode::ConcreteState::Shared state;
+  };
+  std::unordered_map<Tag, DirectTextState> _directTextStates;
   std::unordered_map<Tag, folly::dynamic> _directImageProps;
   std::unordered_map<Tag, ImageShadowNode::ConcreteState::Shared> _directImageStates;
   std::unordered_map<Tag, ScrollViewShadowNode::ConcreteState::Shared> _directScrollStates;
+  // Fabric compatibility layer: the last state object of each compat node's own ShadowNode.
+  std::unordered_map<Tag, State::Shared> _directCompatStates;
   std::unordered_map<Tag, LayoutMetrics> _directLayoutMetrics;
   std::unordered_map<Tag, std::array<float, 4>> _directContentInsets;
   std::unordered_map<Tag, std::array<float, 4>> _directOverflowInsets;
+  // Views updated by the commit being mounted, and what changed in each: like Fabric's mounting
+  // manager, a view gets one finalizeUpdates: with everything applied, after the commit's last
+  // operation, instead of one per operation (a commit delivers text states before the batch that
+  // carries their layout).
+  NSMutableArray<UIView<RCTComponentViewProtocol> *> *_directFinalizeViews;
+  std::unordered_map<const void *, RNComponentViewUpdateMask> _directFinalizeMasks;
+  // Mounted views that implement RCTMountingTransactionObserving, per surface. Like Fabric's
+  // mounting manager, each batch is announced to them before and after it is applied, described
+  // as ShadowViewMutations. Surfaces without such a view never build that description.
+  std::unordered_map<SurfaceId, std::unordered_map<Tag, __weak UIView<RCTComponentViewProtocol> *>>
+      _directTransactionObservers;
+  MountingTransaction::Number _directTransactionNumber;
 #endif
 }
 
@@ -187,6 +227,9 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
     _directTextScale.store(1.0f);
     _directFontSizeMultiplier.store(1.0f);
     _directTextLayoutManager = std::make_shared<TextLayoutManager>(_contextContainer);
+    // Startup switches (launch arguments or NSUserDefaults), on by default.
+    LoomStartupOptions::earlyCreate.store(LoomUserDefault(@"LoomEarlyCreate", true));
+    LoomStartupOptions::parallelText.store(LoomUserDefault(@"LoomParallelText", true));
 #endif
 
     _surfaceRegistry = [RCTSurfaceRegistry new];
@@ -285,12 +328,15 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
       self->_directImageProps.erase(tag);
       self->_directImageStates.erase(tag);
       self->_directScrollStates.erase(tag);
+      self->_directTextStates.erase(tag);
+      self->_directCompatStates.erase(tag);
       self->_directComponentNames.erase(tag);
       self->_directLayoutMetrics.erase(tag);
       self->_directContentInsets.erase(tag);
       self->_directOverflowInsets.erase(tag);
       self->_directSurfaceByTag.erase(tag);
     }
+    self->_directTransactionObservers.erase(surfaceId);
     LoomBinding::releaseSurface(surfaceId);
   };
   if (RCTIsMainQueue()) {
@@ -360,9 +406,104 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
 }
 
 #if LOOM_RENDERER
+- (void)schedulerDidSynchronouslyUpdateAnimatedProps:
+    (const std::unordered_map<facebook::react::Tag, facebook::react::AnimatedProps> &)updates
+{
+  // Loom's animation lane already recorded these frames; this only writes them
+  // to the views. Each view's current props are copied and the animated fields
+  // set in place, which costs no dictionary and no parse.
+  RCTAssertMainQueue();
+  RCTScheduler *scheduler = [self scheduler];
+  if (!scheduler || !_contextContainer) {
+    return;
+  }
+  auto *registry = _mountingManager.componentViewRegistry;
+  for (const auto &[tag, animated] : updates) {
+    UIView<RCTComponentViewProtocol> *view = [registry findComponentViewWithTag:tag];
+    if (view == nil) {
+      continue;
+    }
+    const auto handle = [[view class] componentDescriptorProvider].handle;
+    const auto *descriptor = [scheduler findComponentDescriptorByHandle_DO_NOT_USE_THIS_IS_BROKEN:handle];
+    if (descriptor == nullptr) {
+      continue;
+    }
+    const auto oldProps = [view props];
+    SurfaceId surfaceId = -1;
+    for (UIView *ancestor = view; ancestor != nil; ancestor = ancestor.superview) {
+      if (RCTIsReactRootView(@(ancestor.tag))) {
+        surfaceId = static_cast<SurfaceId>(ancestor.tag);
+        break;
+      }
+    }
+    const PropsParserContext context{surfaceId, *_contextContainer};
+    auto newProps = animated.rawProps
+        ? descriptor->cloneProps(context, oldProps, RawProps(*animated.rawProps))
+        : descriptor->cloneProps(context, oldProps, RawProps(folly::dynamic::object()));
+    if (auto viewProps = std::dynamic_pointer_cast<const BaseViewProps>(newProps)) {
+      auto &mutableProps = const_cast<BaseViewProps &>(*viewProps);
+      for (const auto &animatedProp : animated.props) {
+        cloneProp(mutableProps, *animatedProp);
+      }
+    }
+    // A view skips the keys an earlier synchronous update marked as managed by
+    // Animated; like that update, this one is the animation writing them.
+    NSSet<NSString *> *managedKeys = view.propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN;
+    view.propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN = nil;
+    [view updateProps:newProps oldProps:oldProps];
+    view.propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN = managedKeys;
+    [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+  }
+}
+
+- (void)directDeferFinalize:(UIView<RCTComponentViewProtocol> *)view mask:(RNComponentViewUpdateMask)mask
+{
+  if (!_directFinalizeViews) {
+    _directFinalizeViews = [NSMutableArray new];
+  }
+  auto [entry, inserted] = _directFinalizeMasks.try_emplace((__bridge const void *)view, mask);
+  if (inserted) {
+    [_directFinalizeViews addObject:view];
+    if (_directFinalizeViews.count == 1) {
+      // A commit's operations end with its batch, which finalizes them; this only covers updates
+      // that arrive without one.
+      __weak RCTSurfacePresenter *weakSelf = self;
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf directFinalizeUpdates];
+      });
+    }
+  } else {
+    entry->second = entry->second | mask;
+  }
+}
+
+// A view that is recycled before the commit finalizes it is not finalized.
+- (void)directDropFinalize:(UIView<RCTComponentViewProtocol> *)view
+{
+  if (_directFinalizeMasks.erase((__bridge const void *)view) != 0) {
+    [_directFinalizeViews removeObjectIdenticalTo:view];
+  }
+}
+
+- (void)directFinalizeUpdates
+{
+  if (_directFinalizeViews.count == 0) {
+    return;
+  }
+  NSArray<UIView<RCTComponentViewProtocol> *> *views = _directFinalizeViews;
+  auto masks = std::move(_directFinalizeMasks);
+  _directFinalizeViews = [NSMutableArray new];
+  _directFinalizeMasks.clear();
+  for (UIView<RCTComponentViewProtocol> *view in views) {
+    [view finalizeUpdates:masks[(__bridge const void *)view]];
+  }
+}
+
 - (void)schedulerDirectRendererApplyBatch:(SurfaceId)surfaceId batch:(LoomMountBatch)batch
 {
   RCTAssertMainQueue();
+  // Text resized by an animation frame is drawn in this frame (RCTParagraphComponentView).
+  LoomTextSetApplyingAnimationFrame(batch.animationFrame);
   RCTScheduler *scheduler = [self scheduler];
   if (!scheduler) {
     return;
@@ -375,6 +516,19 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
   auto registry = _mountingManager.componentViewRegistry;
   auto context = PropsParserContext{surfaceId, *_contextContainer};
   [_mountingManager.delegate mountingManager:_mountingManager willMountComponentsWithRootTag:surfaceId];
+  // Built at most once per batch, and only when the surface has a transaction observer.
+  std::optional<MountingTransaction> observedTransaction;
+  auto transactionForObservers = [&]() -> const MountingTransaction & {
+    if (!observedTransaction) {
+      observedTransaction.emplace(
+          surfaceId, ++_directTransactionNumber, [self directMutationsForBatch:batch descriptors:*descriptors],
+          TransactionTelemetry{});
+    }
+    return *observedTransaction;
+  };
+  [self directNotifyTransactionObservers:surfaceId
+                                  before:YES
+                             transaction:transactionForObservers];
   auto updateImageState = [&](Tag tag, const folly::dynamic &rawProps) {
     const auto componentName = _directComponentNames.find(tag);
     const auto layoutMetrics = _directLayoutMetrics.find(tag);
@@ -434,7 +588,7 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
     auto state = std::make_shared<const ImageShadowNode::ConcreteState>(
         std::move(stateData), ShadowNodeFamily::Weak{});
     [view updateState:state oldState:nullptr];
-    [view finalizeUpdates:RNComponentViewUpdateMaskState];
+    [self directDeferFinalize:view mask:RNComponentViewUpdateMaskState];
     _directImageStates[tag] = std::move(state);
   };
   auto applyOperation = [&](size_t operationIndex) {
@@ -457,6 +611,8 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
               _directLayoutMetrics.erase(operation.tag);
               if (oldView != nil) {
                 [oldView removeFromSuperview];
+                [self directDropFinalize:oldView];
+                [self directUnregisterTransactionObserver:operation.tag surfaceId:surfaceId];
                 auto oldDescriptor = [registry componentViewDescriptorWithTag:operation.tag];
                 auto oldHandle = [oldDescriptor.view.class componentDescriptorProvider].handle;
                 [registry enqueueComponentViewWithComponentHandle:oldHandle
@@ -471,13 +627,18 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
             const auto &componentDescriptor = descriptors->at(operation.componentName);
             const auto &viewDescriptor = [registry dequeueComponentViewWithComponentHandle:componentDescriptor.getComponentHandle()
                                                                                          tag:operation.tag];
+            [self directRegisterTransactionObserver:viewDescriptor.view surfaceId:surfaceId];
             const auto unifiedName = componentNameByReactViewName(operation.componentName);
             _directComponentNames[operation.tag] = unifiedName;
             if (unifiedName == "Image") {
               _directImageProps[operation.tag] = operation.props;
               _directImageStates.erase(operation.tag);
             }
-            Props::Shared props = componentDescriptor.cloneProps(context, nullptr, RawProps(operation.props));
+            // A component with its own descriptor arrives with the props that descriptor parsed
+            // from the JSI value; re-parsing the folly copy would lose JS-only values.
+            Props::Shared props = operation.parsedProps != nullptr
+                ? operation.parsedProps
+                : componentDescriptor.cloneProps(context, nullptr, RawProps(operation.props));
             [viewDescriptor.view updateProps:props oldProps:nullptr];
             EventEmitter::Shared eventEmitter;
             auto instanceHandle = _directInstanceHandles.find(operation.tag);
@@ -488,12 +649,13 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
                                                  instanceHandle:instanceHandle->second];
               [viewDescriptor.view updateEventEmitter:eventEmitter];
             }
-            [viewDescriptor.view finalizeUpdates:RNComponentViewUpdateMaskProps |
-                                                    (eventEmitter ? RNComponentViewUpdateMaskEventEmitter : RNComponentViewUpdateMaskNone)];
+            [self directDeferFinalize:viewDescriptor.view
+                                 mask:RNComponentViewUpdateMaskProps |
+                                 (eventEmitter ? RNComponentViewUpdateMaskEventEmitter : RNComponentViewUpdateMaskNone)];
             auto pendingState = _directPendingStates.find(operation.tag);
             if (pendingState != _directPendingStates.end()) {
               [viewDescriptor.view updateState:pendingState->second oldState:nullptr];
-              [viewDescriptor.view finalizeUpdates:RNComponentViewUpdateMaskState];
+              [self directDeferFinalize:viewDescriptor.view mask:RNComponentViewUpdateMaskState];
               _directPendingStates.erase(pendingState);
             }
           } else if constexpr (std::is_same_v<Operation, DirectUpdatePropsOperation>) {
@@ -509,9 +671,11 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
               return;
             }
             auto oldProps = [view props];
-            auto newProps = componentDescriptor->cloneProps(context, oldProps, RawProps(operation.props));
+            auto newProps = operation.parsedProps != nullptr
+                ? operation.parsedProps
+                : componentDescriptor->cloneProps(context, oldProps, RawProps(operation.props));
             [view updateProps:newProps oldProps:oldProps];
-            [view finalizeUpdates:RNComponentViewUpdateMaskProps];
+            [self directDeferFinalize:view mask:RNComponentViewUpdateMaskProps];
             if (_directComponentNames[operation.tag] == "Image") {
               _directImageProps[operation.tag] = operation.props;
               updateImageState(operation.tag, operation.props);
@@ -562,7 +726,7 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
             auto oldMetrics = _directLayoutMetrics.find(operation.tag);
             [view updateLayoutMetrics:metrics
                      oldLayoutMetrics:oldMetrics == _directLayoutMetrics.end() ? EmptyLayoutMetrics : oldMetrics->second];
-            [view finalizeUpdates:RNComponentViewUpdateMaskLayoutMetrics];
+            [self directDeferFinalize:view mask:RNComponentViewUpdateMaskLayoutMetrics];
             _directLayoutMetrics[operation.tag] = metrics;
             if (_directComponentNames[operation.tag] == "Image") {
               auto imageProps = _directImageProps.find(operation.tag);
@@ -589,6 +753,15 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
               _directImageProps.erase(operation.tag);
               _directImageStates.erase(operation.tag);
               _directScrollStates.erase(operation.tag);
+              _directTextStates.erase(operation.tag);
+              _directCompatStates.erase(operation.tag);
+              // [LoomMemory] Padding and overflow-inset operations are recorded for flattened
+              // tags too, but only the mounted-view branch below erased them, so they grew with
+              // every flattened node ever created.
+              _directPendingStates.erase(operation.tag);
+              _directLayoutMetrics.erase(operation.tag);
+              _directContentInsets.erase(operation.tag);
+              _directOverflowInsets.erase(operation.tag);
               return;
             }
             // A speculative Loom renderer revision can retire a tag before
@@ -607,12 +780,16 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
               _directImageProps.erase(operation.tag);
               _directImageStates.erase(operation.tag);
               _directScrollStates.erase(operation.tag);
+              _directTextStates.erase(operation.tag);
+              _directCompatStates.erase(operation.tag);
               _directLayoutMetrics.erase(operation.tag);
               _directContentInsets.erase(operation.tag);
               _directOverflowInsets.erase(operation.tag);
               return;
             }
             auto descriptor = [registry componentViewDescriptorWithTag:operation.tag];
+            [self directDropFinalize:descriptor.view];
+            [self directUnregisterTransactionObserver:operation.tag surfaceId:surfaceId];
             const auto handle = [descriptor.view.class componentDescriptorProvider].handle;
             [registry enqueueComponentViewWithComponentHandle:handle
                                                           tag:operation.tag
@@ -631,6 +808,8 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
             _directImageProps.erase(operation.tag);
             _directImageStates.erase(operation.tag);
             _directScrollStates.erase(operation.tag);
+            _directTextStates.erase(operation.tag);
+            _directCompatStates.erase(operation.tag);
             _directLayoutMetrics.erase(operation.tag);
             _directContentInsets.erase(operation.tag);
             _directOverflowInsets.erase(operation.tag);
@@ -645,7 +824,103 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
     }
   }
   _directReplacedTags.clear();
+  [self directFinalizeUpdates];
+  LoomTextSetApplyingAnimationFrame(false);
+  [self directNotifyTransactionObservers:surfaceId
+                                  before:NO
+                             transaction:transactionForObservers];
   [_mountingManager.delegate mountingManager:_mountingManager didMountComponentsWithRootTag:surfaceId];
+}
+
+- (void)directRegisterTransactionObserver:(UIView<RCTComponentViewProtocol> *)view surfaceId:(SurfaceId)surfaceId
+{
+  if ([view respondsToSelector:@selector(mountingTransactionWillMount:withSurfaceTelemetry:)] ||
+      [view respondsToSelector:@selector(mountingTransactionDidMount:withSurfaceTelemetry:)]) {
+    _directTransactionObservers[surfaceId][view.tag] = view;
+  }
+}
+
+- (void)directUnregisterTransactionObserver:(Tag)tag surfaceId:(SurfaceId)surfaceId
+{
+  auto observers = _directTransactionObservers.find(surfaceId);
+  if (observers != _directTransactionObservers.end()) {
+    observers->second.erase(tag);
+    if (observers->second.empty()) {
+      _directTransactionObservers.erase(observers);
+    }
+  }
+}
+
+- (void)directNotifyTransactionObservers:(SurfaceId)surfaceId
+                                  before:(BOOL)before
+                             transaction:(const std::function<const MountingTransaction &()> &)transaction
+{
+  auto observers = _directTransactionObservers.find(surfaceId);
+  if (observers == _directTransactionObservers.end()) {
+    return;
+  }
+  // Observers may mount or unmount views (and so change this map) while being notified.
+  NSMutableArray<UIView<RCTMountingTransactionObserving> *> *views = [NSMutableArray new];
+  for (const auto &[tag, view] : observers->second) {
+    UIView<RCTComponentViewProtocol> *strongView = view;
+    if (strongView != nil) {
+      [views addObject:(UIView<RCTMountingTransactionObserving> *)strongView];
+    }
+  }
+  const SurfaceTelemetry telemetry;
+  for (UIView<RCTMountingTransactionObserving> *view in views) {
+    if (before) {
+      if ([view respondsToSelector:@selector(mountingTransactionWillMount:withSurfaceTelemetry:)]) {
+        [view mountingTransactionWillMount:transaction() withSurfaceTelemetry:telemetry];
+      }
+    } else if ([view respondsToSelector:@selector(mountingTransactionDidMount:withSurfaceTelemetry:)]) {
+      [view mountingTransactionDidMount:transaction() withSurfaceTelemetry:telemetry];
+    }
+  }
+}
+
+// The batch as the ShadowViewMutations Fabric would have produced for it, in the order they are
+// applied. Shadow views carry the tag and component name; Loom keeps no props or state objects
+// for them.
+- (ShadowViewMutationList)directMutationsForBatch:(const LoomMountBatch &)batch
+                                      descriptors:(const ComponentDescriptorRegistry &)descriptors
+{
+  ShadowViewMutationList mutations;
+  auto shadowView = [](Tag tag, ComponentName componentName) {
+    ShadowView view;
+    view.tag = tag;
+    view.componentName = componentName;
+    return view;
+  };
+  std::unordered_map<Tag, ComponentName> names;
+  for (const auto &phase : batch.phaseOperationIndexes) {
+    for (const auto operationIndex : phase) {
+      std::visit(
+          [&](const auto &operation) {
+            using Operation = std::decay_t<decltype(operation)>;
+            if constexpr (std::is_same_v<Operation, DirectCreateOperation>) {
+              if (operation.layoutable) {
+                const auto name = descriptors.at(operation.componentName).getComponentName();
+                names[operation.tag] = name;
+                mutations.push_back(ShadowViewMutation::CreateMutation(shadowView(operation.tag, name)));
+              }
+            } else if constexpr (std::is_same_v<Operation, DirectUpdatePropsOperation>) {
+              auto view = shadowView(operation.tag, names.count(operation.tag) ? names[operation.tag] : nullptr);
+              mutations.push_back(ShadowViewMutation::UpdateMutation(view, view, kNoTag));
+            } else if constexpr (std::is_same_v<Operation, DirectInsertOperation>) {
+              mutations.push_back(ShadowViewMutation::InsertMutation(
+                  operation.parentTag, shadowView(operation.tag, nullptr), static_cast<int>(operation.index)));
+            } else if constexpr (std::is_same_v<Operation, DirectRemoveOperation>) {
+              mutations.push_back(ShadowViewMutation::RemoveMutation(
+                  operation.parentTag, shadowView(operation.tag, nullptr), static_cast<int>(operation.index)));
+            } else if constexpr (std::is_same_v<Operation, DirectDeleteOperation>) {
+              mutations.push_back(ShadowViewMutation::DeleteMutation(shadowView(operation.tag, nullptr)));
+            }
+          },
+          batch.operations.at(operationIndex));
+    }
+  }
+  return mutations;
 }
 
 - (void)schedulerDirectRendererFailSurface:(SurfaceId)surfaceId reason:(const std::string &)reason
@@ -685,7 +960,7 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
                                        componentDescriptor:descriptors->at(componentName->second)
                                             instanceHandle:std::move(instanceHandle)];
     [view updateEventEmitter:eventEmitter];
-    [view finalizeUpdates:RNComponentViewUpdateMaskEventEmitter];
+    [self directDeferFinalize:view mask:RNComponentViewUpdateMaskEventEmitter];
   }
 }
 
@@ -833,31 +1108,63 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
                                       maximumSize:maximumSize];
 }
 
-- (void)schedulerDirectRendererUpdateTextState:(SurfaceId)surfaceId
-                                            tag:(Tag)tag
-                                  componentName:(const std::string &)componentName
-                                          props:(const folly::dynamic &)props
-                                attributedString:(const AttributedString &)attributedString
-                             paragraphAttributes:(const ParagraphAttributes &)paragraphAttributes
+- (void)schedulerDirectRendererUpdateTextState:(const facebook::react::LoomTextStateUpdate &)update
 {
-  (void)props;
-  if (componentNameByReactViewName(componentName) != "Paragraph") {
+  if (update.kind != LoomTextStateKind::Text && update.kind != LoomTextStateKind::Paragraph) {
     return;
   }
+  const SurfaceId surfaceId = update.surfaceId;
+  const Tag tag = update.tag;
+  const auto &layoutSize = update.prepared.size;
   _directSurfaceByTag[tag] = surfaceId;
   if (!_directTextLayoutManager) {
     _directTextLayoutManager = std::make_shared<TextLayoutManager>(_contextContainer);
   }
-  ParagraphState data{attributedString, paragraphAttributes, _directTextLayoutManager};
-  auto sharedData = std::make_shared<const ParagraphState>(std::move(data));
-  auto state = std::make_shared<const ParagraphShadowNode::ConcreteState>(
-      sharedData, ShadowNodeFamily::Weak{});
+  ParagraphShadowNode::ConcreteState::Shared state;
+  auto &last = _directTextStates[tag];
+  if (last.state && last.attributedString == update.attributedString &&
+      last.paragraphAttributes == update.paragraphAttributes && last.layoutSize == layoutSize) {
+    state = last.state;
+  } else {
+    // RCTParagraphComponentView draws into state.layoutSize (the content box, as ParagraphShadowNode
+    // sets it); a zero size would draw the paragraph unwrapped. The string copy here is the one the
+    // platform state type requires.
+    ParagraphState data{
+        .attributedString = *update.attributedString,
+        .paragraphAttributes = update.paragraphAttributes,
+        .layoutManager = _directTextLayoutManager,
+        .layoutSize = layoutSize};
+    auto sharedData = std::make_shared<const ParagraphState>(std::move(data));
+    state = std::make_shared<const ParagraphShadowNode::ConcreteState>(sharedData, ShadowNodeFamily::Weak{});
+    last.attributedString = update.attributedString;
+    last.paragraphAttributes = update.paragraphAttributes;
+    last.layoutSize = layoutSize;
+    last.state = state;
+  }
   if (auto *view = [_mountingManager.componentViewRegistry findComponentViewWithTag:tag]) {
     [view updateState:state oldState:nullptr];
-    [view finalizeUpdates:RNComponentViewUpdateMaskState];
+    [self directDeferFinalize:view mask:RNComponentViewUpdateMaskState];
   } else {
     _directPendingStates[tag] = std::move(state);
   }
+}
+
+- (void)schedulerDirectRendererUpdateComponentState:(SurfaceId)surfaceId
+                                                tag:(Tag)tag
+                                              state:(const State::Shared &)state
+{
+  // Fabric compatibility layer: the state object of the component's own ShadowNode (made by its
+  // ComponentDescriptor, with a live family), so the view's `state->updateState(...)` reaches
+  // the Loom renderer the way it reaches the shadow tree in Fabric.
+  _directSurfaceByTag[tag] = surfaceId;
+  auto oldState = _directCompatStates.find(tag);
+  if (auto *view = [_mountingManager.componentViewRegistry findComponentViewWithTag:tag]) {
+    [view updateState:state oldState:oldState == _directCompatStates.end() ? nullptr : oldState->second];
+    [self directDeferFinalize:view mask:RNComponentViewUpdateMaskState];
+  } else {
+    _directPendingStates[tag] = state;
+  }
+  _directCompatStates[tag] = state;
 }
 
 - (void)schedulerDirectRendererUpdateScrollContentBounds:(SurfaceId)surfaceId
@@ -888,7 +1195,7 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
   if (auto *view = [_mountingManager.componentViewRegistry findComponentViewWithTag:tag]) {
     [view updateState:state
              oldState:oldState == _directScrollStates.end() ? nullptr : oldState->second];
-    [view finalizeUpdates:RNComponentViewUpdateMaskState];
+    [self directDeferFinalize:view mask:RNComponentViewUpdateMaskState];
   } else {
     _directPendingStates[tag] = state;
   }
@@ -910,6 +1217,25 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
 {
   (void)surfaceId;
   [_mountingManager sendAccessibilityEvent:tag eventType:RCTNSStringFromString(name)];
+}
+
+- (BOOL)schedulerDirectRendererViewLocationInSurface:(SurfaceId)surfaceId tag:(Tag)tag location:(CGPoint *)location
+{
+  if (!NSThread.isMainThread) {
+    return NO;
+  }
+  RCTComponentViewRegistry *registry = _mountingManager.componentViewRegistry;
+  UIView *view = [registry findComponentViewWithTag:tag];
+  UIView *root = [registry findComponentViewWithTag:surfaceId];
+  if (view == nil || root == nil || view.window == nil || view.window != root.window) {
+    return NO;
+  }
+  // From the center, so the view's own transform (which an animation of its
+  // props carries) does not move the origin.
+  const CGRect bounds = view.bounds;
+  const CGPoint center = [view convertPoint:CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds)) toView:root];
+  *location = CGPointMake(center.x - bounds.size.width / 2, center.y - bounds.size.height / 2);
+  return YES;
 }
 
 - (void)schedulerDirectRendererSetJSResponder:(SurfaceId)surfaceId
