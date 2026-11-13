@@ -1,0 +1,14 @@
+pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+plugins { id("com.facebook.react.settings") }
+
+// Loom: materialize node_modules/.loom/react-native and substitute the prebuilt react-android /
+// hermes artifacts. Gradle allows no statement before the `plugins {}` block, so this goes right
+// after it and before autolinkLibrariesFromCommand(). LOOM_BENCH_STOCK=1 leaves Loom out.
+if (System.getenv("LOOM_BENCH_STOCK") != "1") {
+  apply from: file("../node_modules/react-native-loom/integration/android/loom.settings.gradle")
+}
+
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+rootProject.name = 'LoomCompatApp'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')

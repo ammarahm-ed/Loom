@@ -1,0 +1,13 @@
+# Real touches for screens/Gesture.tsx. The app must already show the gesture scenario
+# (Android: adb am start --es scenario react-native-gesture-handler; iOS: simctl launch -scenario ...).
+# Pass/fail comes from the [compat] line (logcat) and the on-screen counters.
+appId: ${APP_ID}
+---
+- assertVisible: "taps: 0 panEnds: 0 panX: 0"
+- tapOn: "tap me"
+- assertVisible: "taps: 1 panEnds: 0 panX: 0"
+- swipe:
+    start: 90%, 22%
+    end: 10%, 22%
+    duration: 400
+- assertVisible: "panEnds: 1"
