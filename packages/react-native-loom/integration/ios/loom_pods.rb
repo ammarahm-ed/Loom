@@ -36,3 +36,56 @@ module Loom
     end
   end
 end
+
+# Reanimated animates through React Native's shared animation backend, which Loom implements on
+# its own renderer (no shadow tree). Reanimated compiles that choice in from static feature flags
+# (`ReanimatedUtils.get_static_feature_flags`, read by its podspec), so switch them:
+# USE_ANIMATION_BACKEND on, and FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS (which cannot be
+# combined with it) off. Prepending works before Reanimated's helper is loaded.
+module ReanimatedUtils; end
+
+module Loom
+  def self.reanimated_static_flags(flags)
+    return flags unless flags.include?('USE_ANIMATION_BACKEND') # no backend in this Reanimated
+    flags
+      .gsub(/\[USE_ANIMATION_BACKEND:[a-z]+\]/, '[USE_ANIMATION_BACKEND:true]')
+      .gsub(/\[FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS:[a-z]+\]/,
+            '[FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS:false]')
+  end
+
+  module ReanimatedStaticFlags
+    def get_static_feature_flags
+      Loom.reanimated_static_flags(super)
+    end
+  end
+end
+
+ReanimatedUtils.singleton_class.prepend(Loom::ReanimatedStaticFlags)
+
+# Reanimated adapter (adapters/reanimated): for a supported Reanimated, the RNReanimated pod leaves
+# out its ReanimatedModuleProxy.cpp, which the autolinked RNLoomReanimated pod compiles in its
+# adapted form. node_modules is not modified.
+module Loom
+  def self.reanimated_adapter_supported?
+    return @reanimated_adapter_supported unless @reanimated_adapter_supported.nil?
+    @reanimated_adapter_supported = begin
+      app_root = ENV['LOOM_APP_ROOT'] || File.expand_path('..', Pod::Config.instance.installation_root.to_s)
+      package = `node --print "require.resolve('react-native-reanimated/package.json', {paths: [process.argv[1]]})" "#{app_root}" 2>/dev/null`.strip
+      supported = JSON.parse(File.read(File.expand_path('../../adapters/reanimated/supported.json', __dir__)))['versions']
+      !package.empty? && File.exist?(package) && supported.include?(JSON.parse(File.read(package))['version'])
+    rescue StandardError
+      false
+    end
+  end
+
+  module ReanimatedSourceExclusion
+    def initialize(parent = nil, name = nil, *args, **kwargs, &block)
+      super
+      if parent && parent.name == 'RNReanimated' && name == 'common' && Loom.reanimated_adapter_supported?
+        self.exclude_files = 'Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp'
+      end
+    end
+  end
+end
+
+Pod::Specification.prepend(Loom::ReanimatedSourceExclusion) if defined?(Pod::Specification)

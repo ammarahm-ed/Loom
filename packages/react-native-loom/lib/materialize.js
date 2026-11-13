@@ -117,6 +117,10 @@ function materialize({projectRoot, force = false, out, log = console.log}) {
     'ReactAndroid/.cxx',
     'ReactAndroid/hermes-engine/build',
     'ReactAndroid/hermes-engine/.cxx',
+    // Hermes source the Android build downloads and unpacks; without it every
+    // refresh re-downloads it (and CMake caches point at this path).
+    'sdks/download',
+    'sdks/hermes',
   ]) {
     const cached = path.join(dest, relative);
     if (!fs.existsSync(cached)) continue;

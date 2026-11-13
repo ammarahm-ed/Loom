@@ -8,11 +8,14 @@
   },
   "files": [
     "bin",
+    "adapters",
     "lib",
     "src",
     "android-tests",
     "integration",
-    "overrides.json"
+    "overrides.json",
+    "react-native.config.js",
+    "RNLoomReanimated.podspec"
   ],
   "engines": {
     "node": ">=20"

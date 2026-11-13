@@ -64,11 +64,83 @@ if (!new File(loomReactNativeDir, ".loom-stamp.json").exists()) {
 }
 gradle.ext.loomReactNativeDir = loomReactNativeDir
 
+// Native libraries (Reanimated, Worklets, gesture-handler, screens, svg, ...) compile against
+// React Native's C++ headers, and find them through this conventional root-project property, or
+// failing that through Node resolution, which lands on the stock package. Point them at the Loom
+// tree so their native code is built against the headers React Native itself is built from.
+// Libraries read it from the root project or from the app project, so every project carries it.
+gradle.beforeProject { p ->
+  if (!p.ext.has("REACT_NATIVE_NODE_MODULES_DIR")) {
+    p.ext.REACT_NATIVE_NODE_MODULES_DIR = loomReactNativeDir.absolutePath
+  }
+}
+
 includeBuild(loomReactNativeDir) {
   dependencySubstitution {
     substitute(module("com.facebook.react:react-android")).using(project(":packages:react-native:ReactAndroid"))
     substitute(module("com.facebook.react:react-native")).using(project(":packages:react-native:ReactAndroid"))
     substitute(module("com.facebook.react:hermes-android")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
     substitute(module("com.facebook.react:hermes-engine")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+  }
+}
+
+// Native libraries that link Hermes (react-native-worklets, Reanimated, ...) read its Prefab
+// package when their CMake build is configured. Gradle does not carry that dependency across the
+// composite-build boundary, so without this a clean build configures them against the
+// headers-only Hermes package and fails to link libhermesvm. Make each CMake configure task wait
+// for the matching Hermes Prefab configuration.
+gradle.allprojects { p ->
+  p.tasks.configureEach { t ->
+    if (t.name.startsWith("configureCMake")) {
+      def variant = t.name.contains("Debug") && !t.name.contains("RelWithDebInfo") ? "Debug" : "Release"
+      t.dependsOn(gradle.includedBuild(loomReactNativeDir.name)
+          .task(":packages:react-native:ReactAndroid:hermes-engine:prefab${variant}ConfigurePackage"))
+    }
+  }
+}
+
+// Reanimated animates through React Native's shared animation backend, which Loom implements
+// on its own renderer (no shadow tree). Reanimated compiles that choice in from static feature
+// flags, so switch them for its native build: USE_ANIMATION_BACKEND on, and
+// FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS (which cannot be combined with it) off.
+def loomReanimatedFlags = { String flags ->
+  if (!flags.contains("USE_ANIMATION_BACKEND")) {
+    return flags // A Reanimated without the backend: nothing to switch.
+  }
+  return flags
+      .replaceAll(/\[USE_ANIMATION_BACKEND:[a-z]+\]/, "[USE_ANIMATION_BACKEND:true]")
+      .replaceAll(/\[FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS:[a-z]+\]/,
+          "[FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS:false]")
+}
+gradle.beforeProject { p ->
+  if (p.name != "react-native-reanimated") {
+    return
+  }
+  p.plugins.withId("com.android.library") {
+    p.extensions.getByName("androidComponents").finalizeDsl { android ->
+      def args = android.defaultConfig.externalNativeBuild.cmake.arguments
+      for (int i = 0; i < args.size(); i++) {
+        def prefix = "-DREANIMATED_FEATURE_FLAGS="
+        if (args[i].startsWith(prefix)) {
+          args[i] = prefix + loomReanimatedFlags(args[i].substring(prefix.length()))
+        }
+      }
+      // Reanimated adapter (adapters/reanimated): for a supported Reanimated, its CMake build puts
+      // the adapter's ReanimatedModuleProxy.cpp in place of the original (README there).
+      def adapterDir = new File(loomBin.parentFile.parentFile, "adapters/reanimated")
+      def reanimatedVersion = new groovy.json.JsonSlurper()
+          .parse(new File(p.projectDir.parentFile, "package.json")).version
+      def supported = new groovy.json.JsonSlurper()
+          .parse(new File(adapterDir, "supported.json")).versions
+      if (supported.contains(reanimatedVersion)) {
+        args.add("-DCMAKE_PROJECT_Reanimated_INCLUDE=" +
+            new File(adapterDir, "android/loom-reanimated.cmake").absolutePath)
+        args.add("-DLOOM_REANIMATED_ADAPTER_DIR=" + adapterDir.absolutePath)
+        args.add("-DLOOM_REANIMATED_VERSION=" + reanimatedVersion)
+      } else {
+        logger.warn("Loom: react-native-reanimated ${reanimatedVersion} has no Loom adapter " +
+            "(supported: ${supported}); layout animations will mount without animating.")
+      }
+    }
   }
 }
