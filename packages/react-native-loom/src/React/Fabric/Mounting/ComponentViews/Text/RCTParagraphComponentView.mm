@@ -15,6 +15,7 @@
 #import <react/renderer/components/text/ParagraphState.h>
 #import <react/renderer/components/text/RawTextComponentDescriptor.h>
 #import <react/renderer/components/text/TextComponentDescriptor.h>
+#import <react/renderer/runtimescheduler/LoomSettings.h>
 #import <react/renderer/textlayoutmanager/RCTAttributedTextUtils.h>
 #import <react/renderer/textlayoutmanager/RCTTextLayoutManager.h>
 #import <react/renderer/textlayoutmanager/TextLayoutManager.h>
@@ -547,10 +548,10 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame)
 //     for itself (trait or scale changes).
 // Transform and opacity animations never redraw text, so they are unaffected.
 //
-// Switches, read once at launch from NSUserDefaults (so also from launch arguments, e.g.
-// `-LoomAsyncText NO`), defaulting to the compile-time values:
-//   LoomAsyncText            asynchronous text at all (LOOM_IOS_ASYNC_TEXT)
-//   LoomAsyncTextFirstDraw   asynchronous first drawings (LOOM_IOS_ASYNC_TEXT_FIRST_DRAW)
+// Switches, runtime settings (`Loom.asyncText`, `Loom.asyncTextFirstDraw`, `Loom.asyncTextResize`; see
+// LoomSettings.h). Startup values come from the Info.plist `Loom` dictionary, then NSUserDefaults
+// (so also launch arguments, e.g. `-LoomAsyncText NO`); JavaScript can change them while running.
+// A change applies to the next drawing.
 
 namespace {
 struct LoomTextDisplayCounters {
@@ -566,29 +567,22 @@ struct LoomTextDisplayCounters {
 };
 LoomTextDisplayCounters gLoomTextCounters;
 
-bool LoomUserDefault(NSString *key, bool fallback)
-{
-  id value = [NSUserDefaults.standardUserDefaults objectForKey:key];
-  return [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : fallback;
-}
-
+// Read on every use (a relaxed load, see LoomSettings.h), so `Loom.asyncText = false` applies to
+// the next drawing. The registry is filled at startup by RCTSurfacePresenter.
 bool LoomAsyncTextEnabled()
 {
-  static const bool enabled = LoomUserDefault(@"LoomAsyncText", true);
-  return enabled;
+  return facebook::react::LoomSettings::enabled(facebook::react::LoomSettingId::AsyncText);
 }
 
 bool LoomAsyncTextFirstDrawEnabled()
 {
-  static const bool enabled = LoomUserDefault(@"LoomAsyncTextFirstDraw", LOOM_IOS_ASYNC_TEXT_FIRST_DRAW != 0);
-  return enabled;
+  return facebook::react::LoomSettings::enabled(facebook::react::LoomSettingId::AsyncTextFirstDraw);
 }
 
 // A one-off resize (a commit, not an animation) drawn in the background.
 bool LoomAsyncTextResizeEnabled()
 {
-  static const bool enabled = LoomUserDefault(@"LoomAsyncTextResize", true);
-  return enabled;
+  return facebook::react::LoomSettings::enabled(facebook::react::LoomSettingId::AsyncTextResize);
 }
 } // namespace
 

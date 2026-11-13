@@ -67,6 +67,12 @@
 #import <react/renderer/uimanager/LoomBinding.h>
 #import <react/renderer/uimanager/LoomEventManager.h>
 #import <react/renderer/uimanager/LoomRenderer.h>
+#import <react/renderer/uimanager/LoomHost.h>
+#import <react/renderer/uimanager/LoomTextLayoutManagerServices.h>
+#import <react/renderer/uimanager/LoomViewManagerNames.h>
+#import <dispatch/dispatch.h>
+#import <os/log.h>
+#import <pthread.h>
 #endif
 #import "AppleEventBeat.h"
 
@@ -78,27 +84,60 @@ using namespace facebook::react;
 
 @interface RCTSurfacePresenter () <RCTSchedulerDelegate, RCTMountingManagerDelegate>
 - (void)_drainPendingReactRevisionMerges;
+#if LOOM_RENDERER
+// What the Loom host (LoomIOSHost, below) forwards to.
+- (BOOL)schedulerDirectRendererCanMeasureTextOnWorker;
+- (void)schedulerDirectRendererApplyBatch:(SurfaceId)surfaceId batch:(LoomMountBatch)batch;
+- (void)schedulerDirectRendererFailSurface:(SurfaceId)surfaceId reason:(const std::string &)reason;
+- (void)schedulerDirectRendererRegisterEventTarget:(SurfaceId)surfaceId
+                                               tag:(Tag)tag
+                                    instanceHandle:(InstanceHandle::Shared)instanceHandle;
+- (void)schedulerDirectRendererUnregisterEventTarget:(SurfaceId)surfaceId tag:(Tag)tag;
+- (void)schedulerDirectRendererDispatchEvent:(SurfaceId)surfaceId
+                                         tag:(Tag)tag
+                                        name:(const std::string &)name
+                                     payload:(folly::dynamic)payload
+                                    category:(RawEvent::Category)category
+                                      unique:(BOOL)unique;
+- (std::optional<facebook::react::Size>)schedulerDirectRendererMeasureText:(SurfaceId)surfaceId
+                                                          attributedString:(const AttributedString &)attributedString
+                                                       paragraphAttributes:(const ParagraphAttributes &)paragraphAttributes
+                                                               minimumSize:(const facebook::react::Size &)minimumSize
+                                                               maximumSize:(const facebook::react::Size &)maximumSize;
+- (LoomTextMeasurement)schedulerDirectRendererPrepareText:(SurfaceId)surfaceId
+                                         attributedString:(const AttributedString &)attributedString
+                                      paragraphAttributes:(const ParagraphAttributes &)paragraphAttributes
+                                              minimumSize:(const facebook::react::Size &)minimumSize
+                                              maximumSize:(const facebook::react::Size &)maximumSize;
+- (LoomTextMeasurement)schedulerDirectRendererPrepareTextForMount:(SurfaceId)surfaceId
+                                                 attributedString:(const AttributedString &)attributedString
+                                              paragraphAttributes:(const ParagraphAttributes &)paragraphAttributes
+                                                      minimumSize:(const facebook::react::Size &)minimumSize
+                                                      maximumSize:(const facebook::react::Size &)maximumSize;
+- (void)schedulerDirectRendererUpdateTextState:(const LoomTextStateUpdate &)update;
+- (void)schedulerDirectRendererUpdateComponentState:(SurfaceId)surfaceId
+                                                tag:(Tag)tag
+                                              state:(const State::Shared &)state;
+- (void)schedulerDirectRendererUpdateScrollContentBounds:(SurfaceId)surfaceId
+                                                     tag:(Tag)tag
+                                                   props:(const folly::dynamic &)props
+                                                  bounds:(const facebook::react::Rect &)bounds;
+- (void)schedulerDirectRendererDispatchCommand:(SurfaceId)surfaceId
+                                           tag:(Tag)tag
+                                          name:(const std::string &)name
+                                          args:(const folly::dynamic &)args;
+- (void)schedulerDirectRendererAccessibilityEvent:(SurfaceId)surfaceId tag:(Tag)tag name:(const std::string &)name;
+/** Origin of `tag`'s view in its surface's root view, on the main thread. NO if it is not mounted. */
+- (BOOL)schedulerDirectRendererViewLocationInSurface:(SurfaceId)surfaceId tag:(Tag)tag location:(CGPoint *)location;
+- (void)schedulerDirectRendererSetJSResponder:(SurfaceId)surfaceId
+                                          tag:(Tag)tag
+                                  isResponder:(BOOL)isResponder
+                         blockNativeResponder:(BOOL)blockNativeResponder;
+- (float)loomFontSizeMultiplier;
+#endif
 @end
 
 namespace {
-template <typename PropsT>
-struct DirectPropsParser final {
-  RawPropsParser parser;
-  DirectPropsParser() { parser.prepare<PropsT>(); }
-};
-
-const RawPropsParser &directParagraphPropsParser()
-{
-  static const DirectPropsParser<ParagraphProps> parser;
-  return parser.parser;
-}
-
-const RawPropsParser &directTextPropsParser()
-{
-  static const DirectPropsParser<TextProps> parser;
-  return parser.parser;
-}
-
 class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::Delegate {
  public:
   explicit ReactRevisionMergeRunLoopObserverDelegate(RCTSurfacePresenter *surfacePresenter)
@@ -119,11 +158,363 @@ class ReactRevisionMergeRunLoopObserverDelegate final : public RunLoopObserver::
 
 
 #if LOOM_RENDERER
-static bool LoomUserDefault(NSString *key, bool fallback)
+// Resolves the runtime settings (LoomSettings.h) before any surface starts: the built-in
+// defaults, then the Info.plist `Loom` dictionary (key = the setting's name, e.g. `asyncText`),
+// then the legacy overrides: NSUserDefaults (so launch arguments such as `-LoomAsyncText NO`)
+// and the LOOM_PROFILE_WORKER environment variable. JavaScript writes (`Loom.x = y`) come after.
+#ifndef LOOM_IOS_ASYNC_TEXT_FIRST_DRAW
+#define LOOM_IOS_ASYNC_TEXT_FIRST_DRAW 1
+#endif
+
+// NSString "NO"/"YES" (launch arguments) and NSNumber both answer boolValue.
+static int LoomSettingNumber(id value, facebook::react::LoomSettingType type, bool *found)
 {
-  id value = [NSUserDefaults.standardUserDefaults objectForKey:key];
-  return [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : fallback;
+  const bool isBool = type == facebook::react::LoomSettingType::Bool;
+  *found = [value respondsToSelector:isBool ? @selector(boolValue) : @selector(intValue)];
+  if (!*found) {
+    return 0;
+  }
+  return isBool ? ([value boolValue] ? 1 : 0) : [value intValue];
 }
+
+static void LoomIOSLoadSettings()
+{
+  using namespace facebook::react;
+  LoomSettings::configurePlatform(kLoomPlatformIOS);
+  LoomSettings::set(LoomSettingId::AsyncTextFirstDraw, LOOM_IOS_ASYNC_TEXT_FIRST_DRAW != 0);
+  NSDictionary *config = [NSBundle.mainBundle objectForInfoDictionaryKey:@"Loom"];
+  if (![config isKindOfClass:NSDictionary.class]) {
+    config = nil;
+  }
+  for (size_t i = 0; i < LoomSettings::kCount; i++) {
+    const auto setting = static_cast<LoomSettingId>(i);
+    const auto &info = LoomSettings::info(setting);
+    if (info.readOnly || !LoomSettings::applies(setting)) {
+      continue;
+    }
+    bool found = false;
+    int number = LoomSettingNumber(config[@(info.name)], info.type, &found);
+    if (found) {
+      LoomSettings::set(setting, number);
+    }
+    if (info.iosKey != nullptr) {
+      number = LoomSettingNumber([NSUserDefaults.standardUserDefaults objectForKey:@(info.iosKey)], info.type, &found);
+      if (found) {
+        LoomSettings::set(setting, number);
+      }
+    }
+  }
+  const char *profile = getenv("LOOM_PROFILE_WORKER");
+  if (profile != nullptr && profile[0] == '1') {
+    LoomSettings::set(LoomSettingId::ProfileWorker, 1);
+  }
+}
+
+// Applies an update as `cloneProps(oldProps, rawProps)`, which keeps every key the raw
+// props leave out (what Fabric does with React's diff), so every component can take only
+// the changed keys. Image is the exception: its state is rebuilt from the raw props the
+// applier was given.
+static bool LoomSendsPropDiffs(const std::string &hostName)
+{
+  return hostName.find("Image") == std::string::npos;
+}
+
+static void LoomLog(LoomLogLevel level, const char *tag, const char *message)
+{
+  os_log(OS_LOG_DEFAULT, "%{public}s: %{public}s", tag, message);
+  if (level != LoomLogLevel::Info) {
+    // The bench harness reads the device console, which has stderr only.
+    fprintf(stderr, "%s: %s\n", tag, message);
+  }
+}
+
+static LoomPlatformTraits LoomIOSTraits()
+{
+  LoomPlatformTraits traits;
+  traits.components = loomViewManagerComponentTable();
+  traits.sendsPropDiffs = LoomSendsPropDiffs;
+  // Paragraph views lay their text out in the state's content size.
+  traits.republishTextStateOnResize = true;
+  // ParagraphComponentView draws attributed-string state through TextLayoutManager; the
+  // measurement API has no renderable prepared-layout handle to publish.
+  traits.hasPreparedTextLayout = false;
+  traits.parallelFor = [](size_t count, const std::function<void(size_t)> &body) {
+    const auto *work = &body;
+    dispatch_apply(count, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^(size_t index) {
+      (*work)(index);
+    });
+  };
+  traits.log = LoomLog;
+  traits.isUIThread = [] { return pthread_main_np() != 0; };
+  // std::thread's 512 KB default is too small for Yoga plus the worker's recursive tree
+  // walks; the stack is at least as large as the JS thread's, which React Native doubles
+  // under RCT_DEBUG.
+  traits.workerStackSize = 2 * 1024 * 1024;
+  traits.workerThreadName = "com.loom.worker";
+  traits.setCurrentThreadName = [](const char *name) { pthread_setname_np(name); };
+  return traits;
+}
+
+namespace {
+/** The presenter's text engine: its measurement and prepared-layout paths, and RN's own attribute parser. */
+class LoomIOSTextServices final : public LoomTextLayoutManagerServices {
+ public:
+  LoomIOSTextServices(std::shared_ptr<const ContextContainer> contextContainer, RCTSurfacePresenter *presenter)
+      : LoomTextLayoutManagerServices(std::move(contextContainer), nullptr, false), presenter_(presenter)
+  {
+  }
+
+  std::optional<facebook::react::Size> measureText(
+      SurfaceId surfaceId,
+      const AttributedString &attributedString,
+      const ParagraphAttributes &paragraphAttributes,
+      const facebook::react::Size &minimumSize,
+      const facebook::react::Size &maximumSize) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return std::nullopt;
+    }
+    return [presenter schedulerDirectRendererMeasureText:surfaceId
+                                         attributedString:attributedString
+                                      paragraphAttributes:paragraphAttributes
+                                              minimumSize:minimumSize
+                                              maximumSize:maximumSize];
+  }
+
+  bool canMeasureOnWorker() override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    return presenter != nil && [presenter schedulerDirectRendererCanMeasureTextOnWorker];
+  }
+
+  TextAttributes parseTextAttributes(
+      SurfaceId surfaceId,
+      const std::string &componentName,
+      const folly::dynamic &props,
+      const TextAttributes &inherited,
+      ParagraphAttributes &outParagraphAttributes) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return inherited;
+    }
+    auto adjusted = inherited;
+    adjusted.fontSizeMultiplier = [presenter loomFontSizeMultiplier];
+    return LoomTextLayoutManagerServices::parseTextAttributes(
+        surfaceId, componentName, props, adjusted, outParagraphAttributes);
+  }
+
+  LoomTextMeasurement prepareText(
+      SurfaceId surfaceId,
+      const AttributedString &attributedString,
+      const ParagraphAttributes &paragraphAttributes,
+      const facebook::react::Size &minimumSize,
+      const facebook::react::Size &maximumSize) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return LoomTextMeasurement{};
+    }
+    return [presenter schedulerDirectRendererPrepareText:surfaceId
+                                         attributedString:attributedString
+                                      paragraphAttributes:paragraphAttributes
+                                              minimumSize:minimumSize
+                                              maximumSize:maximumSize];
+  }
+
+  LoomTextMeasurement prepareTextForMount(
+      SurfaceId surfaceId,
+      const AttributedString &attributedString,
+      const ParagraphAttributes &paragraphAttributes,
+      const facebook::react::Size &minimumSize,
+      const facebook::react::Size &maximumSize) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return LoomTextMeasurement{};
+    }
+    return [presenter schedulerDirectRendererPrepareTextForMount:surfaceId
+                                                 attributedString:attributedString
+                                              paragraphAttributes:paragraphAttributes
+                                                      minimumSize:minimumSize
+                                                      maximumSize:maximumSize];
+  }
+
+ private:
+  __weak RCTSurfacePresenter *presenter_;
+};
+
+/** The iOS `LoomHost`: the main queue is the UI thread, and the presenter owns the views. */
+class LoomIOSHost final : public LoomHost {
+ public:
+  LoomIOSHost(RCTSurfacePresenter *presenter, std::shared_ptr<const ContextContainer> contextContainer)
+      : presenter_(presenter), text_(std::move(contextContainer), presenter)
+  {
+  }
+
+  LoomPlatformTraits traits() const override
+  {
+    return LoomIOSTraits();
+  }
+
+  std::function<void(std::function<void()>)> uiExecutor() override
+  {
+    return [](std::function<void()> callback) {
+      dispatch_async(dispatch_get_main_queue(), ^{ callback(); });
+    };
+  }
+
+  void applyBatch(SurfaceId surfaceId, LoomMountBatch batch) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererApplyBatch:surfaceId batch:std::move(batch)];
+  }
+
+  void failSurface(SurfaceId surfaceId, const std::string &reason) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererFailSurface:surfaceId reason:reason];
+  }
+
+  void updateViewProps(Tag tag, const folly::dynamic &props) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDidSynchronouslyUpdateViewOnUIThread:tag props:props];
+  }
+
+  void registerEventTarget(SurfaceId surfaceId, Tag tag, InstanceHandle::Shared instanceHandle) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererRegisterEventTarget:surfaceId tag:tag instanceHandle:std::move(instanceHandle)];
+  }
+
+  void unregisterEventTarget(SurfaceId surfaceId, Tag tag) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererUnregisterEventTarget:surfaceId tag:tag];
+  }
+
+  void dispatchEvent(
+      SurfaceId surfaceId,
+      Tag tag,
+      const std::string &eventName,
+      folly::dynamic payload,
+      RawEvent::Category category,
+      bool unique) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererDispatchEvent:surfaceId
+                                                 tag:tag
+                                                name:eventName
+                                             payload:std::move(payload)
+                                            category:category
+                                              unique:unique];
+  }
+
+  void updateComponentState(SurfaceId surfaceId, Tag tag, const std::shared_ptr<const State> &state) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererUpdateComponentState:surfaceId tag:tag state:state];
+  }
+
+  void updateTextState(const LoomTextStateUpdate &update) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererUpdateTextState:update];
+  }
+
+  void updateScrollContentBounds(
+      SurfaceId surfaceId,
+      Tag tag,
+      const folly::dynamic &props,
+      const facebook::react::Rect &bounds) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererUpdateScrollContentBounds:surfaceId tag:tag props:props bounds:bounds];
+  }
+
+  void dispatchCommand(SurfaceId surfaceId, Tag tag, const std::string &commandName, const folly::dynamic &args)
+      override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererDispatchCommand:surfaceId tag:tag name:commandName args:args];
+  }
+
+  void sendAccessibilityEvent(SurfaceId surfaceId, Tag tag, const std::string &eventType) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererAccessibilityEvent:surfaceId tag:tag name:eventType];
+  }
+
+  void setIsJSResponder(SurfaceId surfaceId, Tag tag, bool isJSResponder, bool blockNativeResponder) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return;
+    }
+    [presenter schedulerDirectRendererSetJSResponder:surfaceId
+                                                  tag:tag
+                                          isResponder:isJSResponder
+                                 blockNativeResponder:blockNativeResponder];
+  }
+
+  std::optional<std::pair<float, float>> getViewLocationInSurface(SurfaceId surfaceId, Tag tag) override
+  {
+    RCTSurfacePresenter *presenter = presenter_;
+    if (!presenter) {
+      return std::nullopt;
+    }
+    CGPoint location;
+    if (![presenter schedulerDirectRendererViewLocationInSurface:surfaceId tag:tag location:&location]) {
+      return std::nullopt;
+    }
+    return std::pair<float, float>{static_cast<float>(location.x), static_cast<float>(location.y)};
+  }
+
+  LoomTextServices *textServices() override
+  {
+    return &text_;
+  }
+
+ private:
+  __weak RCTSurfacePresenter *presenter_;
+  LoomIOSTextServices text_;
+};
+} // namespace
 #endif
 
 extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
@@ -227,9 +618,8 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
     _directTextScale.store(1.0f);
     _directFontSizeMultiplier.store(1.0f);
     _directTextLayoutManager = std::make_shared<TextLayoutManager>(_contextContainer);
-    // Startup switches (launch arguments or NSUserDefaults), on by default.
-    LoomStartupOptions::earlyCreate.store(LoomUserDefault(@"LoomEarlyCreate", true));
-    LoomStartupOptions::parallelText.store(LoomUserDefault(@"LoomParallelText", true));
+    LoomIOSLoadSettings();
+    LoomHost::registerIn(*_contextContainer, std::make_shared<LoomIOSHost>(self, _contextContainer));
 #endif
 
     _surfaceRegistry = [RCTSurfaceRegistry new];
@@ -1018,32 +1408,13 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   return !RCTHasFontHandlerSet();
 }
 
-- (TextAttributes)schedulerDirectRendererParseTextAttributes:(SurfaceId)surfaceId
-                                                       name:(const std::string &)name
-                                                      props:(const folly::dynamic &)props
-                                                  inherited:(const TextAttributes &)inherited
-                                         paragraphAttributes:(ParagraphAttributes &)paragraphAttributes
+- (float)loomFontSizeMultiplier
 {
-  auto attributes = inherited;
 #if LOOM_WORKER
-  attributes.fontSizeMultiplier = _directFontSizeMultiplier.load();
+  return _directFontSizeMultiplier.load();
 #else
-  attributes.fontSizeMultiplier = RCTFontSizeMultiplier();
+  return RCTFontSizeMultiplier();
 #endif
-  const auto unifiedName = componentNameByReactViewName(name);
-  PropsParserContext context{surfaceId, *_contextContainer};
-  RawProps rawProps{props};
-  if (unifiedName == "Paragraph") {
-    rawProps.parse(directParagraphPropsParser());
-    ParagraphProps parsed{context, ParagraphProps{}, rawProps};
-    attributes.apply(parsed.textAttributes);
-    paragraphAttributes = parsed.paragraphAttributes;
-  } else if (unifiedName == "Text") {
-    rawProps.parse(directTextPropsParser());
-    TextProps parsed{context, TextProps{}, rawProps};
-    attributes.apply(parsed.textAttributes);
-  }
-  return attributes;
 }
 
 - (std::optional<facebook::react::Size>)schedulerDirectRendererMeasureText:(SurfaceId)surfaceId

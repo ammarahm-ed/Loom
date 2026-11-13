@@ -16,8 +16,6 @@
 #import <react/renderer/scheduler/SchedulerToolbox.h>
 #import <react/renderer/scheduler/SurfaceHandler.h>
 #import <react/renderer/uimanager/UIManager.h>
-#import <react/renderer/uimanager/LoomMountBatch.h>
-#import <react/renderer/uimanager/LoomTextMeasurement.h>
 
 namespace facebook::react {
 struct AnimatedProps;
@@ -56,67 +54,6 @@ NS_ASSUME_NONNULL_BEGIN
     (const std::unordered_map<facebook::react::Tag, facebook::react::AnimatedProps> &)updates;
 #endif
 
-#if LOOM_RENDERER
-- (BOOL)schedulerDirectRendererCanMeasureTextOnWorker;
-- (void)schedulerDirectRendererApplyBatch:(facebook::react::SurfaceId)surfaceId
-                                    batch:(facebook::react::LoomMountBatch)batch;
-- (void)schedulerDirectRendererFailSurface:(facebook::react::SurfaceId)surfaceId
-                                    reason:(const std::string &)reason;
-- (void)schedulerDirectRendererRegisterEventTarget:(facebook::react::SurfaceId)surfaceId
-                                               tag:(facebook::react::Tag)tag
-                                    instanceHandle:(facebook::react::InstanceHandle::Shared)instanceHandle;
-- (void)schedulerDirectRendererUnregisterEventTarget:(facebook::react::SurfaceId)surfaceId
-                                                 tag:(facebook::react::Tag)tag;
-- (void)schedulerDirectRendererDispatchEvent:(facebook::react::SurfaceId)surfaceId
-                                         tag:(facebook::react::Tag)tag
-                                       name:(const std::string &)name
-                                     payload:(folly::dynamic)payload
-                                    category:(facebook::react::RawEvent::Category)category
-                                      unique:(BOOL)unique;
-- (facebook::react::TextAttributes)schedulerDirectRendererParseTextAttributes:(facebook::react::SurfaceId)surfaceId
-                                                                          name:(const std::string &)name
-                                                                         props:(const folly::dynamic &)props
-                                                                     inherited:(const facebook::react::TextAttributes &)inherited
-                                                            paragraphAttributes:(facebook::react::ParagraphAttributes &)paragraphAttributes;
-- (std::optional<facebook::react::Size>)schedulerDirectRendererMeasureText:(facebook::react::SurfaceId)surfaceId
-                                                              attributedString:(const facebook::react::AttributedString &)attributedString
-                                                           paragraphAttributes:(const facebook::react::ParagraphAttributes &)paragraphAttributes
-                                                                  minimumSize:(const facebook::react::Size &)minimumSize
-                                                                  maximumSize:(const facebook::react::Size &)maximumSize;
-- (facebook::react::LoomTextMeasurement)schedulerDirectRendererPrepareText:(facebook::react::SurfaceId)surfaceId
-                                                               attributedString:(const facebook::react::AttributedString &)attributedString
-                                                            paragraphAttributes:(const facebook::react::ParagraphAttributes &)paragraphAttributes
-                                                                   minimumSize:(const facebook::react::Size &)minimumSize
-                                                                   maximumSize:(const facebook::react::Size &)maximumSize;
-- (facebook::react::LoomTextMeasurement)schedulerDirectRendererPrepareTextForMount:(facebook::react::SurfaceId)surfaceId
-                                                                      attributedString:(const facebook::react::AttributedString &)attributedString
-                                                                   paragraphAttributes:(const facebook::react::ParagraphAttributes &)paragraphAttributes
-                                                                          minimumSize:(const facebook::react::Size &)minimumSize
-                                                                          maximumSize:(const facebook::react::Size &)maximumSize;
-- (void)schedulerDirectRendererUpdateTextState:(const facebook::react::LoomTextStateUpdate &)update;
-- (void)schedulerDirectRendererUpdateComponentState:(facebook::react::SurfaceId)surfaceId
-                                                tag:(facebook::react::Tag)tag
-                                              state:(const facebook::react::State::Shared &)state;
-- (void)schedulerDirectRendererUpdateScrollContentBounds:(facebook::react::SurfaceId)surfaceId
-                                                     tag:(facebook::react::Tag)tag
-                                                    props:(const folly::dynamic &)props
-                                                   bounds:(const facebook::react::Rect &)bounds;
-- (void)schedulerDirectRendererDispatchCommand:(facebook::react::SurfaceId)surfaceId
-                                           tag:(facebook::react::Tag)tag
-                                         name:(const std::string &)name
-                                         args:(const folly::dynamic &)args;
-- (void)schedulerDirectRendererAccessibilityEvent:(facebook::react::SurfaceId)surfaceId
-                                               tag:(facebook::react::Tag)tag
-                                              name:(const std::string &)name;
-/** Origin of `tag`'s view in its surface's root view, on the main thread. NO if it is not mounted. */
-- (BOOL)schedulerDirectRendererViewLocationInSurface:(facebook::react::SurfaceId)surfaceId
-                                                 tag:(facebook::react::Tag)tag
-                                            location:(CGPoint *)location;
-- (void)schedulerDirectRendererSetJSResponder:(facebook::react::SurfaceId)surfaceId
-                                           tag:(facebook::react::Tag)tag
-                                     isResponder:(BOOL)isResponder
-                            blockNativeResponder:(BOOL)blockNativeResponder;
-#endif
 @end
 
 /**
