@@ -2,7 +2,7 @@
 
 A stock React Native **0.87.1** app (generated with
 `@react-native-community/cli@20.2.0 init` from
-`@react-native-community/template@0.87.1`) wired through the `react-native-loom`
+`@react-native-community/template@0.87.1`) wired through the Loom
 integrations. It exists to prove the out-of-tree model works end to end:
 
 - **Android** builds React Native from the materialized sources
