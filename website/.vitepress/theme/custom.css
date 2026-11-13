@@ -1,0 +1,15 @@
+/* Mermaid sizes each box before the page's styles apply. Keep VitePress's paragraph line
+   height and wrapping out of diagram labels so the text fits the box it was measured for. */
+.vp-doc .mermaid foreignObject div,
+.vp-doc .mermaid foreignObject span,
+.vp-doc .mermaid foreignObject p {
+  line-height: 1.5 !important;
+  white-space: nowrap !important;
+  margin: 0 !important;
+}
+
+.vp-doc .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 24px 0;
+}

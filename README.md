@@ -2,10 +2,9 @@
 
 # react-native-loom
 
-**The machine behind the Fabric.** Loom is a React Native distribution with its
-own renderer: React's output is woven straight into native views, with
-JavaScript on the main thread like a native app (instant updates, synchronous
-native lists) or on its own thread, and compile-time switches to choose.
+**A faster renderer for React Native.** Loom replaces Fabric with its own renderer: React's output is woven straight into native views, with
+JavaScript on the main thread like a native app (instant updates) or on its own
+thread, and compile-time switches to choose.
 
 It is maintained **out of tree**: a package that layers explicit, hash-tracked,
 3-way-mergeable overrides on top of the **unmodified `react-native` from npm**,
@@ -162,7 +161,7 @@ With none set, the build is stock React Native:
 The usual configurations:
 
 ```properties
-# JavaScript on the main thread: instant updates, synchronous native lists
+# JavaScript on the main thread: instant updates
 loom.renderer=loom
 loom.js=main
 loom.worker=true
@@ -178,12 +177,38 @@ and sampled stacks, in the JS console (`adb shell setprop
 debug.loom.jank_budget_ms N` to change the budget, `debug.loom.jank 0` to turn
 it off).
 
-iOS (environment variables; `loom.js=main` is Android-only):
+iOS (environment variables at `pod install` time):
 
 | variable | effect |
 |---|---|
 | `RCT_LOOM_RENDERER_IOS=1` | selects the Loom renderer |
 | `RCT_LOOM_WORKER_IOS=1` | worker-owned commit preparation (requires the above) |
+| `RCT_LOOM_JS_IOS=main\|background` | JavaScript on the main thread (default) or on its own thread (requires the worker) |
+
+iOS draws paragraph text on a background queue when it changes inside a box of
+the same size (`-LoomAsyncText NO` / `-LoomAsyncTextFirstDraw NO` launch
+arguments or `NSUserDefaults` keys turn it, or its first-draw part, off).
+
+## Performance
+
+Release builds on real devices; full tables in
+[website/benchmarks.md](website/benchmarks.md).
+
+| | Stock | Loom, JS on its own thread | Loom, JS on the main thread |
+|---|---|---|---|
+| Low-end Android (Infinix X6516): 300-cell re-render, per update | 283.8 ms | 91.8 ms | 134.2 ms |
+| Low-end Android: tap latency, median | 29.5 ms | 25.5 ms | about 19 ms |
+| Low-end Android: first content (cold start) | 765 ms | 501 ms | 590 ms |
+| Low-end Android: memory while scrolling | 104 MB | 86 MB | 83 MB |
+| High-end Android (OnePlus 9, 120 Hz): 300-cell re-render, per update | 40.0 ms | 15.1 ms | 21.1 ms |
+| High-end Android: 1000-cell update, time to land | 93.1 ms | 29.3 ms | 40.8 ms |
+| High-end Android: first content (cold start) | 208 ms | 185 ms | 199 ms |
+| iPhone XS Max: first screen mounted (cold start) | 104.1 ms | 101.2 ms | 101.3 ms |
+| iPhone XS Max: 300 cells with new text, per update | 34.1 ms | 16.8 ms | 17.1 ms |
+| iPhone XS Max: same, total CPU | 20.1 s | 10.1 s | 8.8 s |
+| iPhone XS Max: 1000-cell update, time to land | 80.0 ms | 62.2 ms | 64.7 ms |
+| iPhone 15 Pro Max: 1000-cell update, time to land | 60.6 ms | 41.6 ms | 41.6 ms |
+| iPhone 15 Pro Max: first screen on the display (cold start) | 111.0 ms | 97.7 ms | 105.1 ms |
 
 ## CLI
 
