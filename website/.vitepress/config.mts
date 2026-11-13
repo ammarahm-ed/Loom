@@ -58,6 +58,7 @@ export default defineConfig({
           items: [
             {text: 'Overview', link: '/architecture/overview'},
             {text: 'Overrides model', link: '/architecture/overrides'},
+            {text: 'Maintaining Loom', link: '/architecture/maintaining'},
           ],
         },
       ],

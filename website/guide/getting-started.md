@@ -26,6 +26,16 @@ npm install react-native-loom
 apply from: file("../node_modules/react-native-loom/integration/android/loom.settings.gradle")
 ```
 
+or, in `android/settings.gradle.kts`:
+
+```kotlin
+apply(from = file("../node_modules/react-native-loom/integration/android/loom.settings.gradle"))
+```
+
+That runs `loom materialize`, includes the materialized tree as a composite build, and
+substitutes `react-android` / `react-native` with `:packages:react-native:ReactAndroid` and
+`hermes-android` / `hermes-engine` with `:packages:react-native:ReactAndroid:hermes-engine`.
+
 `android/app/build.gradle`, pointing the React Native Gradle plugin at Loom's tree:
 
 ```groovy
@@ -34,7 +44,9 @@ react {
 }
 ```
 
-Then pick a configuration in `android/gradle.properties`:
+Then pick a configuration in `android/gradle.properties`. `loom materialize` copies these into the
+materialized tree, because an included Gradle build cannot see the app's `gradle.properties`
+(see [Configuration](/reference/configuration)):
 
 ```properties
 # JavaScript on the main thread: instant updates
@@ -57,6 +69,10 @@ use_react_native!(
 )
 ```
 
+`Loom.react_native_path(__dir__)` materializes the tree and returns its path. It also forces
+`RCT_USE_PREBUILT_RNCORE=0`, because prebuilt React Native core binaries cannot contain the
+overrides.
+
 Install pods with the Loom renderer switched on:
 
 ```sh
@@ -71,13 +87,34 @@ RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 bundle exec pod install
 const {getDefaultConfig, mergeConfig} = require('@react-native/metro-config');
 const {withLoom} = require('react-native-loom/integration/metro');
 
-module.exports = withLoom(mergeConfig(getDefaultConfig(__dirname), {}), __dirname);
+module.exports = withLoom(
+  mergeConfig(getDefaultConfig(__dirname), {
+    // ...your config...
+  }),
+  __dirname,
+);
 ```
+
+`withLoom` materializes if needed and maps `react-native` and `react-native/*` to the
+materialized tree, so JavaScript overrides such as `LayoutAnimation.js` are what gets bundled.
 
 `react-native.config.js`:
 
 ```js
 module.exports = {reactNativePath: './node_modules/.loom/react-native'};
+```
+
+## Jest
+
+`jest.config.js`:
+
+```js
+const {loomJestModuleNameMapper} = require('react-native-loom/integration/metro');
+
+module.exports = {
+  preset: 'react-native',
+  moduleNameMapper: loomJestModuleNameMapper(__dirname),
+};
 ```
 
 ## Check it works

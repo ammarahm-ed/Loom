@@ -45,6 +45,9 @@ Environment variables at `pod install` time:
 RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 RCT_LOOM_JS_IOS=background pod install
 ```
 
+iOS draws paragraph text on a background queue when it changes inside a box of the same size
+([Asynchronous text on iOS](/guide/async-text)).
+
 Runtime settings have their own section below. `NSUserDefaults` keys, also accepted as launch
 arguments such as `-LoomAsyncText NO`, still work as overrides.
 
