@@ -80,6 +80,8 @@ internal class FabricUIManagerBinding : HybridClassBase() {
 
   external fun recordDirectNativeProps(tag: Int, props: NativeMap)
 
+  external fun recordDirectPaintBatch(data: DoubleArray, length: Int)
+
   /**
    * Loom animation fast lane: applies the animation props collected since the last flush. Called
    * from [FabricUIManager]'s pre-draw frame callback, which runs after the Native Animated module's

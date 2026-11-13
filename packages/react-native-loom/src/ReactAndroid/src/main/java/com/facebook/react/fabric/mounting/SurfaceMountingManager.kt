@@ -650,6 +650,14 @@ internal constructor(
   }
 
   public fun storeSynchronousMountPropsOverride(reactTag: Int, props: ReadableMap) {
+    // Loom: with the worker, animated values are folded into the renderer's own node
+    // props, so a later commit already carries them (and core views receive only the keys
+    // React changed). Keeping a second copy here per view per frame is redundant, and it has
+    // to be off for every update rather than some, or a stale entry would override a newer
+    // value written by the direct path below.
+    if (BuildConfig.LOOM_WORKER) {
+      return
+    }
     if (ReactNativeFeatureFlags.overrideBySynchronousMountPropsAtMountingAndroid()) {
       val propsMap = getAnimatedPropsMap(props)
       val synchronousMountProps = tagToSynchronousMountProps[reactTag] ?: mutableMapOf()
@@ -661,6 +669,108 @@ internal constructor(
         tagToSynchronousMountProps[reactTag] = synchronousMountProps
       }
     }
+  }
+
+  /**
+   * Loom: applies an animated update of `opacity` and/or a transform made only of numeric
+   * `translateX`/`translateY` to a core View directly, with the same effect the view manager's
+   * setters have (`ReactViewManager.setOpacity`, `BaseViewManager.setTransformProperty` for a pure
+   * translation, then the backface-dependent opacity). The generic route builds a props map,
+   * looks each setter up by reflection and decomposes a 4x4 matrix per view per frame, which was
+   * most of a Native Animated frame on the main thread. Returns false, changing nothing, for
+   * anything else, which then takes the generic route.
+   */
+  public fun loomTryApplyAnimatedPaint(reactTag: Int, props: ReadableMap): Boolean {
+    if (!BuildConfig.LOOM_WORKER || isStopped) {
+      return false
+    }
+    val viewState = getNullableViewState(reactTag) ?: return false
+    val view = viewState.view as? com.facebook.react.views.view.ReactViewGroup ?: return false
+    val manager =
+        viewState.viewManager as? com.facebook.react.views.view.ReactViewManager ?: return false
+    if (
+        view.getTag(com.facebook.react.R.id.transform_origin) != null ||
+            view.getTag(com.facebook.react.R.id.skew_animation_matrix) != null
+    ) {
+      return false
+    }
+    var opacity = Float.NaN
+    var transform: com.facebook.react.bridge.ReadableArray? = null
+    var translateX = 0.0
+    var translateY = 0.0
+    val keys = props.keySetIterator()
+    while (keys.hasNextKey()) {
+      when (val key = keys.nextKey()) {
+        "opacity" -> {
+          if (props.getType(key) != ReadableType.Number) return false
+          opacity = props.getDouble(key).toFloat()
+        }
+        "transform" -> {
+          if (props.getType(key) != ReadableType.Array) return false
+          val operations = props.getArray(key) ?: return false
+          for (index in 0 until operations.size()) {
+            if (operations.getType(index) != ReadableType.Map) return false
+            val operation = operations.getMap(index) ?: return false
+            val operationKeys = operation.keySetIterator()
+            if (!operationKeys.hasNextKey()) return false
+            val name = operationKeys.nextKey()
+            if (operationKeys.hasNextKey() || operation.getType(name) != ReadableType.Number) {
+              return false
+            }
+            when (name) {
+              "translateX" -> translateX += operation.getDouble(name)
+              "translateY" -> translateY += operation.getDouble(name)
+              else -> return false
+            }
+          }
+          transform = operations
+        }
+        else -> return false
+      }
+    }
+    if (!opacity.isNaN()) {
+      manager.setOpacity(view, opacity)
+    }
+    if (transform != null) {
+      // What setTransform + onAfterUpdateTransaction record, so a later full update compares
+      // against the value on screen.
+      view.setTag(com.facebook.react.R.id.transform, transform)
+      view.setTag(com.facebook.react.R.id.invalidate_transform, false)
+      // A pure translation decomposes to exactly these values (BaseViewManager.setTransformProperty).
+      view.translationX =
+          PixelUtil.toPixelFromDIP(
+              com.facebook.react.uimanager.internal.FloatPropertySanitizer
+                  .sanitizeFloatPropertyValue(translateX.toFloat()))
+      view.translationY =
+          PixelUtil.toPixelFromDIP(
+              com.facebook.react.uimanager.internal.FloatPropertySanitizer
+                  .sanitizeFloatPropertyValue(translateY.toFloat()))
+      view.rotation = 0f
+      view.rotationX = 0f
+      view.rotationY = 0f
+      view.scaleX = 1f
+      view.scaleY = 1f
+      // No perspective: the default inverted camera distance, normalized as BaseViewManager does.
+      // The other View setters return early on an unchanged value; this one invalidates the
+      // view's display properties unconditionally, so it is only called on a real change (the
+      // getter reads back through the RenderNode, hence the tolerance).
+      val density =
+          com.facebook.react.uimanager.DisplayMetricsHolder.getScreenDisplayMetrics().density
+      val cameraDistance = -1f / 0.00078125f
+      val targetCameraDistance =
+          com.facebook.react.uimanager.internal.FloatPropertySanitizer.sanitizeFloatPropertyValue(
+              density * density * cameraDistance * LOOM_CAMERA_DISTANCE_NORMALIZATION)
+      if (Math.abs(view.cameraDistance - targetCameraDistance) >
+          Math.abs(targetCameraDistance) * 1e-4f) {
+        view.cameraDistance = targetCameraDistance
+      }
+      // ReactViewManager.setTransformProperty follows the transform with this. With rotations at
+      // zero it sets the alpha to the opacity, which setOpacity above already did.
+      if (opacity.isNaN()) {
+        view.setBackfaceVisibilityDependantOpacity()
+      }
+    }
+    return true
   }
 
   public fun updatePropsSynchronously(reactTag: Int, props: ReadableMap) {
@@ -1382,6 +1492,9 @@ internal constructor(
   }
 
   private companion object {
+    /** BaseViewManager.CAMERA_DISTANCE_NORMALIZATION_MULTIPLIER. */
+    private val LOOM_CAMERA_DISTANCE_NORMALIZATION: Float = Math.sqrt(5.0).toFloat()
+
     private val TAG: String = SurfaceMountingManager::class.java.simpleName
 
     private val SHOW_CHANGED_VIEW_HIERARCHIES = ReactBuildConfig.DEBUG && false

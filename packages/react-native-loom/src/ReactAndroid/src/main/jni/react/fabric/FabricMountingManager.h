@@ -105,14 +105,12 @@ class FabricMountingManager final {
    * from this state and from props alone, so the attributed string has to be
    * handed to the host this way.
    */
-  void directUpdateState(
+  void directUpdateState(const LoomTextStateUpdate& update);
+  /** Fabric compatibility layer: a compat node's own state object. */
+  void directUpdateComponentState(
       SurfaceId surfaceId,
       Tag tag,
-      const std::string& componentName,
-      const folly::dynamic& props,
-      const AttributedString& attributedString,
-      const ParagraphAttributes& paragraphAttributes,
-      const LoomTextMeasurement& prepared);
+      const std::shared_ptr<const State>& state);
   std::pair<float, float> directGetScrollOffset(SurfaceId surfaceId, Tag tag);
   std::optional<std::pair<float, float>> directGetViewLocationInSurface(
       SurfaceId surfaceId,

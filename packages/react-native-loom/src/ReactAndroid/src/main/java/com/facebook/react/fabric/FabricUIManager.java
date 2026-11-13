@@ -222,6 +222,8 @@ public class FabricUIManager
   private volatile boolean mDestroyed = false;
 
   private volatile boolean mDriveCxxAnimations = false;
+  /** Loom: the shared animation backend has a registered animation (set from C++). */
+  private volatile boolean mAnimationBackendActive = false;
 
   private @Nullable ViewTransitionSnapshotManager mViewTransitionSnapshotManager;
 
@@ -320,6 +322,12 @@ public class FabricUIManager
       int[] phaseOffsets,
       boolean requiresTagReplacement,
       @Nullable Object propsTable) {
+    // Animated paint written to views since the last frame flush is still queued on this side.
+    // Hand it to C++ first, so the overlay replay that follows this batch re-asserts it instead of
+    // letting the batch's stale props win.
+    if (BuildConfig.LOOM_WORKER) {
+      flushDirectPaintBatch();
+    }
     mLoomViewApplier.applyBatch(
         surfaceId,
         instructions,
@@ -968,6 +976,115 @@ public class FabricUIManager
     mListeners.remove(listener);
   }
 
+  // Queued [tag, length, payload...] records for one JNI call per frame.
+  private final double[] mPaintBatch = new double[4096];
+  private int mPaintBatchLength = 0;
+
+  private void flushDirectPaintBatch() {
+    if (mPaintBatchLength > 0 && mBinding != null) {
+      int length = mPaintBatchLength;
+      mPaintBatchLength = 0;
+      mBinding.recordDirectPaintBatch(mPaintBatch, length);
+    }
+  }
+
+  private static final String[] PAINT_DOUBLE_KEYS = {
+    "opacity", "elevation", "shadowOpacity", "shadowRadius"
+  };
+  private static final String[] PAINT_INT_KEYS = {
+    "backgroundColor", "tintColor", "overlayColor", "borderColor", "borderTopColor",
+    "borderBottomColor", "borderLeftColor", "borderRightColor", "shadowColor"
+  };
+  private static final String[] PAINT_TRANSFORM_OPS = {
+    "translateX", "translateY", "scale", "scaleX", "scaleY", "rotateX", "rotateY", "rotateZ",
+    "skewX", "skewY", "perspective"
+  };
+
+  private static int indexOf(String[] table, String key) {
+    for (int i = 0; i < table.length; i++) {
+      if (table[i].equals(key)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Encodes a flat animated paint payload into {@code out} for
+   * FabricUIManagerBinding::recordDirectPaintBatch (the table order must match the C++ side).
+   * Returns the length, or -1 when any key or value is outside the supported set, in which case
+   * the caller uses the generic map route.
+   */
+  private static int encodeAnimatedPaint(ReadableMap props, double[] out, int start) {
+    int n = start;
+    com.facebook.react.bridge.ReadableMapKeySetIterator it = props.keySetIterator();
+    while (it.hasNextKey()) {
+      String key = it.nextKey();
+      if (n + 2 > out.length) {
+        return -1;
+      }
+      if (key.equals("transform")) {
+        if (props.getType(key) != com.facebook.react.bridge.ReadableType.Array) {
+          return -1;
+        }
+        com.facebook.react.bridge.ReadableArray ops = props.getArray(key);
+        if (ops == null) {
+          return -1;
+        }
+        int count = ops.size();
+        if (n + 2 + count * 2 > out.length) {
+          return -1;
+        }
+        out[n] = 100;
+        out[n + 1] = count;
+        int w = n + 2;
+        for (int i = 0; i < count; i++) {
+          if (ops.getType(i) != com.facebook.react.bridge.ReadableType.Map) {
+            return -1;
+          }
+          com.facebook.react.bridge.ReadableMap op = ops.getMap(i);
+          if (op == null) {
+            return -1;
+          }
+          com.facebook.react.bridge.ReadableMapKeySetIterator opIt = op.keySetIterator();
+          if (!opIt.hasNextKey()) {
+            return -1;
+          }
+          String opKey = opIt.nextKey();
+          int opId = indexOf(PAINT_TRANSFORM_OPS, opKey);
+          if (opId < 0
+              || opIt.hasNextKey()
+              || op.getType(opKey) != com.facebook.react.bridge.ReadableType.Number) {
+            return -1;
+          }
+          out[w] = opId;
+          out[w + 1] = op.getDouble(opKey);
+          w += 2;
+        }
+        n = w;
+        continue;
+      }
+      if (props.getType(key) != com.facebook.react.bridge.ReadableType.Number) {
+        return -1;
+      }
+      int id = indexOf(PAINT_DOUBLE_KEYS, key);
+      if (id >= 0) {
+        out[n] = id;
+        out[n + 1] = props.getDouble(key);
+        n += 2;
+        continue;
+      }
+      id = indexOf(PAINT_INT_KEYS, key);
+      if (id < 0) {
+        return -1;
+      }
+      out[n] = 10 + id;
+      out[n + 1] = props.getDouble(key);
+      n += 2;
+    }
+    return n == start ? -1 : n;
+  }
+
   @Override
   @UiThread
   @ThreadConfined(UI)
@@ -975,13 +1092,43 @@ public class FabricUIManager
     UiThreadUtil.assertOnUiThread();
 
     if (BuildConfig.LOOM_WORKER && mBinding != null) {
-      // Native Animated supplies JavaOnlyMap; WritableNativeMap.merge accepts only native maps.
-      com.facebook.react.bridge.WritableNativeMap delta =
-          com.facebook.react.bridge.Arguments.makeNativeMap(props.toHashMap());
-      mBinding.recordDirectNativeProps(reactTag, delta);
+      // Flat paint payloads (opacity, transform, colours) go over as a primitive array: the
+      // generic route below builds a HashMap, a WritableNativeMap and a folly::dynamic per node
+      // per frame.
+      // The encoded payloads of a frame are queued and cross into C++ once, in
+      // flushDirectPaintBatch (before the frame's animation flush); a node whose view does not
+      // exist yet is sent at once, because its direct result replays the staged delta.
+      if (mPaintBatchLength + 3 + 40 > mPaintBatch.length) {
+        flushDirectPaintBatch();
+      }
+      int start = mPaintBatchLength;
+      int encoded = encodeAnimatedPaint(props, mPaintBatch, start + 2);
+      if (encoded > 0) {
+        mPaintBatch[start] = reactTag;
+        mPaintBatch[start + 1] = encoded - (start + 2);
+        mPaintBatchLength = encoded;
+        if (!mMountingManager.getViewExists(reactTag)) {
+          flushDirectPaintBatch();
+        }
+      } else {
+        flushDirectPaintBatch(); // keep the order of writes to one tag
+        // Native Animated supplies JavaOnlyMap; WritableNativeMap.merge accepts only native maps.
+        com.facebook.react.bridge.WritableNativeMap delta =
+            com.facebook.react.bridge.Arguments.makeNativeMap(props.toHashMap());
+        mBinding.recordDirectNativeProps(reactTag, delta);
+      }
     }
     if (BuildConfig.LOOM_WORKER && !mMountingManager.getViewExists(reactTag)) {
       return; // The direct result will create the view and replay the staged delta.
+    }
+
+    if (BuildConfig.LOOM_WORKER) {
+      // Loom: opacity and plain translations on a core View are written to the view directly;
+      // anything else returns false and takes the generic mount item below.
+      SurfaceMountingManager surfaceManager = mMountingManager.getSurfaceManagerForView(reactTag);
+      if (surfaceManager != null && surfaceManager.loomTryApplyAnimatedPaint(reactTag, props)) {
+        return;
+      }
     }
 
     int commitNumber = mCurrentSynchronousCommitNumber++;
@@ -1753,6 +1900,15 @@ public class FabricUIManager
     }
   }
 
+  // Called from Binding.cpp (Loom's animation choreographer).
+  @AnyThread
+  public void setAnimationBackendActive(boolean active) {
+    mAnimationBackendActive = active;
+    if (active && ReactNativeFeatureFlags.disableIdleMountItemFrameCallbackRearmAndroid()) {
+      mDispatchUIFrameCallback.schedule();
+    }
+  }
+
   // Called from Binding.cpp
   @AnyThread
   public void onAllAnimationsComplete() {
@@ -1977,6 +2133,7 @@ public class FabricUIManager
       // renderer, and `schedule()` below must still be reached.
       if (BuildConfig.LOOM_WORKER && mBinding != null) {
         try {
+          flushDirectPaintBatch();
           mBinding.flushDirectAnimationFrame();
         } catch (Exception ex) {
           FLog.e(TAG, "Exception thrown when flushing the direct animation frame", ex);
@@ -2006,12 +2163,12 @@ public class FabricUIManager
             || mMountItemDispatcher.hasPendingItems()
             || mDriveCxxAnimations
             || ReactNativeFeatureFlags.cxxNativeAnimatedEnabled()
-            || ReactNativeFeatureFlags.useSharedAnimatedBackend()) {
+            || mAnimationBackendActive) {
           schedule();
         }
       }
 
-      if (ReactNativeFeatureFlags.useSharedAnimatedBackend() && mBinding != null) {
+      if (mAnimationBackendActive && mBinding != null) {
         mBinding.driveAnimationBackend(frameTimeNanos);
       }
 

@@ -47,7 +47,7 @@ public abstract class ViewManager<T extends View, C extends ReactShadowNode<?>>
     extends BaseJavaModule {
 
   private static final String TAG = "ViewManager";
-  private static final int MAX_RECYCLED_VIEWS_PER_SURFACE = 32;
+  private static final int MAX_RECYCLED_VIEWS_PER_SURFACE = 64;
 
   private @Nullable ViewManagerDelegate<T> mDelegate = null;
 

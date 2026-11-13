@@ -12,6 +12,7 @@ package com.facebook.react.views.text
 import android.text.Spannable
 import android.text.Spanned
 import android.view.View
+import androidx.core.view.ViewCompat
 import com.facebook.react.R
 import com.facebook.react.bridge.Dynamic
 import com.facebook.react.internal.SystraceSection
@@ -84,15 +85,25 @@ internal class PreparedLayoutTextViewManager :
       if (preparedLayout.layout.text is Spanned) {
         val spannedText = preparedLayout.layout.text as Spanned
         val accessibilityLinks = AccessibilityLinks(spannedText)
-        view.setTag(
-            R.id.accessibility_links,
-            if (accessibilityLinks.size() > 0) accessibilityLinks else null,
-        )
-        ReactTextViewAccessibilityDelegate.resetDelegate(
-            view,
-            view.isFocusable,
-            view.importantForAccessibility,
-        )
+        val links = if (accessibilityLinks.size() > 0) accessibilityLinks else null
+        val previousLinks = view.getTag(R.id.accessibility_links)
+        view.setTag(R.id.accessibility_links, links)
+        // Loom: the delegate reads the links tag once, when it is built, so it
+        // only has to be rebuilt when there are links now or there were before.
+        // Text without links (nearly all of it) keeps the delegate it has;
+        // building a new one per text update was the most expensive part of a
+        // text update on the main thread.
+        if (
+            links != null ||
+                previousLinks != null ||
+                ViewCompat.getAccessibilityDelegate(view) !is ReactTextViewAccessibilityDelegate
+        ) {
+          ReactTextViewAccessibilityDelegate.resetDelegate(
+              view,
+              view.isFocusable,
+              view.importantForAccessibility,
+          )
+        }
       }
     }
   }

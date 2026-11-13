@@ -46,6 +46,116 @@
 #include <fbjni/NativeRunnable.h>
 #include <algorithm>
 
+#if LOOM_RENDERER
+#include <react/renderer/uimanager/LoomRenderer.h>
+#include <pthread.h>
+#include <sys/system_properties.h>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
+namespace {
+
+// `adb shell setprop debug.loom.<name> 0` turns a Loom startup switch off (read at install).
+bool loomSystemFlag(const char* name, bool fallback) {
+  char value[PROP_VALUE_MAX] = {0};
+  if (__system_property_get(name, value) <= 0) {
+    return fallback;
+  }
+  return value[0] == '1' || value[0] == 't' || value[0] == 'y';
+}
+
+// Loom: threads for the renderer's parallel text measurement
+// (LoomStartupOptions::parallelFor). Text is measured by Java (StaticLayout)
+// through JNI, so each thread stays attached to the JVM, with the app's class
+// loader, for its whole life. One job at a time; the calling thread works on it
+// too.
+class LoomTextPool {
+ public:
+  static LoomTextPool& shared() {
+    static auto* pool = new LoomTextPool();
+    return *pool;
+  }
+
+  void run(size_t count, const std::function<void(size_t)>& body) {
+    std::lock_guard<std::mutex> serial(runMutex_);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      body_ = &body;
+      count_ = count;
+      next_ = 0;
+      pending_ = count;
+      ++generation_;
+    }
+    wake_.notify_all();
+    work();
+    std::unique_lock<std::mutex> lock(mutex_);
+    done_.wait(lock, [this] { return pending_ == 0; });
+    body_ = nullptr;
+  }
+
+ private:
+  LoomTextPool() {
+    const unsigned cores = std::thread::hardware_concurrency();
+    const unsigned threads = cores > 2 ? std::min(cores - 2, 5u) : 1u;
+    for (unsigned index = 0; index < threads; ++index) {
+      std::thread([this] {
+        pthread_setname_np(pthread_self(), "loom.text");
+        facebook::jni::ThreadScope::WithClassLoader([this] { loop(); });
+      }).detach();
+    }
+  }
+
+  void loop() {
+    uint64_t seen = 0;
+    for (;;) {
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        wake_.wait(lock, [&] { return generation_ != seen; });
+        seen = generation_;
+      }
+      work();
+    }
+  }
+
+  void work() {
+    for (;;) {
+      size_t index;
+      const std::function<void(size_t)>* body;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (body_ == nullptr || next_ >= count_) {
+          return;
+        }
+        index = next_++;
+        body = body_;
+      }
+      try {
+        (*body)(index);
+      } catch (...) {
+        // That paragraph stays unmeasured; the real layout pass measures it.
+      }
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (--pending_ == 0) {
+        done_.notify_all();
+      }
+    }
+  }
+
+  std::mutex runMutex_;
+  std::mutex mutex_;
+  std::condition_variable wake_;
+  std::condition_variable done_;
+  const std::function<void(size_t)>* body_{nullptr};
+  size_t count_{0};
+  size_t next_{0};
+  size_t pending_{0};
+  uint64_t generation_{0};
+};
+
+} // namespace
+#endif
+
 namespace facebook::react {
 #if LOOM_RENDERER
 namespace {
@@ -113,6 +223,42 @@ void FabricUIManagerBinding::driveCxxAnimations() {
   }
   scheduler->animationTick();
 }
+
+namespace {
+/**
+ * Loom: tells FabricUIManager while the shared animation backend has a
+ * registered animation, so its frame callback calls into the backend only
+ * then instead of on every frame.
+ */
+class LoomAnimationChoreographer final : public AndroidAnimationChoreographer {
+ public:
+  explicit LoomAnimationChoreographer(
+      jni::global_ref<JFabricUIManager::javaobject> uiManager)
+      : uiManager_(std::move(uiManager)) {}
+
+  void resume() override {
+    AndroidAnimationChoreographer::resume();
+    notify(true);
+  }
+
+  void pause() override {
+    AndroidAnimationChoreographer::pause();
+    notify(false);
+  }
+
+ private:
+  void notify(bool active) {
+    jni::ThreadScope::WithClassLoader([&] {
+      static const auto setActive =
+          JFabricUIManager::javaClassStatic()->getMethod<void(jboolean)>(
+              "setAnimationBackendActive");
+      setActive(uiManager_, static_cast<jboolean>(active));
+    });
+  }
+
+  jni::global_ref<JFabricUIManager::javaobject> uiManager_;
+};
+} // namespace
 
 void FabricUIManagerBinding::driveAnimationBackend(jlong frameTimeNanos) {
   if (!animationChoreographer_) {
@@ -708,7 +854,8 @@ void FabricUIManagerBinding::installFabricUIManager(
   contextContainer->insert(
       "FabricUIManager", jni::alias_ref<jobject>(*fabricUIManagerOwner));
 
-  animationChoreographer_ = std::make_shared<AndroidAnimationChoreographer>();
+  animationChoreographer_ =
+      std::make_shared<LoomAnimationChoreographer>(globalJavaUiManager);
 
   auto toolbox = SchedulerToolbox{};
   toolbox.contextContainer = contextContainer;
@@ -731,6 +878,17 @@ void FabricUIManagerBinding::installFabricUIManager(
   directTextLayoutManager_ =
       std::make_shared<const TextLayoutManager>(contextContainer);
   eventManager_ = std::make_shared<LoomEventManager>(scheduler_->getEventDispatcher());
+  LoomStartupOptions::earlyCreate.store(loomSystemFlag("debug.loom.earlycreate", true));
+  // Off by default: on a low-end phone (Infinix X6516, 8 slow cores) the pool
+  // competed with the UI thread's early view creation and lost more than it
+  // won. `setprop debug.loom.paralleltext 1` turns it on.
+  LoomStartupOptions::parallelText.store(loomSystemFlag("debug.loom.paralleltext", false));
+  if (LoomStartupOptions::parallelText.load() && !LoomStartupOptions::parallelFor) {
+    LoomTextPool::shared(); // threads up before the first surface measures
+    LoomStartupOptions::parallelFor = [](size_t count, const std::function<void(size_t)>& body) {
+      LoomTextPool::shared().run(count, body);
+    };
+  }
 #endif
 }
 
@@ -1081,22 +1239,18 @@ TextAttributes FabricUIManagerBinding::loomParseTextAttributes(
 }
 
 void FabricUIManagerBinding::loomUpdateState(
+    const LoomTextStateUpdate& update) {
+  if (auto manager = getMountingManager("loomUpdateState")) {
+    manager->directUpdateState(update);
+  }
+}
+
+void FabricUIManagerBinding::loomUpdateComponentState(
     SurfaceId surfaceId,
     Tag tag,
-    const std::string& componentName,
-    const folly::dynamic& props,
-    const AttributedString& attributedString,
-    const ParagraphAttributes& paragraphAttributes,
-    const LoomTextMeasurement& prepared) {
-  if (auto manager = getMountingManager("loomUpdateState")) {
-    manager->directUpdateState(
-        surfaceId,
-        tag,
-        componentName,
-        props,
-        attributedString,
-        paragraphAttributes,
-        prepared);
+    const std::shared_ptr<const State>& state) {
+  if (auto manager = getMountingManager("loomUpdateComponentState")) {
+    manager->directUpdateComponentState(surfaceId, tag, state);
   }
 }
 
@@ -1438,6 +1592,73 @@ void FabricUIManagerBinding::recordDirectNativeProps(jint tag, NativeMap* props)
 #endif
 }
 
+namespace {
+// Must match FabricUIManager.encodeAnimatedPaint.
+constexpr const char* kPaintDoubleKeys[] = {
+    "opacity", "elevation", "shadowOpacity", "shadowRadius"};
+constexpr const char* kPaintIntKeys[] = {
+    "backgroundColor", "tintColor", "overlayColor", "borderColor",
+    "borderTopColor", "borderBottomColor", "borderLeftColor",
+    "borderRightColor", "shadowColor"};
+constexpr const char* kTransformOps[] = {
+    "translateX", "translateY", "scale", "scaleX", "scaleY", "rotateX",
+    "rotateY", "rotateZ", "skewX", "skewY", "perspective"};
+constexpr int kTransformKey = 100;
+constexpr int kIntKeyBase = 10;
+} // namespace
+
+void FabricUIManagerBinding::recordDirectPaintBatch(
+    jni::alias_ref<jni::JArrayDouble> data,
+    jint length) {
+#if LOOM_WORKER
+  if (length <= 0) {
+    return;
+  }
+  thread_local std::vector<double> values;
+  values.resize(static_cast<size_t>(length));
+  data->getRegion(0, length, values.data());
+  int i = 0;
+  while (i + 1 < length) {
+    const auto tag = static_cast<Tag>(values[i]);
+    const int end = std::min<int>(length, i + 2 + static_cast<int>(values[i + 1]));
+    i += 2;
+    folly::dynamic paint = folly::dynamic::object();
+    while (i + 1 < end) {
+      const int key = static_cast<int>(values[i]);
+      if (key == kTransformKey) {
+        const int n = static_cast<int>(values[i + 1]);
+        i += 2;
+        folly::dynamic ops = folly::dynamic::array();
+        for (int j = 0; j < n && i + 1 < end; ++j, i += 2) {
+          const int op = static_cast<int>(values[i]);
+          if (op < 0 || op >= static_cast<int>(sizeof(kTransformOps) / sizeof(kTransformOps[0]))) {
+            continue;
+          }
+          ops.push_back(folly::dynamic::object(kTransformOps[op], values[i + 1]));
+        }
+        paint["transform"] = std::move(ops);
+      } else if (key >= kIntKeyBase) {
+        const int index = key - kIntKeyBase;
+        if (index < static_cast<int>(sizeof(kPaintIntKeys) / sizeof(kPaintIntKeys[0]))) {
+          paint[kPaintIntKeys[index]] = static_cast<int64_t>(values[i + 1]);
+        }
+        i += 2;
+      } else {
+        if (key >= 0 && key < static_cast<int>(sizeof(kPaintDoubleKeys) / sizeof(kPaintDoubleKeys[0]))) {
+          paint[kPaintDoubleKeys[key]] = values[i + 1];
+        }
+        i += 2;
+      }
+    }
+    i = end;
+    LoomBinding::recordNativePaintProps(tag, std::move(paint));
+  }
+#else
+  (void)data;
+  (void)length;
+#endif
+}
+
 void FabricUIManagerBinding::flushDirectAnimationFrame() {
 #if LOOM_WORKER
   LoomBinding::flushAnimationFrames();
@@ -1448,6 +1669,9 @@ void FabricUIManagerBinding::registerNatives() {
   registerHybrid({
       makeNativeMethod("initHybrid", FabricUIManagerBinding::initHybrid),
       makeNativeMethod("recordDirectNativeProps", FabricUIManagerBinding::recordDirectNativeProps),
+      makeNativeMethod(
+          "recordDirectPaintBatch",
+          FabricUIManagerBinding::recordDirectPaintBatch),
       makeNativeMethod(
           "flushDirectAnimationFrame",
           FabricUIManagerBinding::flushDirectAnimationFrame),

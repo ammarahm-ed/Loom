@@ -149,14 +149,11 @@ class FabricUIManagerBinding : public jni::HybridClass<FabricUIManagerBinding>,
       const folly::dynamic& props,
       const TextAttributes& inherited,
       ParagraphAttributes& outParagraphAttributes) override;
-  void loomUpdateState(
+  void loomUpdateState(const LoomTextStateUpdate&) override;
+  void loomUpdateComponentState(
       SurfaceId,
       Tag,
-      const std::string&,
-      const folly::dynamic&,
-      const AttributedString&,
-      const ParagraphAttributes&,
-      const LoomTextMeasurement&) override;
+      const std::shared_ptr<const State>&) override;
   void loomDispatchCommand(
       SurfaceId, Tag, const std::string&, const folly::dynamic&) override;
   void loomSendAccessibilityEvent(
@@ -193,6 +190,14 @@ class FabricUIManagerBinding : public jni::HybridClass<FabricUIManagerBinding>,
   void schedulerDidClearPendingSnapshots() override;
 
   void recordDirectNativeProps(jint tag, NativeMap* props);
+
+  /**
+   * Compact form of recordDirectNativeProps for flat paint payloads (see
+   * FabricUIManager.encodeAnimatedPaint): `data` holds [tag, n, payload x n]
+   * records; a payload is [keyId, value] pairs, a transform being
+   * [kTransform, ops, (opId, value) x ops].
+   */
+  void recordDirectPaintBatch(jni::alias_ref<jni::JArrayDouble> data, jint length);
 
   /**
    * Loom animation fast lane: applies the animation props collected since the

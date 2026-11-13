@@ -473,17 +473,16 @@ void FabricMountingManager::directFailSurface(
 }
 
 void FabricMountingManager::directUpdateState(
-    SurfaceId surfaceId,
-    Tag tag,
-    const std::string& componentName,
-    const folly::dynamic& props,
-    const AttributedString& attributedString,
-    const ParagraphAttributes& paragraphAttributes,
-    const LoomTextMeasurement& prepared) {
+    const LoomTextStateUpdate& update) {
+  const auto surfaceId = update.surfaceId;
+  const auto tag = update.tag;
+  const auto kind = update.kind;
+  const auto& prepared = update.prepared;
+  const auto& paragraphAttributes = update.paragraphAttributes;
   // In LOOM_RENDERER mode RCTText is backed by
   // PreparedLayoutTextViewManager. Pass the exact Java PreparedLayout from
   // measurement directly instead of wrapping it in ParagraphState/ConcreteState.
-  if (componentName == "RCTText" && prepared.valid && prepared.preparedLayout) {
+  if (kind == LoomTextStateKind::Text && prepared.valid && prepared.preparedLayout) {
     using PreparedTextLayout = TextLayoutManagerExtended::PreparedTextLayout;
     auto layout = std::static_pointer_cast<PreparedTextLayout>(
         prepared.preparedLayout);
@@ -500,8 +499,12 @@ void FabricMountingManager::directUpdateState(
    * not own.
    */
   std::shared_ptr<const State> state;
-  if (componentName.find("TextInput") != std::string::npos) {
-    auto eventCount = props.getDefault("mostRecentEventCount", 0).asInt();
+  const bool isParagraph = kind == LoomTextStateKind::Text ||
+      kind == LoomTextStateKind::Paragraph ||
+      kind == LoomTextStateKind::SelectableParagraph;
+  if (kind == LoomTextStateKind::TextInput) {
+    const auto& attributedString = *update.attributedString;
+    const auto eventCount = update.mostRecentEventCount;
     state = std::make_shared<const ConcreteState<AndroidTextInputState>>(
         std::make_shared<const AndroidTextInputState>(
             AttributedStringBox(attributedString),
@@ -509,11 +512,9 @@ void FabricMountingManager::directUpdateState(
             paragraphAttributes,
             eventCount),
         ShadowNodeFamily::Weak{});
-  } else if (componentName == "RCTText" || componentName == "Paragraph" ||
-             componentName == "RCTSelectableText" ||
-             componentName == "SelectableParagraph") {
+  } else if (isParagraph) {
     ParagraphState paragraphState{
-        attributedString,
+        *update.attributedString,
         paragraphAttributes,
         std::weak_ptr<const TextLayoutManager>{}};
     if (prepared.valid && prepared.preparedLayout) {
@@ -540,13 +541,12 @@ void FabricMountingManager::directUpdateState(
     // StateData, so keep the generic payload empty and make that boundary
     // explicit in the log instead of pretending it is a concrete state.
     LOG(WARNING) << "LOOM_RENDERER using generic state wrapper for component "
-                 << componentName << " on tag " << tag;
+                 << "(kind " << static_cast<int>(kind) << ")"
+                 << " on tag " << tag;
     state = std::make_shared<const ConcreteState<DirectGenericStateData>>(
         std::make_shared<const DirectGenericStateData>(), ShadowNodeFamily::Weak{});
   }
 
-  const bool isParagraph = componentName == "RCTText" || componentName == "Paragraph" ||
-      componentName == "RCTSelectableText" || componentName == "SelectableParagraph";
   std::lock_guard lock(allocatedViewsMutex_);
   if (isParagraph && !(prepared.valid && prepared.preparedLayout)) {
     pendingDirectStates_[surfaceId].push_back(
@@ -556,6 +556,19 @@ void FabricMountingManager::directUpdateState(
     pendingDirectStates_[surfaceId].push_back(
         {tag, std::nullopt, jni::make_global(javaStateWrapper), nullptr});
   }
+}
+
+void FabricMountingManager::directUpdateComponentState(
+    SurfaceId surfaceId,
+    Tag tag,
+    const std::shared_ptr<const State>& state) {
+  // The component's own state (made by its ComponentDescriptor, with a live
+  // family): the view manager's StateWrapper.updateState reaches the Loom
+  // renderer through the state pipe, as it reaches the shadow tree in Fabric.
+  auto javaStateWrapper = StateWrapperImpl::newObjectCxxArgs(state);
+  std::lock_guard lock(allocatedViewsMutex_);
+  pendingDirectStates_[surfaceId].push_back(
+      {tag, std::nullopt, jni::make_global(javaStateWrapper), nullptr});
 }
 
 std::pair<float, float> FabricMountingManager::directGetScrollOffset(
