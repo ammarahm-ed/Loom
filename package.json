@@ -1,8 +1,12 @@
 {
-  "name": "react-native-loom-workspace",
+  "name": "loom",
   "version": "0.0.0",
   "private": true,
-  "description": "Workspace root for react-native-loom, the out-of-tree UI-thread Loom renderer for React Native.",
+  "description": "Workspace root for Loom (npm: react-native-loom), a faster renderer for React Native.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ammarahm-ed/loom.git"
+  },
   "license": "MIT",
   "workspaces": [
     "packages/*"

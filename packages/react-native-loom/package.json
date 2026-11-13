@@ -1,14 +1,38 @@
 {
   "name": "react-native-loom",
-  "version": "0.87.1-loom.0",
-  "description": "Loom UI-thread Loom renderer for React Native, maintained out-of-tree as overrides on top of the published react-native package.",
+  "version": "0.89.0",
+  "description": "A faster renderer for React Native: replaces Fabric with its own renderer, maintained out of tree as overrides on top of the published react-native package.",
+  "author": "Ammar Ahmed",
+  "homepage": "https://github.com/ammarahm-ed/loom#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ammarahm-ed/loom.git",
+    "directory": "packages/react-native-loom"
+  },
+  "bugs": {
+    "url": "https://github.com/ammarahm-ed/loom/issues"
+  },
+  "keywords": [
+    "react-native",
+    "renderer",
+    "fabric",
+    "performance",
+    "ios",
+    "android"
+  ],
+  "main": "index.js",
+  "types": "index.d.ts",
   "license": "MIT",
   "bin": {
     "loom": "bin/loom.js"
   },
   "files": [
+    "index.js",
+    "index.d.ts",
     "bin",
     "adapters",
+    "hosts",
+    "!hosts/headless/tests",
     "lib",
     "src",
     "android-tests",

@@ -45,3 +45,8 @@ reports/
 
 # Python
 __pycache__/
+
+# Per-machine state
+.watchman-cookie*
+# Which Loom variant the compat app's pods were last installed for (scripts/build.sh).
+apps/loom-compat-app/ios/.variant

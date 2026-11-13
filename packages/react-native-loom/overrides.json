@@ -6,782 +6,971 @@
   "overrides": [
     {
       "type": "patch",
-      "file": "index.js",
-      "area": "js-renderer",
-      "baseHash": "fd589b1e3fbceb1aeddd59b42f8460f12dd10b0c7c1f67147a148e985c428cf1"
-    },
-    {
-      "type": "patch",
       "file": "Libraries/Components/View/View.js",
       "area": "js-renderer",
+      "layer": "core",
       "baseHash": "dd100d02b96a665bc16773bc5b68f01007a11680803046c598610a19ff134f7e"
     },
     {
       "type": "platform",
       "file": "Libraries/Core/setUpJankReporter.js",
-      "area": "threading"
-    },
-    {
-      "type": "platform",
-      "file": "Libraries/LayoutAnimation/__tests__/LayoutAnimation-test.js",
-      "area": "animation"
+      "area": "threading",
+      "layer": "core"
     },
     {
       "type": "patch",
       "file": "Libraries/LayoutAnimation/LayoutAnimation.js",
       "area": "animation",
+      "layer": "core",
       "baseHash": "c46dee650df343ffd2993d4c14159fd788939b593134c0deea01eb4537ac1d52"
+    },
+    {
+      "type": "platform",
+      "file": "Libraries/LayoutAnimation/__tests__/LayoutAnimation-test.js",
+      "area": "animation",
+      "layer": "core"
     },
     {
       "type": "patch",
       "file": "Libraries/Lists/FlatList.js",
       "area": "lists",
+      "layer": "core",
       "baseHash": "a483ee50257c4024c55e1b4eb6c0593bd53709352dafa3b6c215b9fa01f9473c"
     },
     {
       "type": "platform",
       "file": "Libraries/Lists/LoomVirtualizedList.js",
-      "area": "lists"
+      "area": "lists",
+      "layer": "core"
     },
     {
       "type": "patch",
       "file": "Libraries/Lists/VirtualizedList.js",
       "area": "lists",
+      "layer": "core",
       "baseHash": "94d0e1f682f3422648451be3070a68a6e69eeddce7bed4c43cc3124e89565b5e"
     },
     {
       "type": "patch",
       "file": "Libraries/ReactNative/ReactFabricPublicInstance/ReactNativeAttributePayload.js",
       "area": "js-renderer",
+      "layer": "core",
       "baseHash": "19a1ed2060aa2753f24ebbc681b72d81e316a17703dde39fa30159f15d60450e"
     },
     {
       "type": "patch",
       "file": "Libraries/Renderer/implementations/ReactFabric-prod.js",
       "area": "js-renderer",
+      "layer": "core",
       "baseHash": "acea16f570697b8a1c271b3e523b008938989f4925c4b0d13b2b468001b82fea"
     },
     {
       "type": "patch",
       "file": "Libraries/StyleSheet/processColor.js",
       "area": "js-renderer",
+      "layer": "core",
       "baseHash": "0bfcfccaf5e54caee17c88d5d84cca4e99670a757c9a09c12bd943cfc1de37b7"
     },
     {
       "type": "patch",
       "file": "Libraries/Text/Text.js",
       "area": "js-renderer",
+      "layer": "core",
       "baseHash": "268af58d00a25173067a70f97383b4f483b0beb8ce2e3b7acc264fba05d5d465"
     },
     {
       "type": "patch",
       "file": "React/Base/RCTBridgeModule.h",
       "area": "fabric-compat",
+      "layer": "ios",
       "baseHash": "39282de9df5a305f11e4e4d17337a89d0d2632729b7b815cd78bf5976c7bb5ab"
     },
     {
       "type": "patch",
       "file": "React/CxxBridge/RCTMessageThread.h",
       "area": "threading",
+      "layer": "ios",
       "baseHash": "37e55f948415ee287f58a3d5be6f5259497ac9b708fba4a2ebec853c3ed560f0"
     },
     {
       "type": "patch",
       "file": "React/CxxBridge/RCTMessageThread.mm",
       "area": "threading",
+      "layer": "ios",
       "baseHash": "42ba4f81a79c3bdb40d9864964f4d8ed05dfe0d89b75cb3baea74bf30dc87a6b"
     },
     {
       "type": "patch",
       "file": "React/Fabric/Mounting/ComponentViews/Text/RCTParagraphComponentView.mm",
       "area": "text",
+      "layer": "ios",
       "baseHash": "1e03416893ae2f937fac1a40acd441d18b67abb40ac5b5a46bfc95b073b888ee"
     },
     {
       "type": "patch",
       "file": "React/Fabric/Mounting/ComponentViews/View/RCTViewComponentView.mm",
       "area": "views",
+      "layer": "ios",
       "baseHash": "c49f92978a47faca89dbc387534caf535853fe596a2a8eac0b9a2fccc91c82cc"
     },
     {
       "type": "patch",
       "file": "React/Fabric/Mounting/RCTComponentViewRegistry.mm",
       "area": "mounting",
+      "layer": "ios",
       "baseHash": "7e14220f7615146b3dca89040840bf2aa15ec99824b67163f32343d8a04d87c1"
     },
     {
       "type": "patch",
       "file": "React/Fabric/Mounting/RCTMountingManager.mm",
       "area": "mounting",
+      "layer": "ios",
       "baseHash": "4f1ad241fe512bddf4226b1d8c7838c09dcc374b8c52ac32328454f4686c23e5"
     },
     {
       "type": "patch",
       "file": "React/Fabric/RCTScheduler.h",
       "area": "delegate-plumbing",
+      "layer": "ios",
       "baseHash": "bedbdacc19425eaebc65719a61caafdb34b564513a16c98154df6d2622c72ede"
     },
     {
       "type": "patch",
       "file": "React/Fabric/RCTScheduler.mm",
       "area": "delegate-plumbing",
+      "layer": "ios",
       "baseHash": "0d1ede5f7e414798c83eef3b0a0f235a26eb60c023787e68397e067d9795814f"
     },
     {
       "type": "patch",
       "file": "React/Fabric/RCTSurfacePresenter.mm",
       "area": "mounting",
+      "layer": "ios",
       "baseHash": "0fa9e6c6d006b0744c35c02b49617e7abd96495246ca78cbfe79e9c06cdfb74b"
     },
     {
       "type": "patch",
       "file": "React/Fabric/Surface/RCTFabricSurface.mm",
       "area": "mounting",
+      "layer": "ios",
       "baseHash": "9afee5925f31da4a843359409f1dfa9bbd8adfbb6adcca5631dde3ca54095bc6"
     },
     {
       "type": "patch",
       "file": "React/React-RCTFabric.podspec",
       "area": "build",
+      "layer": "ios",
       "baseHash": "8801d287a7944cbff5680261041d2e87f7245b009cd7950aa2e8db27912030a4"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/build.gradle.kts",
       "area": "build",
+      "layer": "android",
       "baseHash": "b189a68785f313fe2f242fd831ea98e5de54548ff7ee4017f2a933fbdef0f045"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/cmake-utils/ReactNative-application.cmake",
       "area": "build",
+      "layer": "android",
       "baseHash": "859e905d1ab4b176daa8a822b2c9d0ddb22d0e70c149cf8aa4c575d92b6665b1"
     },
     {
       "type": "platform",
       "file": "ReactAndroid/src/main/baseline-prof.txt",
-      "area": "startup"
+      "area": "startup",
+      "layer": "android"
+    },
+    {
+      "type": "platform",
+      "file": "ReactAndroid/src/main/java/com/facebook/react/common/JankReporterSupport.kt",
+      "area": "threading",
+      "layer": "android"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/common/assets/ReactFontManager.kt",
       "area": "threading",
+      "layer": "android",
       "baseHash": "a696068cc51b2180c06612baaae46cd62cce348824d19734be1c05d7bfc01aa8"
-    },
-    {
-      "type": "platform",
-      "file": "ReactAndroid/src/main/java/com/facebook/react/common/JankReporterSupport.kt",
-      "area": "threading"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java",
       "area": "mounting",
+      "layer": "android",
       "baseHash": "3febac721864999637059ba05ceba7ce84e9c6ea701dfa6ce701c79e73a25f0c"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManagerBinding.kt",
       "area": "delegate-plumbing",
+      "layer": "android",
       "baseHash": "9b626d7be90f7a08e0313763d753cc7b2df75f58460cb739c1ccf34c9625dd78"
     },
     {
       "type": "platform",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/LoomPropsTable.kt",
-      "area": "renderer"
+      "area": "renderer",
+      "layer": "android"
     },
     {
       "type": "platform",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/LoomViewApplier.kt",
-      "area": "mounting"
+      "area": "mounting",
+      "layer": "android"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/MountingManager.kt",
       "area": "mounting",
+      "layer": "android",
       "baseHash": "79c522bd0f637699b53499871f1d03b37f27b52c9943ba842683c66b446a8da2"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/SurfaceMountingManager.kt",
       "area": "mounting",
+      "layer": "android",
       "baseHash": "4c8037f4e6ee4be9a00483c2120cd1d2abd76fe22370020459c86ac327449105"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/internal/featureflags/ReactNativeFeatureFlagsDefaults.kt",
       "area": "fabric-compat",
+      "layer": "android",
       "baseHash": "a583fa3e10db1d1b87fa360aaba8e8097c82f254292f7b93be52f8a7d0c45dd5"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/modules/core/ReactChoreographer.kt",
       "area": "threading",
+      "layer": "android",
       "baseHash": "d3c78e74fffef2d820f5f727463707619840fcd8d2cc85f407396d05d5eb55fb"
     },
     {
       "type": "platform",
       "file": "ReactAndroid/src/main/java/com/facebook/react/modules/core/ReactFrameClock.kt",
-      "area": "threading"
+      "area": "threading",
+      "layer": "android"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/runtime/ReactInstance.kt",
       "area": "threading",
+      "layer": "android",
       "baseHash": "462b62f99dbeae8523360d3c63ae9d31414999b097bfca5a13388e6384fa6cf1"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/shell/MainReactPackage.kt",
       "area": "mounting",
+      "layer": "android",
       "baseHash": "87a480f730ff79ded7383a85543d8340a312397b959ef2122fed536409266ee9"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/uimanager/JSTouchDispatcher.kt",
       "area": "views",
+      "layer": "android",
       "baseHash": "e781e85b566d299d866ad5dfe0f265406ead73baf5ac98222a24a6615c9a4997"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/uimanager/ViewManager.java",
       "area": "mounting",
+      "layer": "android",
       "baseHash": "026722b079d28d897607bb997c3f87bcc072127f7f0b1d00e7966fbb0d15d59c"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt",
       "area": "views",
+      "layer": "android",
       "baseHash": "dd7d2236cd308094b265d446b718bce3b6ed43bae6de39cce27f854700732179"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.kt",
       "area": "views",
+      "layer": "android",
       "baseHash": "376a84619ca97de0d5f87f75902b69f342ac24dad8cf4b2a39eaf883a7f1d9e6"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayout.kt",
       "area": "text",
+      "layer": "android",
       "baseHash": "5f78e9c8262b00acab4292a3f6df60b4f0bd6b30e075e646ed40e0a5f5c4bd64"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayoutTextView.kt",
       "area": "text",
+      "layer": "android",
       "baseHash": "92223fc286e4811e0f18b4614cd5a2921878738cfdb89132bf67329dacbe249a"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayoutTextViewManager.kt",
       "area": "text",
+      "layer": "android",
       "baseHash": "2fb25d95528b699e423ecd9e92c5c227f886608b02a1ca53628990703428be20"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextView.java",
       "area": "text",
+      "layer": "android",
       "baseHash": "e9fe0f7dc450afe49c233ae848f510ff9cdf3221a8ed42ebb381ffd08c6d6ce9"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManager.kt",
       "area": "text",
+      "layer": "android",
       "baseHash": "577dd45208fe2ee942396cb38fe953f0892b261cdcf22137e4d8e3705c5316fb"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManagerCallback.kt",
       "area": "text",
+      "layer": "android",
       "baseHash": "33a195924e928cc8c3c41b5e99d0f329cb7f413d0e9cfc7cb0e27b0f6bc7f8d7"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/TextEffectRegistry.kt",
       "area": "text",
+      "layer": "android",
       "baseHash": "fafefe1fc334418e344537b97bdd7547ee8a9c7ae8e2bd5e9e9063860dd83d22"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt",
       "area": "text",
+      "layer": "android",
       "baseHash": "f0e8611d73999d305d59e3c93b41a60663c9b41d9b33f1c25c1a5030049ec2cc"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/view/ReactViewManager.kt",
       "area": "views",
+      "layer": "android",
       "baseHash": "a277ac2c0cd16b4b04a9dab197c32b0a561b0d8b3017e6244062aaa3225b72ec"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/CMakeLists.txt",
       "area": "build",
+      "layer": "android",
       "baseHash": "344cdea4e908331ab7c14c6758da9b4d93a2d5a5505ebe782083fd5397be7d79"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/CMakeLists.txt",
       "area": "build",
+      "layer": "android",
       "baseHash": "6dc326a310a9574de4429fadcf29c58ea0a27be06bed7728979f57d0133180fa"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricMountingManager.cpp",
       "area": "mounting",
+      "layer": "android",
       "baseHash": "660edb12da99d0b04afd7fe5cd78eb88da81d26452124a56ed2e939a1819faa1"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricMountingManager.h",
       "area": "mounting",
+      "layer": "android",
       "baseHash": "6e19f89f2e18380514337d8110c56464c065111bd6b107e2f1cb2172d42e840d"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricUIManagerBinding.cpp",
       "area": "delegate-plumbing",
+      "layer": "android",
       "baseHash": "f6e9ec38d61b03a6641b7c88ba6449301305e9ab2747c05d23f0c7c08b310e18"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricUIManagerBinding.h",
       "area": "delegate-plumbing",
+      "layer": "android",
       "baseHash": "a3c0956b181e3277f28838c64e9e99f693851ea9ed2deba1cbca02be05fb24e6"
+    },
+    {
+      "type": "platform",
+      "file": "ReactAndroid/src/main/jni/react/fabric/LoomAndroidHost.cpp",
+      "area": "delegate-plumbing",
+      "layer": "android"
+    },
+    {
+      "type": "platform",
+      "file": "ReactAndroid/src/main/jni/react/fabric/LoomAndroidHost.h",
+      "area": "delegate-plumbing",
+      "layer": "android"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/SurfaceHandlerBinding.cpp",
       "area": "delegate-plumbing",
+      "layer": "android",
       "baseHash": "58ef9f990aab700e33c18cb6e20a878fc24ad9e2ed488608644494dd76a06b99"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/runtime/jni/JJSTimerExecutor.cpp",
       "area": "runtime",
+      "layer": "android",
       "baseHash": "2a7e80cfb1bb3637b7aed6531fabeaa899d41a98f4143c7da931020693f27f9c"
     },
     {
       "type": "test",
       "file": "ReactAndroid/src/test/java/com/facebook/react/common/assets/ReactFontManagerWorkerTest.kt",
-      "area": "threading"
+      "area": "threading",
+      "layer": "android"
     },
     {
       "type": "test",
       "file": "ReactAndroid/src/test/java/com/facebook/react/fabric/mounting/LoomViewApplierTest.kt",
-      "area": "mounting"
+      "area": "mounting",
+      "layer": "android"
     },
     {
       "type": "test",
       "file": "ReactAndroid/src/test/java/com/facebook/react/uimanager/BaseViewManagerTest.kt",
-      "area": "misc"
+      "area": "misc",
+      "layer": "android"
     },
     {
       "type": "test",
       "file": "ReactAndroid/src/test/java/com/facebook/react/views/text/PreparedLayoutTextViewTest.kt",
-      "area": "text"
+      "area": "text",
+      "layer": "android"
     },
     {
       "type": "test",
       "file": "ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerAbsoluteLayoutWithFractionalPixelTest.kt",
-      "area": "text"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/cmake-utils/react-native-flags.cmake",
-      "area": "build",
-      "baseHash": "b29f562f538ea3e3de5fc68755be79acb1d7c24cb60b7e39a279a3b2ecffa994"
+      "area": "text",
+      "layer": "android"
     },
     {
       "type": "patch",
       "file": "ReactCommon/React-Fabric.podspec",
       "area": "build",
+      "layer": "ios",
       "baseHash": "e19dd084bd67c8780def252e8d147ee12ac155141265370319dbf77e91cbfa3d"
     },
     {
       "type": "patch",
       "file": "ReactCommon/React-FabricComponents.podspec",
       "area": "build",
+      "layer": "ios",
       "baseHash": "2b4412f17a63ac264528511dde18302f4e9378b1884ebbd8f0cbfc2d4bc6e5ca"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/cmake-utils/react-native-flags.cmake",
+      "area": "build",
+      "layer": "core",
+      "baseHash": "b29f562f538ea3e3de5fc68755be79acb1d7c24cb60b7e39a279a3b2ecffa994"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/featureflags/ReactNativeFeatureFlagsDefaults.h",
       "area": "fabric-compat",
+      "layer": "core",
       "baseHash": "cf2c4801705fe1fa0ce44885fe749d9505d61371cd73b774836b19d8d378c679"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/core/platform/android/ReactCommon/JavaTurboModule.h",
       "area": "fabric-compat",
+      "layer": "android",
       "baseHash": "66cf1008629cc19ae6181f99ddecc88ac126ce5ea4b92ee7aa87d48406989245"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/defaults/DefaultTurboModules.cpp",
       "area": "dom",
+      "layer": "core",
       "baseHash": "9faab71b34b7d8139bfdacbd3318bffd292094fb12ba47c1bd106de426e044be"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/dom/NativeDOM.cpp",
       "area": "dom",
+      "layer": "core",
       "baseHash": "a359a2c52e17c37c60b6e1302887f87d9771a9b40957cd520bafe036e6b34388"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/dom/NativeDOM.h",
       "area": "dom",
+      "layer": "core",
       "baseHash": "ddf72768d8780b8acd0631b7f04c86837c26626823fed78b3a2aee6699b12e8b"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/dom/React-domnativemodule.podspec",
       "area": "dom",
+      "layer": "ios",
       "baseHash": "43bd4db179fbc21a8c7df3f6b9127c74aa7dc4ea4cc09b9d58c7716f0ec29e4a"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/animationbackend/AnimationBackend.cpp",
       "area": "fabric-compat",
+      "layer": "core",
       "baseHash": "78713f172fadcbda7a25d7e473f552525b036695c49603af80639e7faeb8c010"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/animations/LayoutAnimationKeyFrameManager.h",
       "area": "animation",
+      "layer": "core",
       "baseHash": "1885de26432ed90a26f54694c8794b8f807690c50e436c057192e7573165c3cd"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/bridging/bridging.h",
       "area": "fabric-compat",
+      "layer": "core",
       "baseHash": "588115d7d94522295ddc854829253e9495e0ecfdc13cf246494f2dac6f6beeb6"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/componentregistry/ComponentDescriptorRegistry.h",
       "area": "threading",
+      "layer": "core",
       "baseHash": "1dd75ec3318060942e7269b233976f645bb9d9fe15d2e41d202783d296ee640a"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/components/text/ParagraphEventEmitter.h",
       "area": "text",
+      "layer": "core",
       "baseHash": "48faaa4a4cc592aba7e185480783b576ab8eb9afbf8521fd9c121ffb906f3654"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.h",
       "area": "compat",
+      "layer": "core",
       "baseHash": "351993db53081f4a6ca29b177cc29ceae328939d5f848544a0a3b13fd8c8e16b"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/core/ConcreteComponentDescriptor.h",
       "area": "fabric-compat",
+      "layer": "core",
       "baseHash": "6272eedc86231f7a4d398ba0abedd64f9cdae4ac2275f65b55995e155b8fbaad"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/core/State.h",
       "area": "compat",
+      "layer": "core",
       "baseHash": "a598e7866d734644534d8de9045f2ad5925ff259c6b344543f99e930cd925f49"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/mounting/ShadowTree.cpp",
       "area": "fabric-compat",
+      "layer": "core",
       "baseHash": "1a82ab2d2ab60eb64f59fa3d72fe6cbf11009ba469a6524a5bfbc71714b21828"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/observers/intersection/IntersectionObserverManager.h",
       "area": "dom",
+      "layer": "core",
       "baseHash": "dc6bedfa09057bc37edadfefcdb6870f773258e5277621ad65ce8d41a2430364"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/runtimescheduler/JankReporter.cpp",
-      "area": "threading"
+      "area": "threading",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/runtimescheduler/JankReporter.h",
-      "area": "threading"
+      "area": "threading",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/runtimescheduler/LoomRuntimeHooks.h",
+      "area": "threading",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/runtimescheduler/LoomSettings.h",
+      "area": "threading",
+      "layer": "core"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/React-runtimescheduler.podspec",
       "area": "threading",
+      "layer": "ios",
       "baseHash": "106b654b87b356bba639f91e1dbe7bcad87082eb5ed509e710aa947862acd457"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.cpp",
-      "area": "threading",
-      "baseHash": "ef3359e748689497725711d7143a2c4f3cfc621ad41338ced0e6bcc11befcb08"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.h",
-      "area": "threading",
-      "baseHash": "8de303270ad4ff2092671ad8e3cb8ddeed2d7b4e79f4e0d07bc193875e4f9077"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler.cpp",
       "area": "threading",
+      "layer": "core",
       "baseHash": "36def35d1027f0ae502fdce119c6a124047777eeb89d8ef6eb8cfc4c762040b7"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler.h",
       "area": "threading",
+      "layer": "core",
       "baseHash": "f2bf68633f2e9b4bdf4c4a69286d33b5f0ed0ba71e41ed1c02cc52db62bb1707"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h",
-      "area": "threading"
+      "area": "threading",
+      "layer": "core"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.cpp",
+      "area": "threading",
+      "layer": "core",
+      "baseHash": "ef3359e748689497725711d7143a2c4f3cfc621ad41338ced0e6bcc11befcb08"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.h",
+      "area": "threading",
+      "layer": "core",
+      "baseHash": "8de303270ad4ff2092671ad8e3cb8ddeed2d7b4e79f4e0d07bc193875e4f9077"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/scheduler/Scheduler.cpp",
       "area": "delegate-plumbing",
+      "layer": "core",
       "baseHash": "ef04c978ac00eea82fd9ce1532c2d3155a5ef193f2f2611356ea726006399eff"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/scheduler/Scheduler.h",
       "area": "delegate-plumbing",
+      "layer": "core",
       "baseHash": "924314fb02e6d6766024b9c163ba5557bb2b8f8852204f2b15af44b3b91360ab"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/scheduler/SchedulerDelegate.h",
-      "area": "delegate-plumbing",
-      "baseHash": "41f5fd9208e6b0eab0953330d73196c865e856f2e675e7e0cd933469c37f129d"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/textlayoutmanager/platform/android/react/renderer/textlayoutmanager/TextLayoutManager.cpp",
       "area": "text",
+      "layer": "android",
       "baseHash": "1b2f789113bb60e5cdf3402bdb1d8fd50e10846d3f4fa0100d5e9df5bb26c8ca"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/textlayoutmanager/platform/android/react/renderer/textlayoutmanager/TextLayoutManager.h",
       "area": "text",
+      "layer": "android",
       "baseHash": "86199fd7278b2e7c2666ece76710c644d6d84f40b6d3754bd05af5c44df158ae"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/textlayoutmanager/platform/ios/react/renderer/textlayoutmanager/RCTTextLayoutManager.mm",
       "area": "text",
+      "layer": "ios",
       "baseHash": "d0a90936f558925ef739068649a7ceed170bdd17791bfa59e477051870a1be4c"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomBinding.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomBinding.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomCompat.cpp",
-      "area": "compat"
+      "area": "compat",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomCompat.h",
-      "area": "compat"
+      "area": "compat",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomEventManager.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomEventManager.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomFabricBridge.cpp",
-      "area": "fabric-compat"
+      "area": "fabric-compat",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomFabricBridge.h",
-      "area": "fabric-compat"
+      "area": "fabric-compat",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomGeometry.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomHost.h",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomLayoutAnimations.cpp",
-      "area": "fabric-compat"
+      "area": "fabric-compat",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomLayoutAnimations.h",
-      "area": "fabric-compat"
+      "area": "fabric-compat",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomMountBatch.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomPlatformTraits.h",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomRenderer.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomRenderer.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomRendererDOM.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomRendererInternals.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomRendererMetrics.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomRendererText.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomRendererTree.cpp",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomSettingsHost.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomTextLayoutManagerServices.h",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomTextMeasurement.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomTextServices.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomViewManagerNames.h",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomWorker.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomWorkerProfile.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/LoomYoga.cpp",
-      "area": "renderer-core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/tests/LoomRendererTest.cpp",
-      "area": "renderer-core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/tests/LoomWorkerTest.cpp",
-      "area": "renderer-core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/tests/TestUIManagerDelegate.h",
-      "area": "renderer-core"
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/uimanager/UIManager.cpp",
       "area": "fabric-compat",
+      "layer": "core",
       "baseHash": "c64a4beca1dbbe38e49d4fb5f784c89695340770febf77661173854008f7244d"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp",
       "area": "delegate-plumbing",
+      "layer": "core",
       "baseHash": "622fbbc9a71b668e8d8d4e08b437a3712640323a2d2881c08c0a0d7d3a849a78"
     },
     {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/uimanager/UIManagerDelegate.h",
-      "area": "delegate-plumbing",
-      "baseHash": "0ffc961df09b641dccd33f021049969939f7fc0d89331386b0c624b2ddcdb366"
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/tests/LoomRendererTest.cpp",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
-      "type": "patch",
-      "file": "ReactCommon/react/runtime/hermes/HermesInstance.cpp",
-      "area": "runtime",
-      "baseHash": "2499065570f9802b1f67e3d9e78880235a5ec20386a0ce1151a8cec1c5c6e127"
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/tests/LoomTestTraits.h",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
-      "type": "patch",
-      "file": "ReactCommon/react/runtime/platform/ios/React-RuntimeApple.podspec",
-      "area": "build",
-      "baseHash": "9ae3a0d4b92998e3a88a50348ac84b5b924929ccc69ced8f19f1358028767d37"
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/tests/LoomWorkerTest.cpp",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
-      "type": "patch",
-      "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTInstance.mm",
-      "area": "misc",
-      "baseHash": "252353763a8c901b27e31c3f9f4d09e07ff07a4ba8e3e2dcc8ce4de1331be734"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTJSThreadManager.h",
-      "area": "threading",
-      "baseHash": "4f17d5577f7fbbc0150d91dc813238c194e46432d275c1bf34f91d44db009f0f"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTJSThreadManager.mm",
-      "area": "threading",
-      "baseHash": "578b563b542748702df0bc10c8e535405b0327f2c840fa10a53ee4cdaab44413"
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/tests/TestUIManagerDelegate.h",
+      "area": "renderer-core",
+      "layer": "core"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/runtime/TimerManager.cpp",
       "area": "runtime",
+      "layer": "core",
       "baseHash": "4da567def5bf1c65895cb8dc70682c03371008f30f30f7022a56c9412ce57275"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/runtime/TimerManager.h",
       "area": "runtime",
+      "layer": "core",
       "baseHash": "afa6c08ee7fac1a5a994c9b66f70200ae719b3ef1ab29abd8838ab989ff4aac3"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/runtime/hermes/HermesInstance.cpp",
+      "area": "runtime",
+      "layer": "core",
+      "baseHash": "2499065570f9802b1f67e3d9e78880235a5ec20386a0ce1151a8cec1c5c6e127"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/runtime/platform/ios/React-RuntimeApple.podspec",
+      "area": "build",
+      "layer": "ios",
+      "baseHash": "9ae3a0d4b92998e3a88a50348ac84b5b924929ccc69ced8f19f1358028767d37"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTInstance.mm",
+      "area": "misc",
+      "layer": "ios",
+      "baseHash": "252353763a8c901b27e31c3f9f4d09e07ff07a4ba8e3e2dcc8ce4de1331be734"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTJSThreadManager.h",
+      "area": "threading",
+      "layer": "ios",
+      "baseHash": "4f17d5577f7fbbc0150d91dc813238c194e46432d275c1bf34f91d44db009f0f"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTJSThreadManager.mm",
+      "area": "threading",
+      "layer": "ios",
+      "baseHash": "578b563b542748702df0bc10c8e535405b0327f2c840fa10a53ee4cdaab44413"
+    },
+    {
+      "type": "patch",
+      "file": "index.js",
+      "area": "js-renderer",
+      "layer": "core",
+      "baseHash": "fd589b1e3fbceb1aeddd59b42f8460f12dd10b0c7c1f67147a148e985c428cf1"
     },
     {
       "type": "patch",
       "file": "scripts/react_native_pods.rb",
       "area": "build",
+      "layer": "ios",
       "baseHash": "74f07d035bdd213a724fa4f661c3da127471839e8f85f4d99a4ae0dd2dfe5dbe"
     },
     {
       "type": "patch",
       "file": "src/private/setup/setUpDefaultReactNativeEnvironment.js",
       "area": "runtime",
+      "layer": "core",
       "baseHash": "1f81b0d06f335bc7a336ea3863300fce4d5b348643d98c9e49c6c6d03b3b948f"
     }
   ]

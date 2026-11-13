@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+const {layerOf} = require('./areas');
+
 const PKG_ROOT = path.resolve(__dirname, '..');
 const SRC_DIR = path.join(PKG_ROOT, 'src');
 const ANDROID_TESTS_DIR = path.join(PKG_ROOT, 'android-tests');
@@ -38,6 +40,7 @@ function loadManifest() {
 }
 
 function saveManifest(m) {
+  for (const o of m.overrides) o.layer = layerOf(o.file);
   m.overrides.sort((a, b) => a.file.localeCompare(b.file));
   fs.writeFileSync(MANIFEST_PATH, JSON.stringify(m, null, 2) + '\n');
 }

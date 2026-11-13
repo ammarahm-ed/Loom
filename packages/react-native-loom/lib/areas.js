@@ -18,6 +18,20 @@ const RULES = [
   [/(ReactScrollView|ReactViewManager|ReactImageManager|JSTouchDispatcher|views\/)/, 'views'],
 ];
 
+/**
+ * Which platform layer an override belongs to: `core` is shared by every host,
+ * `ios` and `android` are one platform's. Core code reaches a platform only
+ * through `LoomHost`.
+ */
+function layerOf(file) {
+  if (/(^|\/)platform\/ios\//.test(file)) return 'ios';
+  if (/(^|\/)platform\/android\//.test(file)) return 'android';
+  if (/^ReactAndroid\//.test(file)) return 'android';
+  if (/^(React|ReactApple)\//.test(file)) return 'ios';
+  if (/(\.podspec$|react_native_pods\.rb$|^scripts\/)/.test(file)) return 'ios';
+  return 'core';
+}
+
 function classify(file) {
   for (const [re, area] of RULES) {
     if (re.test(file)) return area;
@@ -25,4 +39,4 @@ function classify(file) {
   return 'misc';
 }
 
-module.exports = {classify};
+module.exports = {classify, layerOf};
