@@ -3300,8 +3300,8 @@ SPEC CHECKSUMS:
   React-cxxstableapi: ccfeff743a5a6fad2df227bd441351d48efd97fe
   React-debug: cca322f14267c7471bd17449fd0681c6fa87d6a3
   React-defaultsnativemodule: 21c4bb42baa9cd0c214bfc43fd9b30c052e6b3d0
-  React-domnativemodule: 9170538df985164ea3c3bbea8526b539ec393174
-  React-Fabric: 3ae84b7cde87ee122e658be27285e5b4044d13f3
+  React-domnativemodule: 2a03f2b375291275a32ce9450e59a381c499ddea
+  React-Fabric: 4594d56a54e923973826f54d3cd8f6e1e9debbca
   React-FabricComponents: 57a9cf8e0d325c1969d2f3ee25166dedf9dc2dc3
   React-FabricImage: 63396dba45e0cb27c2a88e21068f3f4597fc1449
   React-featureflags: a69ac32359343facb4da4d55291941c4a7b58dc8
@@ -3343,7 +3343,7 @@ SPEC CHECKSUMS:
   React-RCTAnimation: 6cca2e6b53795d77706d593512f7439dee86fc4b
   React-RCTAppDelegate: 1f2532c8f28affe9a5b32592f49c8b3c1ae3a501
   React-RCTBlob: bb7f4b6e30238d59917cb2305fb390455e5e5218
-  React-RCTFabric: 3efcbb168f0a926237f1739cfb28da9f2178962f
+  React-RCTFabric: 329e70608e647c81746081aabe4661fbddda118e
   React-RCTFBReactNativeSpec: 94951139596546680b785acd5498956418ea0e48
   React-RCTImage: 66fad32b968318f675bf3737a3f2171268892d4f
   React-RCTLinking: 7123d14b5320117773a31c85cb556e8c2ebc20b5
@@ -3356,11 +3356,11 @@ SPEC CHECKSUMS:
   React-renderercss: 25c40f5cbf1b2ca7ac901a24201152ea4c4b8b6c
   React-rendererdebug: db352493e003bb68ab5b38e237268ec9043be3d1
   React-resizeobservernativemodule: 6d584c70d39480b45edd0eaf8cfa9c135bd37061
-  React-RuntimeApple: 2e714bcd5131f574464217fbf1024dbdd780e972
+  React-RuntimeApple: f214aa8eba6a8e5dce5931b87f015d1853d314d0
   React-RuntimeCore: 641291fd5deacb46dbcf3f6c560212d3592a4e86
   React-runtimeexecutor: 84d98ae80d297792dba213fa18c6fbd387366638
   React-RuntimeHermes: f88dbdb309f6ecc29a59a10f829897f895a09ee6
-  React-runtimescheduler: 3e0019450098ec7c754de15f7a51ed843335092d
+  React-runtimescheduler: afa18d57c5a8b27760919a9c65bf60af8fd8cba2
   React-timing: ff47ef9958d4a1999871e95228ad4403a2bdba71
   React-utils: 1bf9938d8ec250c3d86434dbd9df670e23afda62
   React-viewtransitionnativemodule: 2cb178d03cd7727356ee6f633c3239fe9d77fc1b

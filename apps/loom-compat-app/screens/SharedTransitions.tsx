@@ -14,7 +14,7 @@ import React, {useEffect, useRef} from 'react';
 import {Platform, ScrollView, Text, View} from 'react-native';
 import {NavigationContainer, createNavigationContainerRef} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import Animated, {SharedTransition, SharedTransitionBoundary} from 'react-native-reanimated';
+import Animated, {ReduceMotion, SharedTransition, SharedTransitionBoundary} from 'react-native-reanimated';
 import {runOnJS} from 'react-native-worklets';
 import {report, wait} from '../report';
 
@@ -43,7 +43,7 @@ function ended(finished: boolean) {
 }
 
 // Reanimated's own SharedTransition, with the values it is started with recorded.
-const base = SharedTransition.duration(DURATION).withCallback((finished: boolean) => {
+const base = SharedTransition.duration(DURATION).reduceMotion(ReduceMotion.Never).withCallback((finished: boolean) => {
   'worklet';
   runOnJS(ended)(finished);
 });

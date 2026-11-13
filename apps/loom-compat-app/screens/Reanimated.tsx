@@ -21,6 +21,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  ReduceMotion,
 } from 'react-native-reanimated';
 import {runOnJS, runOnUI} from 'react-native-worklets';
 import {near, report, wait} from '../report';
@@ -54,8 +55,8 @@ export default function Reanimated() {
     (async () => {
       await wait(800);
       const contentBefore = await contentY();
-      width.value = withTiming(220, {duration: 300});
-      opacity.value = withTiming(0.5, {duration: 300});
+      width.value = withTiming(220, {duration: 300, reduceMotion: ReduceMotion.Never});
+      opacity.value = withTiming(0.5, {duration: 300, reduceMotion: ReduceMotion.Never});
       setShowEntering(true);
       runOnUI(() => {
         scrollTo(scrollRef, 0, 300, false);
@@ -98,10 +99,10 @@ export default function Reanimated() {
         style={[{height: 40, backgroundColor: '#69c'}, boxStyle]}
       />
       {showEntering && (
-        <Animated.View entering={FadeIn} onLayout={on('entering')} style={{height: 30, backgroundColor: '#9c6'}} />
+        <Animated.View entering={FadeIn.reduceMotion(ReduceMotion.Never)} onLayout={on('entering')} style={{height: 30, backgroundColor: '#9c6'}} />
       )}
       {showExiting && (
-        <Animated.View exiting={FadeOut.duration(200)} style={{height: 50, backgroundColor: '#c69'}} />
+        <Animated.View exiting={FadeOut.duration(200).reduceMotion(ReduceMotion.Never)} style={{height: 50, backgroundColor: '#c69'}} />
       )}
       <View onLayout={on('sibling')} style={{height: 20, backgroundColor: '#ccc'}} />
       <Animated.ScrollView ref={scrollRef} onScroll={onScroll} scrollEventThrottle={16} style={{height: 200}}>

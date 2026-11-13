@@ -10,7 +10,7 @@
  */
 import React, {useEffect, useRef, useState} from 'react';
 import {View} from 'react-native';
-import Animated, {FadeIn, FadeOut, LinearTransition} from 'react-native-reanimated';
+import Animated, {FadeIn, FadeOut, LinearTransition, ReduceMotion} from 'react-native-reanimated';
 import {runOnJS} from 'react-native-worklets';
 import {report, wait} from '../report';
 
@@ -75,19 +75,19 @@ export default function LayoutAnimations() {
     <View style={{flex: 1, padding: 16}}>
       {spacer && <View style={{height: 60}} />}
       <Animated.View
-        layout={LinearTransition.duration(DURATION).withCallback(callback('layout'))}
+        layout={LinearTransition.duration(DURATION).reduceMotion(ReduceMotion.Never).withCallback(callback('layout'))}
         style={{height: 30, backgroundColor: '#999'}}
       />
       {entering && (
         <Animated.View
-          entering={FadeIn.duration(DURATION).withCallback(callback('entering'))}
+          entering={FadeIn.duration(DURATION).reduceMotion(ReduceMotion.Never).withCallback(callback('entering'))}
           style={{height: 30, backgroundColor: '#69c'}}
         />
       )}
       <View style={{height: 40}}>
         {exiting && (
           <Animated.View
-            exiting={FadeOut.duration(DURATION).withCallback(callback('exiting'))}
+            exiting={FadeOut.duration(DURATION).reduceMotion(ReduceMotion.Never).withCallback(callback('exiting'))}
             style={{height: 30, backgroundColor: '#c69'}}
           />
         )}
@@ -99,7 +99,7 @@ export default function LayoutAnimations() {
         <View style={{padding: 4, backgroundColor: '#eee'}}>
           <View style={{height: 10, backgroundColor: '#ccc'}} />
           <Animated.View
-            exiting={FadeOut.duration(DURATION).withCallback(callback('nestedExiting'))}
+            exiting={FadeOut.duration(DURATION).reduceMotion(ReduceMotion.Never).withCallback(callback('nestedExiting'))}
             style={{height: 30, backgroundColor: '#9c6'}}
           />
         </View>

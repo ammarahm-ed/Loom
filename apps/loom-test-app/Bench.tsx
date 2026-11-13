@@ -23,6 +23,7 @@ import React, {
   useState,
 } from 'react';
 // @ts-ignore: plain JS bench helper
+import { Loom } from 'react-native-loom';
 import { fabricStatsSummary, resetFabricStats } from './benchFabricProbe';
 import {
   Animated,
@@ -821,8 +822,21 @@ export default function Bench({
   // The windowing transition is an opt-in for measurement: every scenario runs with it off unless
   // its name says `-trans` (e.g. scroll-trans). The renderer's own cost is what the benchmarks track.
   (global as any).__loomListTransitions = scenario.includes('-trans');
-  const busy = scenario.endsWith('-busy');
-  const base = busy ? scenario.slice(0, -'-busy'.length) : scenario;
+  // `<scenario>-synctext` runs the scenario with `Loom.asyncText = false` set from JS (iOS: the
+  // paragraph counters then show syncDisabled instead of asyncDraw).
+  // `<scenario>-jank<N>` sets `Loom.jankBudgetMs = N` the same way.
+  const jankMatch = /-jank(\d+)$/.exec(scenario);
+  const unbudgeted = jankMatch ? scenario.slice(0, jankMatch.index) : scenario;
+  if (jankMatch) {
+    Loom.jankBudgetMs = Number(jankMatch[1]);
+  }
+  const syncText = unbudgeted.endsWith('-synctext');
+  const named = syncText ? unbudgeted.slice(0, -'-synctext'.length) : unbudgeted;
+  if (syncText) {
+    Loom.asyncText = false;
+  }
+  const busy = named.endsWith('-busy');
+  const base = busy ? named.slice(0, -'-busy'.length) : named;
   switch (base) {
     case 'memory':
       return <Memory />;

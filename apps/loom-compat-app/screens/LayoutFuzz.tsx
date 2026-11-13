@@ -16,6 +16,7 @@ import Animated, {
   FadeOut,
   FadingTransition,
   LinearTransition,
+  ReduceMotion,
   SlideInLeft,
   SlideOutRight,
   ZoomIn,
@@ -101,9 +102,9 @@ function AnimatedFuzzView({
       runOnJS(onEnded)(finished);
     };
     return {
-      entering: node.enter >= 0 ? ENTERING[node.enter].duration(node.duration).withCallback(cb) : undefined,
-      exiting: node.exit >= 0 ? EXITING[node.exit].duration(node.duration).withCallback(cb) : undefined,
-      layout: node.layout >= 0 ? LAYOUT[node.layout].duration(node.duration).withCallback(cb) : undefined,
+      entering: node.enter >= 0 ? ENTERING[node.enter].duration(node.duration).reduceMotion(ReduceMotion.Never).withCallback(cb) : undefined,
+      exiting: node.exit >= 0 ? EXITING[node.exit].duration(node.duration).reduceMotion(ReduceMotion.Never).withCallback(cb) : undefined,
+      layout: node.layout >= 0 ? LAYOUT[node.layout].duration(node.duration).reduceMotion(ReduceMotion.Never).withCallback(cb) : undefined,
     };
   }, [node.enter, node.exit, node.layout, node.duration]);
   return (
