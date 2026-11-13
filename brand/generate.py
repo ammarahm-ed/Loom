@@ -148,7 +148,7 @@ section{{padding:32px 64px 56px}} h2{{margin:0 0 20px;font-size:18px}}
 .num{{font-size:13px;font-weight:600}} .name{{font-size:17px;font-weight:600}}
 </style></head><body>
 <header><h1>Loom — logo concepts</h1>
-<p>react-native-loom: the machine behind the Fabric. Colours from React Native's palette; each SVG here is a standalone tile.</p></header>
+<p>react-native-loom: a faster renderer for React Native. Colours from React Native's palette; each SVG here is a standalone tile.</p></header>
 {"".join(sections)}</body></html>'''
     with open(os.path.join(CONCEPTS_DIR, 'index.html'), 'w') as out:
         out.write(page)
@@ -189,15 +189,15 @@ def social_preview(p):
     icon = tile(threads_into_fabric, (96, 96), (128, 128), 28, p, 'Loom')
     inner = icon.split('>', 1)[1].rsplit('</svg>', 1)[0]
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" '
-            f'role="img" aria-label="react-native-loom: the machine behind the Fabric">{FONT_IMPORT}'
+            f'role="img" aria-label="react-native-loom: a faster renderer for React Native">{FONT_IMPORT}'
             f'<rect width="1280" height="640" fill="#16181D"/>'
             f'<g transform="translate(112 192) scale(2)">{inner}</g>'
             f'<text x="408" y="290" font-family="Space Grotesk, Inter, sans-serif" font-size="76" font-weight="700" '
             f'letter-spacing="-2" fill="#FFFFFF">react-native-loom</text>'
             f'<text x="412" y="356" font-family="Inter, sans-serif" font-size="34" font-weight="500" fill="#61DAFB">'
-            f'The machine behind the Fabric.</text>'
+            f'A faster renderer for React Native.</text>'
             f'<text x="412" y="410" font-family="Inter, sans-serif" font-size="26" fill="#9AA3B2">'
-            f'React Native rendering, woven thread by thread.</text></svg>\n')
+            f'Instant updates · native lists · JavaScript on the thread you choose.</text></svg>\n')
 
 
 def final_set():
