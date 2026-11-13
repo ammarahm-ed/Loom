@@ -107,7 +107,7 @@ def tile(draw, mark, size, radius, p, name):
     tw, th = size
     dx, dy = (tw - mark[0]) / 2, (th - mark[1]) / 2
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {tw} {th}" width="{tw * 4}" height="{th * 4}" '
-            f'role="img" aria-label="Loom logo concept: {html.escape(name)}">'
+            f'role="img" aria-label="{html.escape(name if name == "Loom" else "Loom logo concept: " + name)}">'
             f'<rect x="0.75" y="0.75" width="{tw - 1.5}" height="{th - 1.5}" rx="{radius}" '
             f'fill="{p["bg"]}" stroke="{p["border"]}" stroke-width="1.5"/>'
             f'<g transform="translate({dx} {dy})">{draw(p)}</g></svg>\n')
@@ -122,7 +122,7 @@ def main():
         for slug, name, draw, mark, size, radius in CONCEPTS:
             with open(os.path.join(CONCEPTS_DIR, f'{slug}-{theme}.svg'), 'w') as out:
                 out.write(tile(draw, mark, size, radius, p, name))
-            word = '' if slug.startswith('06') else '<span class="word">loom</span>'
+            word = '' if slug.startswith('06') else '<span class="word">Loom</span>'
             cards.append(
                 f'<div class="card" style="background:{p["card"]}">'
                 f'<div class="lock"><img src="{slug}-{theme}.svg" alt="{html.escape(name)}" '
@@ -148,7 +148,7 @@ section{{padding:32px 64px 56px}} h2{{margin:0 0 20px;font-size:18px}}
 .num{{font-size:13px;font-weight:600}} .name{{font-size:17px;font-weight:600}}
 </style></head><body>
 <header><h1>Loom — logo concepts</h1>
-<p>react-native-loom: a faster renderer for React Native. Colours from React Native's palette; each SVG here is a standalone tile.</p></header>
+<p>Loom: a faster renderer for React Native. Colours from React Native's palette; each SVG here is a standalone tile.</p></header>
 {"".join(sections)}</body></html>'''
     with open(os.path.join(CONCEPTS_DIR, 'index.html'), 'w') as out:
         out.write(page)
@@ -172,32 +172,30 @@ FONT_IMPORT = ('<style>@import url("https://fonts.googleapis.com/css2?family=Spa
 
 
 def lockup(p):
-    """Icon tile plus the "loom" wordmark, side by side."""
+    """Icon tile plus the "Loom" wordmark, side by side."""
     tw, th = 128, 128
-    w = 400
+    w = 440
     icon = tile(threads_into_fabric, (96, 96), (tw, th), 28, p, 'Loom')
     inner = icon.split('>', 1)[1].rsplit('</svg>', 1)[0]
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {th}" width="{w * 2}" height="{th * 2}" '
             f'role="img" aria-label="Loom">{FONT_IMPORT}{inner}'
             f'<text x="152" y="94" font-family="Space Grotesk, Inter, Helvetica, Arial, sans-serif" '
-            f'font-size="92" font-weight="600" letter-spacing="-2.5" fill="{p["ink"] if p["bg"] != "#FFFFFF" else "#23272F"}">loom</text>'
+            f'font-size="92" font-weight="600" letter-spacing="-2.5" fill="{p["ink"] if p["bg"] != "#FFFFFF" else "#23272F"}">Loom</text>'
             f'</svg>\n')
 
 
 def social_preview(p):
-    """1280x640: GitHub's social preview size."""
+    """1280x640: GitHub's social preview size. Centered icon, name and headline."""
     icon = tile(threads_into_fabric, (96, 96), (128, 128), 28, p, 'Loom')
     inner = icon.split('>', 1)[1].rsplit('</svg>', 1)[0]
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" '
-            f'role="img" aria-label="react-native-loom: a faster renderer for React Native">{FONT_IMPORT}'
+            f'role="img" aria-label="Loom: a faster renderer for React Native">{FONT_IMPORT}'
             f'<rect width="1280" height="640" fill="#16181D"/>'
-            f'<g transform="translate(112 192) scale(2)">{inner}</g>'
-            f'<text x="408" y="290" font-family="Space Grotesk, Inter, sans-serif" font-size="76" font-weight="700" '
-            f'letter-spacing="-2" fill="#FFFFFF">react-native-loom</text>'
-            f'<text x="412" y="356" font-family="Inter, sans-serif" font-size="34" font-weight="500" fill="#61DAFB">'
-            f'A faster renderer for React Native.</text>'
-            f'<text x="412" y="410" font-family="Inter, sans-serif" font-size="26" fill="#9AA3B2">'
-            f'Instant updates · native lists · JavaScript on the thread you choose.</text></svg>\n')
+            f'<g transform="translate(512 100) scale(2)">{inner}</g>'
+            f'<text x="640" y="456" text-anchor="middle" font-family="Space Grotesk, Inter, sans-serif" '
+            f'font-size="96" font-weight="700" letter-spacing="-2.5" fill="#FFFFFF">Loom</text>'
+            f'<text x="640" y="518" text-anchor="middle" font-family="Inter, sans-serif" font-size="36" '
+            f'font-weight="500" fill="#61DAFB">A faster renderer for React Native</text></svg>\n')
 
 
 def final_set():
