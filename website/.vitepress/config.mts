@@ -1,19 +1,9 @@
 import {defineConfig} from 'vitepress';
-import {withMermaid} from 'vitepress-plugin-mermaid';
 
-export default withMermaid(
-  defineConfig({
+export default defineConfig({
   title: 'Loom',
   description: 'A faster renderer for React Native: instant updates, unchanged libraries, and JavaScript on the thread you choose.',
   cleanUrls: true,
-  // Mermaid pulls in CommonJS dependencies (e.g. fastdom) that Vite must pre-bundle in dev.
-  vite: {optimizeDeps: {include: ['mermaid']}},
-  // Size diagram boxes with the same font the page draws them in, so labels aren't clipped.
-  mermaid: {
-    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, sans-serif',
-    themeVariables: {fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, sans-serif'},
-    flowchart: {padding: 18, htmlLabels: false},
-  },
   lastUpdated: true,
   head: [
     ['link', {rel: 'icon', type: 'image/png', href: '/favicon.png'}],
@@ -48,6 +38,7 @@ export default withMermaid(
             {text: 'Finding main-thread jank', link: '/guide/jank-reporter'},
             {text: 'Supported libraries', link: '/guide/compatibility'},
             {text: 'Reanimated', link: '/guide/reanimated'},
+            {text: 'Implementing a platform', link: '/guide/platforms'},
             {text: 'Upgrading React Native', link: '/guide/upgrading'},
           ],
         },
@@ -77,5 +68,4 @@ export default withMermaid(
       copyright: 'Loom is not affiliated with Meta. React Native is a trademark of Meta Platforms, Inc.',
     },
   },
-  }),
-);
+});

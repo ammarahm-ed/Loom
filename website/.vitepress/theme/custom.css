@@ -1,15 +1,114 @@
-/* Mermaid sizes each box before the page's styles apply. Keep VitePress's paragraph line
-   height and wrapping out of diagram labels so the text fits the box it was measured for. */
-.vp-doc .mermaid foreignObject div,
-.vp-doc .mermaid foreignObject span,
-.vp-doc .mermaid foreignObject p {
-  line-height: 1.5 !important;
-  white-space: nowrap !important;
-  margin: 0 !important;
-}
-
-.vp-doc .mermaid {
-  display: flex;
-  justify-content: center;
+/* Diagrams: inline SVG components coloured from VitePress's theme variables. */
+.loom-frame {
+  position: relative;
   margin: 24px 0;
+}
+.loom-frame-inline {
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background: var(--vp-c-bg);
+  cursor: zoom-in;
+}
+.loom-frame-inline:hover {
+  border-color: var(--vp-c-brand-1);
+}
+.loom-frame-inline:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}
+.loom-frame-expand {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  padding: 5px;
+  border-radius: 6px;
+  color: var(--vp-c-text-2);
+  background: var(--vp-c-bg-soft);
+  pointer-events: none;
+}
+.loom-svg {
+  display: block;
+  width: 100%;
+  min-width: 760px;
+  height: auto;
+  font-family: var(--vp-font-family-base);
+}
+.loom-lane { fill: var(--vp-c-bg-soft); }
+.loom-lane-label { fill: var(--vp-c-text-2); font-size: 12.5px; font-weight: 600; }
+.loom-card rect { fill: var(--vp-c-bg); stroke: var(--vp-c-divider); stroke-width: 1.5; }
+.loom-card.dashed rect { stroke-dasharray: 5 4; }
+.loom-card.brand rect { fill: var(--vp-c-brand-soft); stroke: var(--vp-c-brand-1); }
+.loom-card.green rect { fill: var(--vp-c-green-soft); stroke: var(--vp-c-green-1); }
+.loom-card.purple rect { fill: var(--vp-c-purple-soft); stroke: var(--vp-c-purple-1); }
+.loom-card.yellow rect { fill: var(--vp-c-yellow-soft); stroke: var(--vp-c-yellow-1); }
+.loom-card.indigo rect { fill: var(--vp-c-indigo-soft); stroke: var(--vp-c-indigo-1); }
+.loom-card-title { fill: var(--vp-c-text-1); font-size: 14.5px; font-weight: 600; }
+.loom-card-sub { fill: var(--vp-c-text-2); font-size: 12px; }
+.loom-edge { fill: none; stroke: var(--vp-c-text-2); stroke-width: 1.6; }
+.loom-edge.dashed { stroke-dasharray: 5 4; }
+.loom-arrow-head { fill: var(--vp-c-text-2); }
+.loom-chip { fill: var(--vp-c-bg); stroke: var(--vp-c-divider); }
+.loom-chip-text { fill: var(--vp-c-text-2); font-size: 11.5px; }
+
+/* Full-screen view. */
+.loom-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--vp-c-bg) 82%, transparent);
+  backdrop-filter: blur(6px);
+}
+.loom-overlay-dialog {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.loom-overlay-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  display: inline-flex;
+  padding: 9px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  color: var(--vp-c-text-1);
+  background: var(--vp-c-bg-soft);
+  cursor: pointer;
+}
+.loom-overlay-close:hover { border-color: var(--vp-c-brand-1); }
+.loom-overlay-close:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 2px; }
+.loom-overlay-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 56px 16px 16px;
+  box-sizing: border-box;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+.loom-overlay-content {
+  width: 100%;
+  max-height: 100%;
+  transform-origin: center;
+  border-radius: 12px;
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-divider);
+}
+.loom-overlay-content .loom-svg { min-width: 0; max-height: calc(100vh - 80px); }
+.loom-overlay-content .loom-frame-expand { display: none; }
+
+/* Pages with wide diagrams hide the outline so the article can use the full width. */
+@media (min-width: 960px) {
+  .VPDoc:not(.has-aside) .content-container { max-width: 920px; }
+  .VPDoc:not(.has-aside) .container { justify-content: flex-start; }
 }

@@ -1,3 +1,7 @@
+---
+aside: false
+---
+
 # Reanimated
 
 `react-native-reanimated` works on Loom with no changes to the app or to Reanimated: animated
@@ -15,6 +19,11 @@ Reanimated writes animated props through React Native's shared animation backend
 implements on its own renderer: a paint-only prop (`opacity`, `transform`, colors) goes straight
 to the view, and a layout prop (`width`, `top`, ...) is laid out by Loom and mounted in the same
 frame. Nothing is committed to a tree for an animation frame.
+
+<LoomDiagram name="animprops" />
+
+Until the frame is folded into the renderer's props, the lane keeps the paint values as a
+replayable overlay. Writes to a text node leave the lane and take the ordinary per-call path.
 
 Reanimated chooses that path at build time through two static feature flags. Loom's build
 integration sets them for Reanimated's native build on both platforms, whatever the app
@@ -43,6 +52,8 @@ before the platform applies it and follows only the views of Animated components
 view costs one lookup per mount operation that names it. The animations themselves are still
 Reanimated's own: the adapter starts them through Reanimated's code, which runs the configured
 worklet on the UI runtime, and mounts each frame's values.
+
+<LoomDiagram name="layoutanim" />
 
 Exits follow Reanimated's rule. An exiting view keeps its subtree mounted. A removed ancestor of
 exiting views stays until the last of them ends, and its other children are removed at once.
@@ -105,6 +116,8 @@ How they run on Loom:
   gesture, and a cancelled gesture restores both screens. A pop started from JavaScript
   (`navigation.goBack()`), and every pop on Android, starts from the commit that removes the
   screen.
+
+<LoomDiagram name="shared" />
 
 `SharedTransitionBoundary` is `display: contents`, so, as on Fabric, it mounts no view of its
 own and does not affect touch handling or layout.
