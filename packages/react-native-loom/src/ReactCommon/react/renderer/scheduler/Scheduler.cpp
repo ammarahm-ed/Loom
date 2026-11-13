@@ -349,28 +349,6 @@ void Scheduler::uiManagerDidCreateShadowNode(const ShadowNode& shadowNode) {
   }
 }
 
-#if LOOM_RENDERER
-void Scheduler::loomSetConstraints(SurfaceId s, float minW, float minH, float maxW, float maxH, bool rtl, float ox, float oy) { if (delegate_) delegate_->loomSetConstraints(s, minW, minH, maxW, maxH, rtl, ox, oy); }
-std::function<void(std::function<void()>)> Scheduler::loomGetUIExecutor() { return delegate_ ? delegate_->loomGetUIExecutor() : nullptr; }
-bool Scheduler::loomCanMeasureTextOnWorker() { return delegate_ && delegate_->loomCanMeasureTextOnWorker(); }
-void Scheduler::loomApplyBatch(SurfaceId s, LoomMountBatch b) { if (delegate_) delegate_->loomApplyBatch(s, std::move(b)); }
-void Scheduler::loomFailSurface(SurfaceId s, const std::string& reason) { if (delegate_) delegate_->loomFailSurface(s, reason); }
-void Scheduler::loomRegisterEventTarget(SurfaceId s, Tag t, InstanceHandle::Shared h) { if (delegate_) delegate_->loomRegisterEventTarget(s, t, std::move(h)); }
-void Scheduler::loomUnregisterEventTarget(SurfaceId s, Tag t) { if (delegate_) delegate_->loomUnregisterEventTarget(s, t); }
-void Scheduler::loomDispatchEvent(SurfaceId s, Tag t, const std::string& n, folly::dynamic p, RawEvent::Category c, bool u) { if (delegate_) delegate_->loomDispatchEvent(s, t, n, std::move(p), c, u); }
-TextAttributes Scheduler::loomParseTextAttributes(SurfaceId s, const std::string& name, const folly::dynamic& props, const TextAttributes& inherited, ParagraphAttributes& paragraphAttributes) { return delegate_ ? delegate_->loomParseTextAttributes(s, name, props, inherited, paragraphAttributes) : inherited; }
-std::optional<Size> Scheduler::loomMeasureText(SurfaceId s, const AttributedString& a, const ParagraphAttributes& p, const Size& minSize, const Size& maxSize) { return delegate_ ? delegate_->loomMeasureText(s, a, p, minSize, maxSize) : std::nullopt; }
-LoomTextMeasurement Scheduler::loomPrepareText(SurfaceId s, const AttributedString& a, const ParagraphAttributes& p, const Size& minSize, const Size& maxSize) { return delegate_ ? delegate_->loomPrepareText(s, a, p, minSize, maxSize) : LoomTextMeasurement{}; }
-LoomTextMeasurement Scheduler::loomPrepareTextForMount(SurfaceId s, const AttributedString& a, const ParagraphAttributes& p, const Size& minSize, const Size& maxSize) { return delegate_ ? delegate_->loomPrepareTextForMount(s, a, p, minSize, maxSize) : LoomTextMeasurement{}; }
-void Scheduler::loomUpdateState(const LoomTextStateUpdate& update) { if (delegate_) delegate_->loomUpdateState(update); }
-void Scheduler::loomUpdateComponentState(SurfaceId s, Tag t, const std::shared_ptr<const State>& state) { if (delegate_) delegate_->loomUpdateComponentState(s, t, state); }
-void Scheduler::loomUpdateScrollContentBounds(SurfaceId s, Tag t, const folly::dynamic& props, const Rect& bounds) { if (delegate_) delegate_->loomUpdateScrollContentBounds(s, t, props, bounds); }
-std::pair<float, float> Scheduler::loomGetScrollOffset(SurfaceId s, Tag t) { return delegate_ ? delegate_->loomGetScrollOffset(s, t) : std::pair<float, float>{0, 0}; }
-std::optional<std::pair<float, float>> Scheduler::loomGetViewLocationInSurface(SurfaceId s, Tag t) { return delegate_ ? delegate_->loomGetViewLocationInSurface(s, t) : std::nullopt; }
-void Scheduler::loomDispatchCommand(SurfaceId s, Tag t, const std::string& n, const folly::dynamic& a) { if (delegate_) delegate_->loomDispatchCommand(s, t, n, a); }
-void Scheduler::loomSendAccessibilityEvent(SurfaceId s, Tag t, const std::string& e) { if (delegate_) delegate_->loomSendAccessibilityEvent(s, t, e); }
-void Scheduler::loomSetIsJSResponder(SurfaceId s, Tag t, bool responder, bool block) { if (delegate_) delegate_->loomSetIsJSResponder(s, t, responder, block); }
-#endif
 
 void Scheduler::uiManagerDidDispatchCommand(
     const std::shared_ptr<const ShadowNode>& shadowNode,

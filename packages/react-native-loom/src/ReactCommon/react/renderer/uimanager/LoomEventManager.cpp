@@ -3,14 +3,12 @@
 #include "LoomEventManager.h"
 
 #include <react/renderer/core/DynamicEventPayload.h>
+#include <react/renderer/uimanager/LoomPlatformTraits.h>
+#include "LoomWorkerProfile.h"
 
 #include <mutex>
 #include <unordered_set>
 #include <utility>
-#if defined(__ANDROID__)
-#include <android/log.h>
-#endif
-
 namespace facebook::react {
 
 LoomEventManager::LoomEventManager(
@@ -150,11 +148,12 @@ void LoomEventManager::dispatch(
     std::lock_guard lock(targetsMutex_);
     auto iterator = targets_.find(key(surfaceId, tag));
     if (iterator == targets_.end()) {
-#if LOOM_PROFILE && defined(__ANDROID__)
-      if (type == "topTouchStart" || type == "topTouchEnd" ||
-          type == "topTouchCancel") {
-        __android_log_print(
-            ANDROID_LOG_INFO,
+#if LOOM_PROFILE
+      if (LoomWorkerProfile::enabled() &&
+          (type == "topTouchStart" || type == "topTouchEnd" ||
+           type == "topTouchCancel")) {
+        loomLog(
+            LoomLogLevel::Profile,
             "LoomDirectEvent",
             "missing-target surface=%d tag=%d type=%s targets=%zu",
             static_cast<int>(surfaceId),
@@ -170,11 +169,12 @@ void LoomEventManager::dispatch(
   if (eventDispatcher_ == nullptr) {
     return;
   }
-#if LOOM_PROFILE && defined(__ANDROID__)
-  if (type == "topTouchStart" || type == "topTouchEnd" ||
-      type == "topTouchCancel") {
-    __android_log_print(
-        ANDROID_LOG_INFO,
+#if LOOM_PROFILE
+  if (LoomWorkerProfile::enabled() &&
+      (type == "topTouchStart" || type == "topTouchEnd" ||
+       type == "topTouchCancel")) {
+    loomLog(
+        LoomLogLevel::Profile,
         "LoomDirectEvent",
         "enqueue surface=%d tag=%d type=%s sync=%d",
         static_cast<int>(surfaceId),
@@ -196,29 +196,25 @@ void LoomEventManager::dispatch(
   } else {
     eventDispatcher_->dispatchEvent(std::move(event));
   }
-#if (defined(__ANDROID__) && !LOOM_JS_ON_MAIN) || \
-    (defined(__APPLE__) && defined(LOOM_JS_ON_MAIN) && !LOOM_JS_ON_MAIN)
+  if (!synchronous) {
+    return;
+  }
+  if (kLoomJavaScriptOnUIThread) {
+    eventDispatcher_->experimental_flushSync(tag);
+    return;
+  }
   // A synchronous event blocks the calling (UI) thread until JavaScript has
   // handled it. With JavaScript on its own thread that wait can deadlock against
   // a JS thread that is itself waiting for the UI thread to apply worker
   // results, so the event is delivered asynchronously instead. Waits go from JS
   // to UI only.
-#if defined(__ANDROID__)
-  if (synchronous) {
-    static std::once_flag logged;
-    std::call_once(logged, [] {
-      __android_log_print(
-          ANDROID_LOG_INFO,
-          "LoomDirectEvent",
-          "synchronous events are delivered asynchronously when JavaScript is not on the UI thread");
-    });
-  }
-#endif
-#else
-  if (synchronous) {
-    eventDispatcher_->experimental_flushSync(tag);
-  }
-#endif
+  static std::once_flag logged;
+  std::call_once(logged, [] {
+    loomLog(
+        LoomLogLevel::Info,
+        "LoomDirectEvent",
+        "synchronous events are delivered asynchronously when JavaScript is not on the UI thread");
+  });
 }
 
 } // namespace facebook::react

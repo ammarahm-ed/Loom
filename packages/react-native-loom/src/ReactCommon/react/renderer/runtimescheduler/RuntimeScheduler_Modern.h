@@ -176,13 +176,13 @@ class RuntimeScheduler_Modern final : public RuntimeSchedulerBase {
 
   Task *currentTask_{};
   HighResTimeStamp lastYieldingOpportunity_;
-  // Loom: when the current Looper message started running tasks. With
+  // Loom: when the current UI-thread message started running tasks. With
   // JavaScript on the UI thread this bounds how long non-urgent work may keep
-  // the Looper from a pending frame; see `runEventLoop` and `getShouldYield`.
+  // the UI thread from a pending frame; see `runEventLoop` and `getShouldYield`.
   HighResTimeStamp loopSliceStart_;
   // Set when `getShouldYield` told React to yield because its time slice ran out (as
   // opposed to a higher-priority task waiting). Only then does `runEventLoop` hand the
-  // Looper back: it is the signal that a long render is being split, so the tasks that
+  // UI thread back: it is the signal that a long render is being split, so the tasks that
   // follow an ordinary short commit (passive effects, the next rAF) are never deferred.
   bool timeSliceYielded_{false};
   // The last yield was because the next vsync is near (not because the slice ran out), so the

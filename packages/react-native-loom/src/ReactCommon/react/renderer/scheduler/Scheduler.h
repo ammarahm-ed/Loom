@@ -85,68 +85,6 @@ class Scheduler final : public UIManagerDelegate {
   void uiManagerDidFinishTransaction(
       std::shared_ptr<const MountingCoordinator> mountingCoordinator,
       bool mountSynchronously) override;
-// Loom methods: declared in every build so the class has one layout for code compiled without LOOM_RENDERER (third-party libraries).
-  void loomSetConstraints(
-      SurfaceId,
-      float,
-      float,
-      float,
-      float,
-      bool,
-      float,
-      float) override;
-  std::function<void(std::function<void()>)> loomGetUIExecutor() override;
-  bool loomCanMeasureTextOnWorker() override;
-  void loomApplyBatch(SurfaceId, LoomMountBatch) override;
-  void loomFailSurface(SurfaceId, const std::string&) override;
-  void loomRegisterEventTarget(SurfaceId, Tag, InstanceHandle::Shared) override;
-  void loomUnregisterEventTarget(SurfaceId, Tag) override;
-  void loomDispatchEvent(
-      SurfaceId, Tag, const std::string&, folly::dynamic, RawEvent::Category, bool) override;
-  TextAttributes loomParseTextAttributes(
-      SurfaceId,
-      const std::string&,
-      const folly::dynamic&,
-      const TextAttributes&,
-      ParagraphAttributes&) override;
-  std::optional<Size> loomMeasureText(
-      SurfaceId,
-      const AttributedString&,
-      const ParagraphAttributes&,
-      const Size&,
-      const Size&) override;
-  LoomTextMeasurement loomPrepareText(
-      SurfaceId,
-      const AttributedString&,
-      const ParagraphAttributes&,
-      const Size&,
-      const Size&) override;
-  LoomTextMeasurement loomPrepareTextForMount(
-      SurfaceId,
-      const AttributedString&,
-      const ParagraphAttributes&,
-      const Size&,
-      const Size&) override;
-  void loomUpdateState(const LoomTextStateUpdate&) override;
-  void loomUpdateComponentState(
-      SurfaceId,
-      Tag,
-      const std::shared_ptr<const State>&) override;
-  void loomUpdateScrollContentBounds(
-      SurfaceId,
-      Tag,
-      const folly::dynamic&,
-      const Rect&) override;
-  std::pair<float, float> loomGetScrollOffset(SurfaceId, Tag)
-      override;
-  std::optional<std::pair<float, float>>
-  loomGetViewLocationInSurface(SurfaceId, Tag) override;
-  void loomDispatchCommand(
-      SurfaceId, Tag, const std::string&, const folly::dynamic&) override;
-  void loomSendAccessibilityEvent(
-      SurfaceId, Tag, const std::string&) override;
-  void loomSetIsJSResponder(SurfaceId, Tag, bool, bool) override;
-// (end of Loom methods)
   void uiManagerDidCreateShadowNode(const ShadowNode &shadowNode) override;
   void uiManagerDidDispatchCommand(
       const std::shared_ptr<const ShadowNode> &shadowNode,

@@ -11,10 +11,10 @@
 // JavaScript on the UI thread (LOOM_JS_ON_MAIN) a slow task drops frames, and in
 // development the app author needs to know what the slow task was. This header
 // compiles to nothing in release builds (NDEBUG), so release carries no
-// watchdog thread, no per-task bookkeeping and no JS bindings.
-#if defined(__ANDROID__) && defined(LOOM_JS_ON_MAIN) && LOOM_JS_ON_MAIN && !defined(NDEBUG)
-#define RN_JANK_REPORTER 1
-#else
+// watchdog thread, no per-task bookkeeping and no JS bindings. The platform
+// build turns it on with `RN_JANK_REPORTER=1`.
+#if !defined(RN_JANK_REPORTER) || defined(NDEBUG)
+#undef RN_JANK_REPORTER
 #define RN_JANK_REPORTER 0
 #endif
 
@@ -27,6 +27,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+
+#include "LoomSettings.h"
 
 namespace facebook::react::jank {
 
@@ -55,12 +57,12 @@ class Reporter {
  public:
   static Reporter& instance();
 
-  /** Milliseconds a main-thread task may take before it is reported. */
+  /** Milliseconds a main-thread task may take before it is reported (`Loom.jankBudgetMs`). */
   int budgetMs() const noexcept {
-    return budgetMs_.load(std::memory_order_relaxed);
+    return LoomSettings::get(LoomSettingId::JankBudgetMs);
   }
   bool enabled() const noexcept {
-    return enabled_.load(std::memory_order_relaxed);
+    return LoomSettings::enabled(LoomSettingId::JankReporter);
   }
 
   /**
@@ -98,8 +100,6 @@ class Reporter {
   Reporter();
   struct Impl;
   Impl* impl_;
-  std::atomic<int> budgetMs_{50};
-  std::atomic<bool> enabled_{true};
 };
 
 } // namespace facebook::react::jank

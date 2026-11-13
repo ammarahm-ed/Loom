@@ -1,19 +1,12 @@
 /* Copyright (c) Meta Platforms, Inc. and affiliates. */
 
 #include "LoomRenderer.h"
-#if defined(__APPLE__)
-#include <dispatch/dispatch.h>
-#endif
 #include "LoomRendererInternals.h"
 #include "LoomWorkerProfile.h"
 
 #include <react/featureflags/ReactNativeFeatureFlags.h>
 #include <react/renderer/core/DynamicEventPayload.h>
 #include <chrono>
-
-#if defined(__ANDROID__)
-#include <android/log.h>
-#endif
 
 #include <algorithm>
 #include <cmath>
@@ -30,9 +23,6 @@
 namespace facebook::react {
 namespace {
 
-using loom::isParagraphName;
-using loom::isRawTextName;
-using loom::isVirtualTextName;
 using loom::findProp;
 using loom::numberProp;
 using loom::propsFromValue;
@@ -288,10 +278,8 @@ bool isStylePropName(const std::string& key) {
   return names.count(key) != 0;
 }
 
-bool isLayoutOnlyView(
-    const std::string& componentName,
-    const folly::dynamic& props) {
-  if (componentName != "View" && componentName != "RCTView") {
+bool isLayoutOnlyView(bool isBox, const folly::dynamic& props) {
+  if (!isBox) {
     return false;
   }
   const auto* collapsable = findProp(props, "collapsable");
@@ -369,39 +357,6 @@ bool samePreparedTextContent(
   return true;
 }
 
-LoomTextStateKind textStateKindFor(const std::string& name) {
-  if (name == "RCTText") {
-    return LoomTextStateKind::Text;
-  }
-  if (name == "Paragraph" || name == "Text") {
-    return LoomTextStateKind::Paragraph;
-  }
-  if (name == "RCTSelectableText" || name == "SelectableParagraph") {
-    return LoomTextStateKind::SelectableParagraph;
-  }
-  if (name.find("TextInput") != std::string::npos) {
-    return LoomTextStateKind::TextInput;
-  }
-  return LoomTextStateKind::Other;
-}
-
-bool isTextInputName(const std::string& componentName) {
-  return componentName.find("TextInput") != std::string::npos;
-}
-
-bool requiresGenericStateWrapper(const std::string& componentName) {
-  return componentName == "RCTScrollView" ||
-      componentName == "RCTHorizontalScrollView" ||
-      componentName == "AndroidHorizontalScrollView" ||
-      componentName == "AndroidNestedScrollView" ||
-      componentName == "RCTSafeAreaView" || componentName == "RCTModalHostView";
-}
-
-bool requiresIntrinsicMeasurement(const std::string& componentName) {
-  return componentName == "AndroidProgressBar" ||
-      componentName == "RCTSwitch" || componentName == "AndroidSwitch" ||
-      componentName == "RCTSlider";
-}
 
 /**
  * A deliberately conservative fallback used only when the platform cannot
@@ -486,67 +441,6 @@ ClassifiedAnimatedProps classifyAnimatedProps(const folly::dynamic& props) {
   return classified;
 }
 
-std::string LoomRenderer::hostComponentName(
-    const std::string& componentName) {
-  // Fabric name -> Android ViewManager name, mirroring
-  // FabricNameComponentMapping.kt, which is the same direction. It is NOT
-  // `componentNameByReactViewName`, which maps the other way (React view name ->
-  // Fabric name, stripping the RCT prefix); using it here would leave every
-  // entry reversed and no host view would resolve.
-  //
-  // The entries for components this repository does not itself ship
-  // (ShimmeringView, TemplateView, Video, Map, Keyframes,
-  // ImpressionTrackingView) are upstream's own, not leftovers: an app whose
-  // ViewManager registers one of those names must resolve exactly as it does
-  // under Fabric.
-  if (componentName == "View")
-    return "RCTView";
-  if (componentName == "Image")
-    return "RCTImageView";
-  if (componentName == "ScrollView")
-    return "RCTScrollView";
-  if (componentName == "Paragraph")
-    return "RCTText";
-  if (componentName == "SelectableParagraph")
-    return "RCTSelectableText";
-  // LayoutConformance is a Yoga-only context node in the component registry;
-  // there is no Android manager for its Fabric name. The direct Android host
-  // needs the ordinary ViewManager for the box while Yoga handles layout.
-  if (componentName == "LayoutConformance")
-    return "RCTView";
-  // "Text" is deliberately absent: that is the shadow-tree name of *nested*
-  // text, which is a span inside the enclosing paragraph and must not turn
-  // into a second text view. Only "Paragraph" is a text view.
-  if (componentName == "RawText")
-    return "RCTRawText";
-  if (componentName == "AndroidHorizontalScrollView")
-    return "RCTScrollView";
-  if (componentName == "ActivityIndicatorView")
-    return "AndroidProgressBar";
-  if (componentName == "ShimmeringView")
-    return "RKShimmeringView";
-  if (componentName == "TemplateView")
-    return "RCTTemplateView";
-  if (componentName == "AxialGradientView")
-    return "RCTAxialGradientView";
-  if (componentName == "ModalHostView")
-    return "RCTModalHostView";
-  if (componentName == "Slider")
-    return "RCTSlider";
-  if (componentName == "Video")
-    return "RCTVideo";
-  if (componentName == "Map")
-    return "RCTMap";
-  if (componentName == "WebView")
-    return "RCTWebView";
-  if (componentName == "Keyframes")
-    return "RCTKeyframes";
-  if (componentName == "ImpressionTrackingView") {
-    return "RCTImpressionTrackingView";
-  }
-  return componentName;
-}
-
 #pragma mark - LoomRenderer
 
 LoomRenderer::LoomRenderer(
@@ -554,6 +448,8 @@ LoomRenderer::LoomRenderer(
     NativeOperations operations)
     : surfaceId_(surfaceId),
       operations_(std::move(operations)),
+      scrollViewName_(
+          LoomPlatformTraits::current().components.hostName("ScrollView")),
       yogaConfig_(YGConfigNew()) {
   // A power-of-two bucket count keeps `nodes_` on mask-based indexing (see TagHash).
   nodes_.reserve(1024);
@@ -599,12 +495,8 @@ LoomRenderer::~LoomRenderer() {
 // Depends on the component name alone, so `createNode` evaluates it once and `mergeProps`
 // builds the delta only for nodes that will ship it.
 static bool componentSendsPropDiffs(const std::string& name) {
-#if defined(__APPLE__)
-  return name.find("Image") == std::string::npos;
-#else
-  return name == "RCTView" || name == "RCTImageView" ||
-      name == "RCTScrollView" || name == "AndroidHorizontalScrollView";
-#endif
+  const auto policy = LoomPlatformTraits::current().sendsPropDiffs;
+  return policy != nullptr && policy(name);
 }
 
 void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
@@ -823,7 +715,8 @@ void LoomRenderer::refreshStyleCached(Node& node) {
   shape->direction = node.direction;
   shape->boxSizing = node.boxSizing;
   shape->displayNone = node.displayNone;
-  shape->layoutOnly = isLayoutOnlyView(node.componentName, node.props);
+  shape->layoutOnly = isLayoutOnlyView(
+      node.componentRoles.has(LoomComponentTable::Box), node.props);
   shape->zIndex = numberProp(node.props, "zIndex").value_or(0);
   if (const auto* overflow = findProp(node.props, "overflow");
       overflow != nullptr && overflow->isString()) {
@@ -1218,18 +1111,21 @@ void LoomRenderer::applyYogaProps(Node& node) {
 #pragma mark - Commit
 
 void LoomRenderer::refreshRoleFlags(Node& node) {
-  const auto& name = node.componentName;
-  node.roleIsText = isTextComponentName(name);
-  node.roleIsParagraph = isParagraphName(name);
-  node.roleIsTextInput = isTextInputName(name);
-  node.roleStateKind = textStateKindFor(name);
-  node.roleRequiresIntrinsicMeasurement = requiresIntrinsicMeasurement(name);
-  node.roleRequiresGenericStateWrapper = requiresGenericStateWrapper(name);
+  const auto& roles = node.componentRoles;
+  node.roleIsText = roles.isText();
+  node.roleIsParagraph = roles.isParagraph();
+  node.roleIsTextInput = roles.textInput;
+  node.roleStateKind = roles.stateKind;
+  node.roleRequiresIntrinsicMeasurement =
+      roles.has(LoomComponentTable::IntrinsicMeasurement);
+  node.roleRequiresGenericStateWrapper =
+      roles.has(LoomComponentTable::GenericStateWrapper);
   // The expensive one: see the field comment. Computed once per props version
   // rather than once per commit per node.
   const bool useShape = shapeValid(node);
   node.roleIsLayoutOnlyView =
-      useShape ? node.shape->layoutOnly : isLayoutOnlyView(name, node.props);
+      useShape ? node.shape->layoutOnly
+               : isLayoutOnlyView(roles.has(LoomComponentTable::Box), node.props);
   // `display: contents` boxes no view of its own, whatever the component:
   // Fabric force-flattens it (ShadowNodeTraits::ForceFlattenView), and a host
   // view for it would be a 0x0 parent that Android routes no touches through.
@@ -1243,18 +1139,7 @@ void LoomRenderer::refreshRoleFlags(Node& node) {
   }
   node.roleZIndex = useShape ? node.shape->zIndex
                              : numberProp(node.props, "zIndex").value_or(0);
-#if defined(__APPLE__)
-  // iOS applies an update as `cloneProps(oldProps, rawProps)`, which keeps every
-  // key the raw props leave out - the same thing Fabric does with React's diff -
-  // so every component can take only the changed keys. Image is the exception:
-  // its state is rebuilt from the raw props the applier was given.
-  node.roleSendsPropDiffs = name.find("Image") == std::string::npos;
-#else
-  // Text is left out: one of its managers reads the stored props in
-  // updateState, which would then see only the last delta.
-  node.roleSendsPropDiffs = name == "RCTView" || name == "RCTImageView" ||
-      name == "RCTScrollView" || name == "AndroidHorizontalScrollView";
-#endif
+  node.roleSendsPropDiffs = node.collectPropsDelta;
   if (useShape) {
     node.roleClipsOverflow = node.shape->clipsOverflow;
   } else if (const auto* overflow = findProp(node.props, "overflow");
@@ -1394,7 +1279,7 @@ void LoomRenderer::emitCreate(Node& node) {
   pendingOperations_.append(DirectCreateOperation{
       node.tag,
       !node.virtualNode && !node.layoutOnlyNode,
-      hostComponentName(node.componentName),
+      node.componentName,
       node.layoutOnlyNode ? folly::dynamic::object() : node.props,
       currentCompatProps(node)});
   pendingOperations_.requiresTagReplacement =
@@ -1411,7 +1296,6 @@ void LoomRenderer::emitUpdateProps(Node& node) {
   if (node.hostOwned || node.layoutOnlyNode || !node.propsDirty) {
     return;
   }
-#if defined(__ANDROID__) || defined(__APPLE__)
   if (!node.roleFlagsValid) {
     refreshRoleFlags(node);
   }
@@ -1423,7 +1307,6 @@ void LoomRenderer::emitUpdateProps(Node& node) {
     node.propsDirty = false;
     return;
   }
-#endif
   pendingOperations_.append(
       DirectUpdatePropsOperation{node.tag, node.props, currentCompatProps(node)});
   node.propsDelta = nullptr;
@@ -1572,15 +1455,14 @@ void LoomRenderer::emitLayout(
     node.hasMountedInsets = true;
   }
 
-#if defined(__APPLE__)
-  // iOS paragraph views lay their text out in the state's content size, so a
-  // resize must republish it even when the text itself is unchanged.
-  if (node.textRoot && (changed || insetsChanged) &&
+  // A host that draws text in the state's content size needs a resize
+  // republished even when the text itself is unchanged.
+  if (LoomPlatformTraits::current().republishTextStateOnResize &&
+      node.textRoot && (changed || insetsChanged) &&
       node.hasTextMeasurementCache) {
     node.needsState = true;
     stateUpdates_.push_back(node.tag);
   }
-#endif
 
   if (!changed) {
     return;
@@ -1699,33 +1581,22 @@ bool LoomRenderer::hasFailed() const {
 
 Tag LoomRenderer::findUnsupportedInlineAttachment(
     const std::vector<Tag>& rootChildren,
-    const std::function<const std::string*(Tag)>& componentNameFor,
+    const std::function<LoomComponentTable::Roles(Tag)>& rolesFor,
     const std::function<const std::vector<Tag>* (Tag)>& childrenFor) {
-  // The name lists live in LoomRendererInternals.h so a new alias is added
-  // once; these kept their local names because the body below reads better with
-  // them.
-  const auto& isParagraph = isParagraphName;
-  const auto& isVirtualText = isVirtualTextName;
-  const auto& isRawText = isRawTextName;
-
   std::unordered_set<Tag> visited;
   std::function<Tag(Tag, bool)> visit;
   visit = [&](Tag tag, bool insideText) -> Tag {
     if (!visited.insert(tag).second) {
       return 0;
     }
-    // A tag this commit does not know is treated exactly as before: no name and
-    // no children, so it cannot be an unsupported attachment.
-    const auto emptyName = std::string{};
-    const auto* namePointer = componentNameFor(tag);
-    const auto& name = namePointer == nullptr ? emptyName : *namePointer;
-    const bool paragraph = isParagraph(name);
-    const bool textInput = name.find("TextInput") != std::string::npos;
-    const bool text = paragraph || isVirtualText(name);
-    if (insideText && !text && !isRawText(name)) {
+    // A tag this commit does not know has no roles and no children, so it
+    // cannot be an unsupported attachment.
+    const auto roles = rolesFor(tag);
+    const bool paragraph = roles.isParagraph();
+    if (insideText && !roles.isTextStack()) {
       return tag;
     }
-    if (isRawText(name)) {
+    if (roles.isRawText()) {
       return 0;
     }
     const auto* children = childrenFor(tag);
@@ -1734,7 +1605,7 @@ Tag LoomRenderer::findUnsupportedInlineAttachment(
     }
     for (const auto childTag : *children) {
       if (const auto unsupported =
-              visit(childTag, insideText || paragraph || textInput);
+              visit(childTag, insideText || paragraph || roles.textInput);
           unsupported != 0) {
         return unsupported;
       }
@@ -1912,7 +1783,7 @@ constexpr size_t kParallelTextMinimum = 12;
 
 void LoomRenderer::emitEarlyCreates() {
   if (!operations_.applyBatchEarly ||
-      !LoomStartupOptions::earlyCreate.load(std::memory_order_relaxed)) {
+      !LoomSettings::enabled(LoomSettingId::EarlyCreate)) {
     return;
   }
   const auto earlyCreatable = [](const Node& node) {
@@ -1944,14 +1815,13 @@ void LoomRenderer::emitEarlyCreates() {
 
 void LoomRenderer::speculateTextMeasurements() {
   if ((!operations_.prepareText && !operations_.measureText) ||
-      !LoomStartupOptions::parallelText.load(std::memory_order_relaxed)) {
+      !LoomSettings::enabled(LoomSettingId::ParallelText)) {
     return;
   }
-#if !defined(__APPLE__)
-  if (!LoomStartupOptions::parallelFor) {
+  const auto& parallelFor = LoomPlatformTraits::current().parallelFor;
+  if (!parallelFor) {
     return;
   }
-#endif
   // For new paragraphs only (a first screen, a navigation): text that changes
   // in views that already exist is measured once per update by the real pass,
   // and an extra estimating pass plus speculative measurements on every update
@@ -2009,30 +1879,11 @@ void LoomRenderer::speculateTextMeasurements() {
         *unique[0].node, unique[0].minimumSize, unique[0].maximumSize);
   }
   if (unique.size() > 1) {
-#if defined(__APPLE__)
-    struct Context {
-      const LoomRenderer* renderer;
-      const std::vector<SpeculativeTextRequest>* requests;
-      std::vector<TextMeasurement>* results;
-    } context{this, &unique, &results};
-    dispatch_apply_f(
-        unique.size() - 1,
-        dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0),
-        &context,
-        [](void* raw, size_t index) {
-          auto* context = static_cast<Context*>(raw);
-          const auto& request = (*context->requests)[index + 1];
-          (*context->results)[index + 1] =
-              context->renderer->measureTextWithPlatform(
-                  *request.node, request.minimumSize, request.maximumSize);
-        });
-#else
-    LoomStartupOptions::parallelFor(unique.size() - 1, [&](size_t index) {
+    parallelFor(unique.size() - 1, [&](size_t index) {
       const auto& request = unique[index + 1];
       results[index + 1] = measureTextWithPlatform(
           *request.node, request.minimumSize, request.maximumSize);
     });
-#endif
   }
   for (size_t index = 0; index < unique.size(); ++index) {
     if (results[index].valid) {
@@ -2440,7 +2291,7 @@ void LoomRenderer::finishCommitAfterLayout() {
     }
     for (size_t index = 0; index < layoutNodes_.size(); ++index) {
       auto* node = layoutNodes_[index];
-      if (node->componentName != "RCTScrollView" ||
+      if (node->componentName != scrollViewName_ ||
           node->yogaNode == nullptr) {
         continue;
       }
@@ -2533,44 +2384,46 @@ void LoomRenderer::finishCommitAfterLayout() {
     if (operations_.commitFinished) {
       operations_.commitFinished(surfaceId_);
     }
-#if LOOM_PROFILE && defined(__ANDROID__)
-    const auto profileMs = [](auto from, auto to) {
-      return std::chrono::duration<double, std::milli>(to - from).count();
-    };
-    __android_log_print(
-        ANDROID_LOG_INFO,
-        "LoomRendererProfile",
-        "surface=%d total=%.3fms prepare=%.3fms layout=%.3fms diff=%.3fms "
-        "flush=%.3fms textMeasure(inPrepare)=%llu/%.3fms cacheHits=%llu "
-        "stateCallback(inFlush)=%llu/%.3fms applyBatch(inFlush)=%.3fms "
-        "preparedText=%llu boring=%llu static=%llu simplePlain=%llu "
-        "spannableBuild=%.3fms paintSetup=%.3fms layoutCreate=%.3fms "
-        "isBoring=%.3fms boringMake=%.3fms measureResult=%.3fms "
-        "ops=%llu states=%llu",
-        static_cast<int>(surfaceId_),
-        profileMs(profileCommitStart_, profileAfterFlush),
-        profileMs(profileCommitStart_, profileAfterPrepare_),
-        profileMs(profileAfterPrepare_, profileAfterLayout_),
-        profileMs(profileAfterLayout_, profileAfterDiff),
-        profileMs(profileAfterDiff, profileAfterFlush),
-        static_cast<unsigned long long>(profileTextMeasureCalls_),
-        static_cast<double>(profileTextMeasureNanoseconds_) / 1.0e6,
-        static_cast<unsigned long long>(profileTextMeasureCacheHits_),
-        static_cast<unsigned long long>(profileStateUpdateCalls_),
-        static_cast<double>(profileStateUpdateNanoseconds_) / 1.0e6,
-        static_cast<double>(profileApplyBatchNanoseconds_) / 1.0e6,
-        static_cast<unsigned long long>(profilePreparedTextStateCount_),
-        static_cast<unsigned long long>(profileTextBoringLayouts_),
-        static_cast<unsigned long long>(profileTextStaticLayouts_),
-        static_cast<unsigned long long>(profileSimplePlainTextLayouts_),
-        static_cast<double>(profileTextSpannableBuildNanos_) / 1.0e6,
-        static_cast<double>(profileTextPaintSetupNanos_) / 1.0e6,
-        static_cast<double>(profileTextLayoutCreateNanos_) / 1.0e6,
-        static_cast<double>(profileTextIsBoringNanos_) / 1.0e6,
-        static_cast<double>(profileTextBoringMakeNanos_) / 1.0e6,
-        static_cast<double>(profileTextMeasurementResultNanos_) / 1.0e6,
-        static_cast<unsigned long long>(profileOperationCount),
-        static_cast<unsigned long long>(profileStateCount));
+#if LOOM_PROFILE
+    if (LoomWorkerProfile::enabled()) {
+      const auto profileMs = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+      };
+      loomLog(
+          LoomLogLevel::Profile,
+          "LoomRendererProfile",
+          "surface=%d total=%.3fms prepare=%.3fms layout=%.3fms diff=%.3fms "
+          "flush=%.3fms textMeasure(inPrepare)=%llu/%.3fms cacheHits=%llu "
+          "stateCallback(inFlush)=%llu/%.3fms applyBatch(inFlush)=%.3fms "
+          "preparedText=%llu boring=%llu static=%llu simplePlain=%llu "
+          "spannableBuild=%.3fms paintSetup=%.3fms layoutCreate=%.3fms "
+          "isBoring=%.3fms boringMake=%.3fms measureResult=%.3fms "
+          "ops=%llu states=%llu",
+          static_cast<int>(surfaceId_),
+          profileMs(profileCommitStart_, profileAfterFlush),
+          profileMs(profileCommitStart_, profileAfterPrepare_),
+          profileMs(profileAfterPrepare_, profileAfterLayout_),
+          profileMs(profileAfterLayout_, profileAfterDiff),
+          profileMs(profileAfterDiff, profileAfterFlush),
+          static_cast<unsigned long long>(profileTextMeasureCalls_),
+          static_cast<double>(profileTextMeasureNanoseconds_) / 1.0e6,
+          static_cast<unsigned long long>(profileTextMeasureCacheHits_),
+          static_cast<unsigned long long>(profileStateUpdateCalls_),
+          static_cast<double>(profileStateUpdateNanoseconds_) / 1.0e6,
+          static_cast<double>(profileApplyBatchNanoseconds_) / 1.0e6,
+          static_cast<unsigned long long>(profilePreparedTextStateCount_),
+          static_cast<unsigned long long>(profileTextBoringLayouts_),
+          static_cast<unsigned long long>(profileTextStaticLayouts_),
+          static_cast<unsigned long long>(profileSimplePlainTextLayouts_),
+          static_cast<double>(profileTextSpannableBuildNanos_) / 1.0e6,
+          static_cast<double>(profileTextPaintSetupNanos_) / 1.0e6,
+          static_cast<double>(profileTextLayoutCreateNanos_) / 1.0e6,
+          static_cast<double>(profileTextIsBoringNanos_) / 1.0e6,
+          static_cast<double>(profileTextBoringMakeNanos_) / 1.0e6,
+          static_cast<double>(profileTextMeasurementResultNanos_) / 1.0e6,
+          static_cast<unsigned long long>(profileOperationCount),
+          static_cast<unsigned long long>(profileStateCount));
+    }
 #endif
     commitPrepared_ = false;
   } catch (const std::exception& error) {
@@ -2698,10 +2551,10 @@ void LoomRenderer::flush() {
           }
         }
       }
-#if defined(__APPLE__)
-      if (!preparedState.valid && node->textRoot && node->yogaNode != nullptr) {
-        // Hosts without a prepared layout (iOS) still need the final content
-        // box: it is the size the paragraph view lays its text out in.
+      if (!LoomPlatformTraits::current().hasPreparedTextLayout &&
+          !preparedState.valid && node->textRoot && node->yogaNode != nullptr) {
+        // Hosts without a prepared layout still need the final content box: it
+        // is the size the paragraph view lays its text out in.
         preparedState.size = Size{
             std::max(0.0f, YGNodeLayoutGetRawWidth(node->yogaNode) -
                                node->mountedContentInsets[0] -
@@ -2710,7 +2563,6 @@ void LoomRenderer::flush() {
                                node->mountedContentInsets[1] -
                                node->mountedContentInsets[3])};
       }
-#endif
       if (!node->roleFlagsValid) {
         refreshRoleFlags(*node);
       }
@@ -2809,18 +2661,20 @@ void LoomRenderer::setConstraints(
   maxWidth_ = maxWidth;
   maxHeight_ = maxHeight;
   isRTL_ = isRTL;
-#if LOOM_PROFILE && defined(__ANDROID__)
-  // TEMPORARY DIAGNOSTIC: what viewport did the host actually hand us?
-  __android_log_print(
-      ANDROID_LOG_INFO,
-      "LoomConstraints",
-      "surface=%d minW=%.1f minH=%.1f maxW=%.1f maxH=%.1f rtl=%d",
-      static_cast<int>(surfaceId_),
-      minWidth_,
-      minHeight_,
-      maxWidth_,
-      maxHeight_,
-      isRTL_ ? 1 : 0);
+#if LOOM_PROFILE
+  if (LoomWorkerProfile::enabled()) {
+    // TEMPORARY DIAGNOSTIC: what viewport did the host actually hand us?
+    loomLog(
+        LoomLogLevel::Profile,
+        "LoomConstraints",
+        "surface=%d minW=%.1f minH=%.1f maxW=%.1f maxH=%.1f rtl=%d",
+        static_cast<int>(surfaceId_),
+        minWidth_,
+        minHeight_,
+        maxWidth_,
+        maxHeight_,
+        isRTL_ ? 1 : 0);
+  }
 #endif
   // A finite bound on either axis is a valid Yoga measure input. A zero/zero
   // update is the host's provisional unmeasured viewport; do not reflow an
@@ -2861,7 +2715,8 @@ void LoomRenderer::createNode(
     const std::string& componentName,
     const folly::dynamic& props,
     InstanceHandle::Shared instanceHandle) {
-  if (isRawTextComponentName(componentName)) {
+  const auto& components = LoomPlatformTraits::current().components;
+  if (components.classify(componentName).isRawText()) {
     createRawTextNode(
         tag,
         isFlatProps(props) ? stringProp(props, "text")
@@ -2900,7 +2755,8 @@ void LoomRenderer::createNode(
     }
   }
 
-  node->componentName = hostComponentName(componentName);
+  node->componentName = components.hostName(componentName);
+  node->componentRoles = components.classify(node->componentName);
   node->collectPropsDelta = componentSendsPropDiffs(node->componentName);
   if (node->parent != 0) {
     if (auto* parent = find(node->parent); parent != nullptr) {
@@ -3174,7 +3030,7 @@ void LoomRenderer::patchProps(
   // and invalidating text would change nothing: skip both. The node conditions
   // are the ones `tryCommitPaintOnlyProps` requires for the same guarantee.
   const bool paintOnly = !node.virtualNode && !node.layoutOnlyNode &&
-      !isParagraphName(node.componentName) &&
+      !node.componentRoles.isParagraph() &&
       isConservativePaintOnlyPatch(hoisted);
   mergeProps(node, hoisted);
   if (!paintOnly) {
@@ -3390,7 +3246,7 @@ bool LoomRenderer::tryCommitPaintOnlyProps(
     const auto* node = find(tag);
     if (node == nullptr || !node->hostCreated || node->hostOwned ||
         node->virtualNode || node->layoutOnlyNode ||
-        isParagraphName(node->componentName) ||
+        node->componentRoles.isParagraph() ||
         !isConservativePaintOnlyPatch(patch)) {
       return false;
     }

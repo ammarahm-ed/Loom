@@ -232,15 +232,17 @@ void LoomRenderer::layoutTree() {
       maxWidth_ > 0 ? maxWidth_ : YGUndefined,
       maxHeight_ > 0 ? maxHeight_ : YGUndefined,
       isRTL_ ? YGDirectionRTL : YGDirectionLTR);
-#if LOOM_PROFILE && defined(__ANDROID__)
-  // TEMPORARY DIAGNOSTIC: is the root actually bounded to the viewport?
-  __android_log_print(
-      ANDROID_LOG_INFO,
-      "LoomRootSize",
-      "surface=%d rootW=%.1f rootH=%.1f",
-      static_cast<int>(surfaceId_),
-      YGNodeLayoutGetWidth(root->yogaNode),
-      YGNodeLayoutGetHeight(root->yogaNode));
+#if LOOM_PROFILE
+  if (LoomWorkerProfile::enabled()) {
+    // TEMPORARY DIAGNOSTIC: is the root actually bounded to the viewport?
+    loomLog(
+        LoomLogLevel::Profile,
+        "LoomRootSize",
+        "surface=%d rootW=%.1f rootH=%.1f",
+        static_cast<int>(surfaceId_),
+        YGNodeLayoutGetWidth(root->yogaNode),
+        YGNodeLayoutGetHeight(root->yogaNode));
+  }
 #endif
 }
 

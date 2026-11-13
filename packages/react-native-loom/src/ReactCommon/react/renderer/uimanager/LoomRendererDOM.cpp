@@ -78,10 +78,11 @@ jsi::Value LoomBinding::getDirectDOM(
     return iterator == renderers_.end() ? 0 : iterator->second->rootTag();
   };
   auto requireNativeMetrics = [&](LoomRenderer* renderer, Tag tag) {
-    if (renderer != nullptr && renderer->componentName(tag) == "RCTRawText") {
+    if (renderer != nullptr &&
+        renderer->componentRoles(tag).isRawText()) {
       throw jsi::JSError(
           rt,
-          "NativeDOM measurement is unsupported for viewless RCTRawText nodes");
+          "NativeDOM measurement is unsupported for viewless raw text nodes");
     }
   };
 
@@ -280,9 +281,8 @@ jsi::Value LoomBinding::getDirectDOM(
           rt, border[1], border[2], border[3], border[0]);
     }
     if (method == "getTagName") {
-      auto name = owner->componentName(tag);
-      if (name == "AndroidTextInput") name = "TextInput";
-      if (name == "AndroidSwitch") name = "Switch";
+      const auto name = LoomPlatformTraits::current().components.tagName(
+          owner->componentName(tag));
       return jsi::String::createFromUtf8(rt, "RN:" + name);
     }
     if (method == "getTextContent") {

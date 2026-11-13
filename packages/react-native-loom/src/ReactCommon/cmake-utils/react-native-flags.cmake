@@ -66,6 +66,10 @@ function(target_compile_reactnative_options target_name scope)
   target_compile_definitions(${target_name} ${scope} HERMES_V1_ENABLED=1)
 
   loom_compile_switch(${target_name} ${scope} LOOM_JS_ON_MAIN)
+  # The main-thread jank reporter (debug builds only; see JankReporter.h).
+  if(ANDROID AND LOOM_JS_ON_MAIN)
+    target_compile_definitions(${target_name} ${scope} RN_JANK_REPORTER=1)
+  endif()
   loom_compile_switch(${target_name} ${scope} LOOM_RENDERER)
   loom_compile_switch(${target_name} ${scope} LOOM_WORKER)
   target_compile_definitions(

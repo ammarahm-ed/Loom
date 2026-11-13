@@ -11,45 +11,45 @@
 #include <unordered_map>
 #include <utility>
 
+#include <react/renderer/uimanager/LoomHost.h>
 #include <react/renderer/uimanager/UIManagerDelegate.h>
 
 namespace facebook::react {
 
 /**
+ * A `LoomHost` for tests that need a `LoomBinding` but not a platform: work
+ * posted to the UI executor runs inline (tests want that instead of a real UI
+ * thread), batches are dropped, and there are no text services. Override what
+ * a test cares about.
+ */
+struct TestLoomHost : public LoomHost {
+  std::function<void(std::function<void()>)> uiExecutor_ = [](std::function<void()> work) {
+    work();
+  };
+  std::function<void(SurfaceId, const std::string&)> failSurface_;
+
+  /** The traits the test binary installed; registering the host keeps them. */
+  LoomPlatformTraits traits() const override {
+    return LoomPlatformTraits::current();
+  }
+  std::function<void(std::function<void()>)> uiExecutor() override {
+    return uiExecutor_;
+  }
+  void applyBatch(SurfaceId, LoomMountBatch) override {}
+  void failSurface(SurfaceId surfaceId, const std::string& reason) override {
+    if (failSurface_) {
+      failSurface_(surfaceId, reason);
+    }
+  }
+};
+
+/**
  * A `UIManagerDelegate` that does nothing, for tests that need a `UIManager`
  * with a delegate attached but do not care what it does.
  *
- * The interface has 16 pure virtuals, so a test cannot simply declare one; and
- * `LoomBinding` refuses to construct in worker mode without a
- * delegate that returns a UI executor, which is what most of the Loom renderer
- * tests need. Override what a test cares about and leave the rest.
+ * The interface has 12 pure virtuals, so a test cannot simply declare one.
  */
 struct TestUIManagerDelegate : public UIManagerDelegate {
-  /** Runs work inline, which is what tests want instead of a real UI thread. */
-  std::function<void(std::function<void()>)> uiExecutor = [](std::function<void()> work) {
-    work();
-  };
-  bool canMeasureTextOnWorker{false};
-  std::function<void(SurfaceId, const std::string&)> failSurface;
-
-  // Direct-renderer hooks the binding actually consults.
-  std::function<void(std::function<void()>)> loomGetUIExecutor()
-      override {
-    return uiExecutor;
-  }
-
-  bool loomCanMeasureTextOnWorker() override {
-    return canMeasureTextOnWorker;
-  }
-
-  void loomFailSurface(
-      SurfaceId surfaceId,
-      const std::string& reason) override {
-    if (failSurface) {
-      failSurface(surfaceId, reason);
-    }
-  }
-
   // The rest of the interface, unused by these tests.
   void uiManagerDidFinishTransaction(
       std::shared_ptr<const MountingCoordinator>,

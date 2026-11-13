@@ -2,6 +2,7 @@
 #pragma once
 
 #include <atomic>
+#include <react/renderer/runtimescheduler/LoomSettings.h>
 
 #include <array>
 #include <chrono>
@@ -30,6 +31,7 @@
 #include <react/renderer/uimanager/LoomCompat.h>
 #include <react/renderer/uimanager/LoomMountBatch.h>
 #include <react/renderer/uimanager/LoomEventManager.h>
+#include <react/renderer/uimanager/LoomPlatformTraits.h>
 #include <react/renderer/uimanager/LoomWorkerProfile.h>
 #include <react/renderer/uimanager/LoomTextMeasurement.h>
 #include <yoga/Yoga.h>
@@ -262,34 +264,6 @@ class TagMap : public std::unordered_map<Tag, V, LoomTagHash> {
     ensureBuckets();
     return Base::insert(std::move(value));
   }
-};
-
-/**
- * Startup switches, set by the host platform before the first surface starts
- * (iOS: RCTSurfacePresenter, from NSUserDefaults). Off by default, so host tests
- * and platforms that do not set them keep the plain behaviour.
- */
-struct LoomStartupOptions {
-  /**
-   * A commit that creates many host views sends their creates (with props) to
-   * the UI thread right after `prepare`, so views are built while the worker
-   * runs layout; the commit's own batch then only inserts and lays them out.
-   */
-  static inline std::atomic<bool> earlyCreate{false};
-  /**
-   * A commit that creates many paragraphs first runs Yoga with estimated text
-   * sizes to learn each paragraph's constraints, measures those in parallel,
-   * then lays out for real against the warmed cache.
-   */
-  static inline std::atomic<bool> parallelText{false};
-  /**
-   * Runs `body(0..count-1)`, possibly in parallel, and returns when every call
-   * has. Set once by platforms without libdispatch (Android: a pool of threads
-   * attached to the JVM) before the first surface starts; Apple platforms use
-   * dispatch_apply. Unset, parallelText does nothing.
-   */
-  static inline std::function<void(size_t, const std::function<void(size_t)>&)>
-      parallelFor;
 };
 
 class LoomRenderer final {
@@ -571,14 +545,14 @@ class LoomRenderer final {
    * waste there. Null when the node is unknown. Invalidated by any mutation.
    */
   const std::vector<Tag>* childrenOfRef(Tag tag) const;
-  /**
-   * Borrowed form of `componentName` for the same reason. Null when the node is
-   * unknown. Invalidated by any mutation.
-   */
-  const std::string* componentNameRef(Tag tag) const;
   bool isConnected(Tag tag) const;
   Tag findByNativeId(const std::string& nativeId) const;
   std::string componentName(Tag tag) const;
+  /**
+   * The roles resolved when the node was created; a raw text leaf has only
+   * `RawText`, an unknown tag none.
+   */
+  LoomComponentTable::Roles componentRoles(Tag tag) const;
   std::string textContent(Tag tag) const;
   double numericProp(Tag tag, const char* name) const;
   std::array<double, 4> borderWidths(Tag tag) const;
@@ -661,7 +635,7 @@ class LoomRenderer final {
   /** Returns the first ordinary view nested below a text root, or tag 0. */
   static Tag findUnsupportedInlineAttachment(
       const std::vector<Tag>& rootChildren,
-      const std::function<const std::string*(Tag)>& componentNameFor,
+      const std::function<LoomComponentTable::Roles(Tag)>& rolesFor,
       const std::function<const std::vector<Tag>* (Tag)>& childrenFor);
 
  private:
@@ -747,6 +721,8 @@ class LoomRenderer final {
     Tag parent{0};
     /** Component name as JS sent it (`RCTText`, `RCTView`, ...). */
     std::string componentName;
+    /** Resolved from `componentName` once, in `createNode`. */
+    LoomComponentTable::Roles componentRoles;
     /** Merged, flattened props. Never a diff. */
     folly::dynamic props{folly::dynamic::object()};
     /**
@@ -1082,9 +1058,6 @@ class LoomRenderer final {
   Tag parentOfAny(Tag tag) const;
   void detachRawTextFromParent(RawTextLeaf& leaf);
 
-  static bool isTextComponentName(const std::string& componentName);
-  static bool isRawTextComponentName(const std::string& componentName);
-  static std::string hostComponentName(const std::string& componentName);
 
   /** A stable `const char*` view of a component name. */
   const char* internComponentName(const std::string& name) const;
@@ -1120,9 +1093,9 @@ class LoomRenderer final {
       const Size& minimumSize,
       const Size& maximumSize,
       const TextMeasurement& measurement) const;
-  /** See LoomStartupOptions::parallelText. */
+  /** Gated by `Loom.parallelText` (LoomSettings.h), read per commit. */
   void speculateTextMeasurements();
-  /** See LoomStartupOptions::earlyCreate. */
+  /** Gated by `Loom.earlyCreate` (LoomSettings.h), read per commit. */
   void emitEarlyCreates();
   static bool sameTextMeasurementContent(
       const AttributedString& left,
@@ -1222,6 +1195,8 @@ class LoomRenderer final {
   SurfaceId surfaceId_;
   NativeOperations operations_;
   std::shared_ptr<LoomCompat> compat_;
+  /** The host name of `ScrollView`, resolved once. */
+  const std::string scrollViewName_;
   YGConfigRef yogaConfig_{nullptr};
   float pointScaleFactor_{1.0f};
   std::unordered_map<Tag, std::unique_ptr<Node>, LoomTagHash> nodes_;

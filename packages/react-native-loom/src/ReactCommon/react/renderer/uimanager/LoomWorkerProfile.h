@@ -6,16 +6,12 @@
 
 #include <chrono>
 #include <cstdint>
-#include <cstdlib>
-#if defined(__APPLE__)
-#include <os/log.h>
-#include <pthread.h>
-#elif defined(__ANDROID__)
-#include <android/log.h>
-#endif
+
+#include <react/renderer/runtimescheduler/LoomSettings.h>
+#include <react/renderer/uimanager/LoomPlatformTraits.h>
 
 namespace facebook::react {
-// Runtime opt-in for simulator profiling, without changing Release build flags.
+// Runtime opt-in for profiling (`Loom.profileWorker`, see LoomSettings.h), without changing Release build flags.
 struct LoomWorkerProfile {
   using Clock = std::chrono::steady_clock;
   struct Metrics {
@@ -23,17 +19,7 @@ struct LoomWorkerProfile {
     unsigned textCalls{0};
   };
   static bool enabled() {
-#if defined(__APPLE__)
-    static const bool value = [] {
-      auto* flag = std::getenv("LOOM_PROFILE_WORKER");
-      return flag && flag[0] == '1';
-    }();
-    return value;
-#elif defined(__ANDROID__) && LOOM_PROFILE
-    return true;
-#else
-    return false;
-#endif
+    return LoomSettings::enabled(LoomSettingId::ProfileWorker);
   }
   static double ms(Clock::time_point start, Clock::time_point end) {
     return std::chrono::duration<double, std::milli>(end - start).count();

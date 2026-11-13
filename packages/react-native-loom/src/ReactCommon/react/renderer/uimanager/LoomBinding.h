@@ -24,6 +24,7 @@
 #include <jsi/jsi.h>
 #include <react/renderer/uimanager/UIManagerBinding.h>
 #include <react/renderer/uimanager/LoomCompat.h>
+#include <react/renderer/uimanager/LoomHost.h>
 #include <react/renderer/uimanager/LoomRenderer.h>
 
 namespace facebook::react {
@@ -109,8 +110,8 @@ class LoomBinding final : public UIManagerBinding {
    * Animation fast lane (design §5.2): folds every surface's collected
    * animation frame into the Loom renderer. Installed as the runtime
    * scheduler's rendering-update listener (end of a JS task) and called from the
-   * platform's pre-draw hook, so it must be safe to call at any point between
-   * frames and cheap when nothing was written.
+   * host's before-frame hook (see LoomHost.h), so it must be safe to call at any
+   * point between frames and cheap when nothing was written.
    */
   static void flushAnimationFrames();
 
@@ -231,6 +232,8 @@ class LoomBinding final : public UIManagerBinding {
     uint64_t identity{0};
     Tag tag{0};
     std::shared_ptr<const std::string> componentName;
+    /** Resolved from `componentName` once, when the draft is created. */
+    LoomComponentTable::Roles roles;
     InstanceHandle::Shared instanceHandle;
     std::shared_ptr<const folly::dynamic> initialProps;
     std::shared_ptr<const std::string> initialRawText;
@@ -435,7 +438,21 @@ class LoomBinding final : public UIManagerBinding {
    * counts as "no", which merely computes that commit on the UI thread).
    */
   std::atomic<int> canMeasureTextOnWorker_{-1};
-  bool canMeasureTextOnWorker(UIManagerDelegate& delegate);
+  /**
+   * The platform host registered in the UI manager's context container
+   * (`LoomHost::registerIn`), resolved once when the binding is created. Never
+   * null; its text services may be.
+   */
+  LoomHost* host() const {
+    return host_;
+  }
+  LoomTextServices* text() const {
+    return text_;
+  }
+  std::shared_ptr<LoomHost> hostOwner_;
+  LoomHost* host_{nullptr};
+  LoomTextServices* text_{nullptr};
+  bool canMeasureTextOnWorker();
   void refreshCanMeasureTextOnWorker();
 #if LOOM_WORKER
   /**
@@ -469,8 +486,7 @@ class LoomBinding final : public UIManagerBinding {
    * and a stalled UI thread yields `fallback` after a logged timeout.
    */
   std::optional<std::pair<float, float>> readOnUIThread(
-      std::function<std::optional<std::pair<float, float>>(UIManagerDelegate&)>
-          read,
+      std::function<std::optional<std::pair<float, float>>(LoomHost&)> read,
       std::optional<std::pair<float, float>> fallback);
   bool forceNextCommitSync_{false};
   Tag replayingNativePropsTag_{0};

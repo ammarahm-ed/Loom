@@ -3,6 +3,7 @@
  * Licensed under the MIT license in the LICENSE file.
  */
 #pragma once
+#include "LoomPlatformTraits.h"
 #include "LoomWorkerProfile.h"
 
 #include <atomic>
@@ -22,12 +23,11 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
-#if defined(__ANDROID__)
-#include <sys/syscall.h>
-#include <unistd.h>
-#endif
-#if defined(__APPLE__)
+#if __has_include(<pthread.h>)
 #include <pthread.h>
+#define LOOM_WORKER_HAS_PTHREAD 1
+#else
+#define LOOM_WORKER_HAS_PTHREAD 0
 #endif
 
 namespace facebook::react {
@@ -189,28 +189,16 @@ class LoomWorker final {
   };
 
   /**
-   * Whether the JavaScript runtime is hosted by the UI thread. When it is not
-   * (Android, or iOS with `LOOM_JS_ON_MAIN` defined to 0), JS-thread callers may wait for the UI
-   * thread but the UI thread must never wait for JS, and result application is
-   * confined to the UI thread. iOS and the host test build always host JS on the
-   * thread that applies results.
+   * Whether the JavaScript runtime is hosted by the UI thread (see
+   * `kLoomJavaScriptOnUIThread`). When it is not, JS-thread callers may wait
+   * for the UI thread but the UI thread must never wait for JS, and result
+   * application is confined to the UI thread.
    */
-#if (defined(__ANDROID__) && !LOOM_JS_ON_MAIN) || \
-    (defined(__APPLE__) && defined(LOOM_JS_ON_MAIN) && !LOOM_JS_ON_MAIN)
-  static constexpr bool kJavaScriptOnUIThread = false;
-#else
-  static constexpr bool kJavaScriptOnUIThread = true;
-#endif
+  static constexpr bool kJavaScriptOnUIThread = kLoomJavaScriptOnUIThread;
 
   /** The platform's notion of the thread that applies results. */
   static bool isPlatformUIThread() {
-#if defined(__ANDROID__)
-    return static_cast<pid_t>(::syscall(SYS_gettid)) == ::getpid();
-#elif defined(__APPLE__)
-    return pthread_main_np() != 0;
-#else
-    return true;
-#endif
+    return LoomPlatformTraits::current().onUIThread();
   }
 
   explicit LoomWorker(
@@ -419,52 +407,16 @@ class LoomWorker final {
     const auto uiEnd = job->profileId
         ? LoomWorkerProfile::Clock::now()
         : LoomWorkerProfile::Clock::time_point{};
-#if defined(__APPLE__)
     if (job->profileId) {
       using P = LoomWorkerProfile;
-      os_log(
-          OS_LOG_DEFAULT,
-          "LoomWorkerProfile id=%u sync=%d computeMain=%d uiMain=%d queue=%.3f compute=%.3f delivery=%.3f ui=%.3f prepare=%.3f layout=%.3f diff=%.3f effects=%.3f text=%.3f textCalls=%u",
-          job->profileId,
-          job->synchronous,
-          result->computedOnMain,
-          pthread_main_np(),
-          P::ms(job->submitted, result->computeStart),
-          P::ms(result->computeStart, result->computeEnd),
-          job->synchronous ? 0.0 : P::ms(result->computeEnd, uiStart),
-          P::ms(uiStart, uiEnd),
-          result->profile.prepare,
-          result->profile.layout,
-          result->profile.diff,
-          result->profile.effects,
-          result->profile.text,
-          result->profile.textCalls);
-      // The bench harness reads the device console, which has stderr only.
-      std::fprintf(
-          stderr,
-          "LoomWorkerProfile id=%u queue=%.3f compute=%.3f delivery=%.3f ui=%.3f prepare=%.3f layout=%.3f diff=%.3f text=%.3f textCalls=%u\n",
-          job->profileId,
-          P::ms(job->submitted, result->computeStart),
-          P::ms(result->computeStart, result->computeEnd),
-          job->synchronous ? 0.0 : P::ms(result->computeEnd, uiStart),
-          P::ms(uiStart, uiEnd),
-          result->profile.prepare,
-          result->profile.layout,
-          result->profile.diff,
-          result->profile.text,
-          result->profile.textCalls);
-    }
-#elif defined(__ANDROID__)
-    if (job->profileId) {
-      using P = LoomWorkerProfile;
-      __android_log_print(
-          ANDROID_LOG_INFO,
+      loomLog(
+          LoomLogLevel::Profile,
           "LoomWorkerProfile",
           "id=%u sync=%d computeMain=%d uiMain=%d queue=%.3fms compute=%.3fms delivery=%.3fms ui=%.3fms prepare=%.3fms layout=%.3fms diff=%.3fms effects=%.3fms text=%.3fms textCalls=%u",
           job->profileId,
           job->synchronous,
           result->computedOnMain,
-          static_cast<pid_t>(::syscall(SYS_gettid)) == ::getpid(),
+          onUIThread(),
           P::ms(job->submitted, result->computeStart),
           P::ms(result->computeStart, result->computeEnd),
           job->synchronous ? 0.0 : P::ms(result->computeEnd, uiStart),
@@ -476,7 +428,6 @@ class LoomWorker final {
           result->profile.text,
           result->profile.textCalls);
     }
-#endif
     acknowledge();
   }
 
@@ -562,7 +513,7 @@ class LoomWorker final {
       jobs_.clear();
     }
     wake_.notify_all();
-#if defined(__APPLE__)
+#if LOOM_WORKER_HAS_PTHREAD
     if (workerThread_ != 0) {
       pthread_join(workerThread_, nullptr);
       workerThread_ = 0;
@@ -690,54 +641,51 @@ class LoomWorker final {
     }
   }
 
-#if defined(__APPLE__)
-  // `std::thread` inherits the 512 KB platform default on Apple platforms. This
-  // thread runs Yoga plus several recursive `std::function` tree walks
-  // (prepare, selectDraft, captureRemovedMountedEdges, overflow and the identity
-  // collect), so it is created explicitly with a stack at least as large as the
-  // JS thread's, which React Native doubles under RCT_DEBUG.
-  static constexpr size_t kWorkerStackSize = 2 * 1024 * 1024;
-#endif
-
+  /**
+   * The worker runs Yoga plus several recursive `std::function` tree walks, so a
+   * platform whose default thread stack is small sets
+   * `LoomPlatformTraits::workerStackSize`; the thread is then created explicitly.
+   * Otherwise, and when the explicit stack cannot be created, the platform
+   * default stack is used.
+   */
   void startThread() {
-#if defined(__APPLE__)
-    pthread_attr_t attributes;
-    pthread_attr_init(&attributes);
-    pthread_attr_setstacksize(&attributes, kWorkerStackSize);
-    const auto created = pthread_create(
-        &workerThread_,
-        &attributes,
-        [](void* context) -> void* {
-          // Named so profilers and the bench probe can tell it apart.
-          pthread_setname_np("com.loom.worker");
-          static_cast<LoomWorker*>(context)->run();
-          return nullptr;
-        },
-        this);
-    pthread_attr_destroy(&attributes);
-    if (created == 0) {
-      return;
+#if LOOM_WORKER_HAS_PTHREAD
+    const auto& traits = LoomPlatformTraits::current();
+    if (traits.workerStackSize != 0) {
+      pthread_attr_t attributes;
+      pthread_attr_init(&attributes);
+      pthread_attr_setstacksize(&attributes, traits.workerStackSize);
+      const auto created = pthread_create(
+          &workerThread_,
+          &attributes,
+          [](void* context) -> void* {
+            const auto& active = LoomPlatformTraits::current();
+            if (active.setCurrentThreadName != nullptr &&
+                active.workerThreadName != nullptr) {
+              active.setCurrentThreadName(active.workerThreadName);
+            }
+            static_cast<LoomWorker*>(context)->run();
+            return nullptr;
+          },
+          this);
+      pthread_attr_destroy(&attributes);
+      if (created == 0) {
+        return;
+      }
+      workerThread_ = 0;
     }
-    workerThread_ = 0;
 #endif
-    // Everything else, and the fallback when the explicit stack cannot be
-    // created, uses the platform default stack.
     thread_ = std::thread([this] {
       run();
     });
   }
 
   void logStall(int slice) {
-#if defined(__ANDROID__)
-    __android_log_print(
-        ANDROID_LOG_WARN,
+    loomLog(
+        LoomLogLevel::Warn,
         "LoomWorker",
         "off-UI barrier waited %d ms for the UI thread to apply worker results",
         slice * 2000);
-#else
-    std::fprintf(
-        stderr, "LoomWorker: barrier waited %d ms for the UI thread\n", slice * 2000);
-#endif
   }
 
   void acknowledge() {
@@ -768,12 +716,7 @@ class LoomWorker final {
       if (job->profileId) {
         LoomWorkerProfile::metrics() = {};
         result->computeStart = LoomWorkerProfile::Clock::now();
-#if defined(__APPLE__)
-        result->computedOnMain = pthread_main_np();
-#elif defined(__ANDROID__)
-        result->computedOnMain =
-            static_cast<pid_t>(::syscall(SYS_gettid)) == ::getpid();
-#endif
+        result->computedOnMain = onUIThread();
       }
       building_ = result.get();
       try {
@@ -820,7 +763,7 @@ class LoomWorker final {
   unsigned profileSequence_{0};
   std::function<void()> notify_;
   std::thread thread_;
-#if defined(__APPLE__)
+#if LOOM_WORKER_HAS_PTHREAD
   pthread_t workerThread_{0};
 #endif
 };

@@ -4,6 +4,7 @@
  */
 #include <gtest/gtest.h>
 #include <react/renderer/uimanager/LoomWorker.h>
+#include "LoomTestTraits.h"
 #include <atomic>
 #include <chrono>
 #include <deque>

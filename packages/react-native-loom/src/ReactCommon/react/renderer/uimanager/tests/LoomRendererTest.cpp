@@ -24,6 +24,7 @@
 #include <react/renderer/core/ComponentDescriptor.h>
 #include <react/renderer/core/EventDispatcher.h>
 #include <react/renderer/uimanager/UIManager.h>
+#include "LoomTestTraits.h"
 #include "TestUIManagerDelegate.h"
 
 #include <react/featureflags/ReactNativeFeatureFlags.h>
@@ -611,7 +612,30 @@ TEST(LoomRendererTest, NewHostNodeEmitsInitialLayoutAndOnLayoutEvent) {
       events, (std::vector<std::pair<Tag, std::string>>{{2, "topLayout"}}));
 }
 
+namespace {
+/** Installs a prop-diff policy for one test and restores the previous traits. */
+struct ScopedPropDiffPolicy {
+  explicit ScopedPropDiffPolicy(bool (*policy)(const std::string&))
+      : saved_(LoomPlatformTraits::current()) {
+    auto traits = saved_;
+    traits.sendsPropDiffs = policy;
+    LoomPlatformTraits::install(std::move(traits));
+  }
+  ~ScopedPropDiffPolicy() {
+    LoomPlatformTraits::install(saved_);
+  }
+  LoomPlatformTraits saved_;
+};
+
+/** Diffs for the core view managers only; every other component gets full props. */
+bool coreViewsSendPropDiffs(const std::string& name) {
+  return name == "RCTView" || name == "RCTImageView" ||
+      name == "RCTScrollView" || name == "AndroidHorizontalScrollView";
+}
+} // namespace
+
 TEST(LoomRendererTest, PaintOnlyPropsCommitSkipsLayoutAndKeepsFullProps) {
+  const ScopedPropDiffPolicy policy(coreViewsSendPropDiffs);
   folly::dynamic batch = folly::dynamic::array();
   auto operations = testOperations();
   operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
@@ -725,6 +749,7 @@ TEST(LoomRendererTest, NativeAnimatedPatchShapesUseThePaintOnlyPath) {
  * layouting) rather than the path taken, which is not visible from a batch.
  */
 TEST(LoomRendererTest, PaintOnlySetNativePropsMergesPropsWithoutStructuralWork) {
+  const ScopedPropDiffPolicy policy(coreViewsSendPropDiffs);
   std::vector<folly::dynamic> batches;
   auto operations = testOperations();
   operations.applyBatch = [&batches](SurfaceId, LoomMountBatch next) {
@@ -974,9 +999,11 @@ TEST(LoomRendererTest, InlineAttachmentValidationDoesNotMutateLiveTree) {
       {4, {}},
   };
 
-  const auto nameFor = [&](Tag tag) -> const std::string* {
+  const auto nameFor = [&](Tag tag) {
     const auto found = selectedNames.find(tag);
-    return found == selectedNames.end() ? nullptr : &found->second;
+    return found == selectedNames.end()
+        ? LoomComponentTable::Roles{}
+        : LoomPlatformTraits::current().components.classify(found->second);
   };
   const auto childrenFor = [&](Tag tag) -> const std::vector<Tag>* {
     const auto found = selectedChildren.find(tag);
@@ -1008,9 +1035,11 @@ TEST(LoomRendererTest, NestedVirtualTextAndRawTextAreValidInlineContent) {
       {6, {}},
   };
 
-  const auto nameFor = [&](Tag tag) -> const std::string* {
+  const auto nameFor = [&](Tag tag) {
     const auto found = names.find(tag);
-    return found == names.end() ? nullptr : &found->second;
+    return found == names.end()
+        ? LoomComponentTable::Roles{}
+        : LoomPlatformTraits::current().components.classify(found->second);
   };
   const auto childrenFor = [&](Tag tag) -> const std::vector<Tag>* {
     const auto found = children.find(tag);
@@ -1493,6 +1522,7 @@ TEST(LoomRendererTest, EmptyTextInputMeasuresItsPlaceholderButPublishesNothing) 
 TEST(
     LoomRendererTest,
     ExistingViewsReceiveFullMergedPropsAndExplicitResets) {
+  const ScopedPropDiffPolicy policy(coreViewsSendPropDiffs);
   folly::dynamic batch = folly::dynamic::array();
   auto operations = testOperations();
   operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
@@ -1541,11 +1571,12 @@ TEST(
   EXPECT_TRUE(patches[0]["backgroundColor"].isNull());
 }
 
-#if defined(__ANDROID__)
-// Core Android view managers apply props incrementally, so an update to an
-// existing core view carries only the keys that changed (resets as explicit
+
+// A host whose core view managers apply props incrementally sends only the
+// keys that changed for an update to an existing core view (resets as explicit
 // nulls). Library components keep receiving the full merged set (above).
 TEST(LoomRendererTest, CoreViewsReceiveOnlyChangedPropsAndExplicitResets) {
+  const ScopedPropDiffPolicy policy(coreViewsSendPropDiffs);
   folly::dynamic batch = folly::dynamic::array();
   auto operations = testOperations();
   operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
@@ -1583,7 +1614,6 @@ TEST(LoomRendererTest, CoreViewsReceiveOnlyChangedPropsAndExplicitResets) {
   ASSERT_EQ(patches[0].size(), 1u);
   EXPECT_TRUE(patches[0]["backgroundColor"].isNull());
 }
-#endif
 
 TEST(LoomRendererTest, TagReuseIsMarkedOnlyOnReplacementBatch) {
   std::vector<bool> replacementBatches;
@@ -2455,6 +2485,8 @@ struct LoomBindingTestAccess {
     node->initialProps =
         std::make_shared<const folly::dynamic>(std::move(props));
     node->hasInitialProps = true;
+    node->roles = LoomPlatformTraits::current().components.classify(
+        *node->componentName);
     return node;
   }
 
@@ -2725,13 +2757,14 @@ TEST(LoomRendererTest, SteadyStateCommitCostProbeNestedLayoutOnlyChains) {
  * Covers the publication path, which the host API normally reaches and the rest
  * of the suite therefore never touches: `freeze`, its stamp dedup, and the
  * submitted bookkeeping it feeds. It needs a real `UIManager` because the
- * binding asks its delegate whether text may be measured on the worker, and the
- * binding refuses to construct without a UI executor.
+ * binding reads its host from the UIManager's context container, and a host
+ * that returns a UI executor.
  */
 class LoomRendererPublishTest : public ::testing::Test {
  protected:
   void SetUp() override {
     contextContainer_ = std::make_shared<ContextContainer>();
+    LoomHost::registerIn(*contextContainer_, std::make_shared<TestLoomHost>());
     ComponentDescriptorProviderRegistry providerRegistry{};
     auto registry = providerRegistry.createComponentDescriptorRegistry(
         ComponentDescriptorParameters{
@@ -2779,11 +2812,10 @@ TEST_F(LoomRendererPublishTest, PublicationRecordsIdentitiesForEveryDraft) {
       1,
       {LoomBindingTestAccess::nodeRef(1, 2, token, root)});
 
-  // Both drafts were frozen, so both identities reached the submitted map.
-  EXPECT_EQ(
-      LoomBindingTestAccess::submittedIdentity(*binding_, 2), 11u);
-  EXPECT_EQ(
-      LoomBindingTestAccess::submittedIdentity(*binding_, 3), 12u);
+  // Both drafts were frozen into the commit. (Their submitted entries are
+  // dropped again once the commit is mounted, so the drafts are what to check.)
+  EXPECT_TRUE(root->published);
+  EXPECT_TRUE(child->published);
 }
 
 TEST_F(LoomRendererPublishTest, RepublishingAnUnchangedGraphSkipsTheFreezeWalk) {
@@ -2855,7 +2887,7 @@ TEST_F(LoomRendererPublishTest, ACloneOfAPublishedVersionIsPublishedAgain) {
   Access::publish(*binding_, 1, {Access::nodeRef(1, 1, token, next)});
 
   EXPECT_TRUE(next->published);
-  EXPECT_EQ(Access::submittedIdentity(*binding_, 3), 12u)
+  EXPECT_TRUE(added->published)
       << "the clone's new child must be frozen into the commit";
 }
 
@@ -3059,7 +3091,8 @@ TEST(LoomRendererTest, ReconcilerCompactsOnlyWhenAsked) {
         node, folly::dynamic::object("backgroundColor", "red"));
     auto selection = LoomBindingTestAccess::select(
         renderer, 1, *token, {node});
-    const auto* pending = node->propsTail.get();
+    // Owned here: the compacting path drops the draft's reference to it.
+    const auto pending = node->propsTail;
     LoomBindingTestAccess::reconcile(renderer, 1, selection, compact);
     return std::make_tuple(
         renderer.identityOf(2),

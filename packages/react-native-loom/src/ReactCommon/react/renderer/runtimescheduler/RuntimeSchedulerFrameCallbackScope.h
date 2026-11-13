@@ -13,21 +13,41 @@
 #include <functional>
 #include <utility>
 
+#include "LoomRuntimeHooks.h"
+
 namespace facebook::react {
 
 /*
+ * The frame contract. A host that has a display clock drives three things,
+ * all optional; without them the scheduler uses fixed time slices and the
+ * renderer applies commits as they complete:
+ *
+ *   - `FrameClock::onFrame(frameTimeNanos)`: once per display frame, with the
+ *     frame's start time on the `std::chrono::steady_clock` epoch. Any thread.
+ *   - `FrameCallbackScope`: constructed on the UI thread around the host's
+ *     animation-phase callbacks (requestAnimationFrame and timer delivery),
+ *     when the JS runtime shares that thread (`LOOM_JS_ON_MAIN`).
+ *   - `LoomBinding::flushAnimationFrames()`: the before-frame hook. The host
+ *     calls it on the UI thread just before the frame's mount dispatch, so the
+ *     animation props collected since the last flush reach the screen in this
+ *     frame. The runtime scheduler also calls it at the end of every JS task.
+ *
+ * `LoomRuntimeHooks::postDelayed` is the one thing the scheduler asks of the
+ * host in return.
+ */
+
+/*
  * Loom: marks the span in which the UI thread, which also hosts the
- * JavaScript runtime, is running Choreographer's animation-phase callbacks
- * (requestAnimationFrame and timer delivery).
+ * JavaScript runtime, is running the host's animation-phase callbacks
+ * (requestAnimationFrame and timer delivery) for one frame.
  *
  * Upstream hands timer work to the runtime by posting a message to the JS
- * queue. With JavaScript on the UI thread that message queues behind the
- * ViewRootImpl sync barrier, so it only runs after this frame's traversal, and
- * the commit it makes is drawn a whole frame later. Inside the scope the
- * scheduler instead records that an event loop is wanted and runs it when the
- * scope closes, still within the animation phase and therefore before the
- * traversal. A hook then lets the renderer apply what the tick committed
- * before the frame draws.
+ * queue. When the host draws the frame ahead of queued messages that message
+ * only runs after this frame is drawn, and the commit it makes is drawn a
+ * whole frame later. Inside the scope the scheduler instead records that an
+ * event loop is wanted and runs it when the scope closes, still within the
+ * animation phase and therefore before the draw. A hook then lets the renderer
+ * apply what the tick committed before the frame draws.
  *
  * Only meaningful on the thread that constructs it; scopes do not nest.
  */
@@ -97,8 +117,7 @@ class AnimationFrameWork final {
 /*
  * Loom: where the display's frames are, as far as the JS scheduler can tell.
  *
- * Fed with each Choreographer frame's start time (CLOCK_MONOTONIC, which is what
- * `steady_clock` reads on Android). It keeps a smoothed period, so it follows 60, 90 and 120 Hz
+ * Fed with each display frame's start time (`steady_clock` epoch). It keeps a smoothed period, so it follows 60, 90 and 120 Hz
  * without asking the display, and answers "how long until the next vsync". It reports
  * "unknown" when no frame has been seen recently, which is the case when nothing animates; the
  * scheduler then falls back to a fixed time slice.
@@ -114,9 +133,9 @@ class FrameClock final {
    * 190 ms on a 60 Hz phone, 35% in about 70 ms with a few more frames over 32 ms).
    *
    * kDeferContinuationPastVsync: true holds a paused continuation until just after the next
-   * vsync. false re-posts it at once: while a traversal is pending, ViewRootImpl's sync barrier
-   * already keeps an ordinary message behind the frame, so the frame still goes first, and the
-   * gap after each frame is not wasted.
+   * vsync. false re-posts it at once: on a host whose pending frame already holds ordinary
+   * messages back (Android's sync barrier), the frame still goes first, and the gap after each
+   * frame is not wasted.
    */
   static constexpr int64_t kFrameReservePercent = 35;
   static constexpr bool kDeferContinuationPastVsync = false;
@@ -162,27 +181,21 @@ class FrameClock final {
   /**
    * Runs \p task just after the next vsync's frame callback has run, so a continuation that
    * the scheduler re-posts cannot be dequeued ahead of the frame that is waiting for the
-   * Looper. Returns false (the caller posts normally) when frames are not tracked or no
-   * poster is installed.
+   * message queue. Returns false (the caller posts normally) when frames are not tracked or no
+   * `LoomRuntimeHooks::postDelayed` is installed.
    */
   static bool postAfterNextFrame(std::function<void()>& task) {
     if (!kDeferContinuationPastVsync) {
       return false;
     }
-    const auto& poster = delayedPoster();
+    const auto poster = LoomRuntimeHooks::installedPostDelayed();
     const auto remaining = nanosUntilNextVsync();
-    if (!poster || remaining == INT64_MAX) {
+    if (poster == nullptr || remaining == INT64_MAX) {
       return false;
     }
     // A little past the vsync, so the frame message (stamped with the vsync time) goes first.
     poster(std::move(task), remaining + 2'000'000);
     return true;
-  }
-
-  /** Installed by the platform: runs the function on the UI thread after a delay. */
-  static std::function<void(std::function<void()>, int64_t)>& delayedPoster() {
-    static std::function<void(std::function<void()>, int64_t)> poster;
-    return poster;
   }
 
  private:

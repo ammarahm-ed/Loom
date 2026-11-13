@@ -38,10 +38,6 @@ TextAttributes textMeasurementAttributes(TextAttributes attributes) {
   return attributes;
 }
 
-bool isTextInputName(const std::string& componentName) {
-  return componentName.find("TextInput") != std::string::npos;
-}
-
 LoomRenderer::TextMeasurement estimateTextMeasurement(
     const TextAttributes& attributes,
     const AttributedString& attributedString,
@@ -250,7 +246,7 @@ void LoomRenderer::buildTextContent(Node& root) {
   text.textAttributes = textAttributes;
 
   auto attributedString = AttributedString{};
-  const bool textInput = isTextInputName(root.componentName);
+  const bool textInput = root.componentRoles.textInput;
   const auto* controlledValue = findProp(root.props, "value");
   const auto* initialDefaultValue = findProp(root.props, "defaultValue");
   const bool publishTextState = !textInput || controlledValue != nullptr ||

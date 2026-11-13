@@ -1,6 +1,7 @@
 /* Copyright (c) Meta Platforms, Inc. and affiliates. */
 
 #include "LoomCompat.h"
+#include "LoomPlatformTraits.h"
 
 #if LOOM_RENDERER
 
@@ -41,23 +42,8 @@ constexpr const char* kRegistryKey =
  * reproduces what their ShadowNodes do (text, scroll, image, root).
  */
 bool isLoomNativeComponent(const std::string& unifiedName) {
-  static const std::unordered_set<std::string> names{
-      "View",
-      "RootView",
-      "Root",
-      "Paragraph",
-      "SelectableParagraph",
-      "Text",
-      "RawText",
-      "Image",
-      "ScrollView",
-      "AndroidHorizontalScrollContentView",
-      "TextInput",
-      "AndroidTextInput",
-      "LayoutConformance",
-      "UnimplementedNativeView",
-  };
-  return names.count(unifiedName) != 0;
+  return LoomPlatformTraits::current().components.has(
+      unifiedName, LoomComponentTable::CoreRendered);
 }
 
 bool hasTypePrefix(const std::type_info& type, const char* prefix) {

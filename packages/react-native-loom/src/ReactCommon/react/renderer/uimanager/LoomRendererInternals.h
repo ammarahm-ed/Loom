@@ -198,24 +198,6 @@ inline void requireArguments(
   }
 }
 
-/**
- * The component names that make up the text stack. These checks appeared in
- * several units with the same name lists; they live here so a new alias is
- * added once.
- */
-inline bool isParagraphName(const std::string& name) {
-  return name == "RCTText" || name == "Paragraph" ||
-      name == "RCTSelectableText" || name == "SelectableParagraph";
-}
-
-inline bool isVirtualTextName(const std::string& name) {
-  return name == "RCTVirtualText" || name == "VirtualText" || name == "Text";
-}
-
-inline bool isRawTextName(const std::string& name) {
-  return name == "RCTRawText" || name == "RawText";
-}
-
 } // namespace loom
 } // namespace facebook::react
 

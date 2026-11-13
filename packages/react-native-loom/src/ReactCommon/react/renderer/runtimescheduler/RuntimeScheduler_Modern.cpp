@@ -36,7 +36,7 @@ int64_t durationToMilliseconds(HighResDuration duration) {
 }
 
 #if LOOM_JS_ON_MAIN
-// How long non-urgent work may run in one Looper message before React is asked to yield.
+// How long non-urgent work may run in one UI-thread message before React is asked to yield.
 // A 60 Hz frame is 16.7 ms.
 constexpr HighResDuration kLoopSliceYield = HighResDuration::fromMilliseconds(5);
 constexpr HighResDuration kLoopSliceMinimum = HighResDuration::fromMilliseconds(1);
@@ -223,7 +223,7 @@ bool RuntimeScheduler_Modern::getShouldYield() noexcept {
   // Loom: RN gives React the native scheduler, which until now only
   // asked a transition render to yield for a higher-priority task, never for
   // time. With JavaScript on the UI thread, a large transition then holds the
-  // Looper (and so the next frame) until it is finished. Ask non-urgent work to
+  // message queue (and so the next frame) until it is finished. Ask non-urgent work to
   // yield once it has used its slice. Urgent work (immediate and user-blocking
   // priorities, synchronous requests) is never asked to.
   if (currentTask_ != nullptr &&
@@ -440,10 +440,10 @@ void RuntimeScheduler_Modern::scheduleTask(std::shared_ptr<Task> task) {
 
 void RuntimeScheduler_Modern::scheduleEventLoop() {
 #if LOOM_JS_ON_MAIN
-  // Loom: during Choreographer's animation phase the loop is run by
-  // the FrameCallbackScope when it closes (still before this frame's
-  // traversal) instead of through a posted message, which would queue behind
-  // the traversal's sync barrier and push the resulting commit a frame later.
+  // Loom: during the host's animation phase the loop is run by
+  // the FrameCallbackScope when it closes (still before this frame is
+  // drawn) instead of through a posted message, which can queue behind the
+  // frame and push the resulting commit a frame later.
   if (auto* scope = FrameCallbackScope::current();
       scope != nullptr && currentRuntimeOnThread == nullptr &&
       runtimeForThread != nullptr) {
@@ -475,9 +475,9 @@ void RuntimeScheduler_Modern::runEventLoop(jsi::Runtime& runtime) {
   auto topPriorityTask = selectTask();
 #if LOOM_JS_ON_MAIN
   // A continuation that would start inside the frame's reserved time does not start: it would
-  // only run a millisecond and yield again, holding the Looper in front of the frame callback.
+  // only run a millisecond and yield again, holding the UI thread in front of the frame callback.
   // Only when continuations are held past the vsync: with an immediate re-post this check would
-  // spin, re-posting itself until the vsync passes whenever no traversal barrier holds it back.
+  // spin, re-posting itself until the vsync passes whenever nothing holds it behind the frame.
   if (FrameClock::kDeferContinuationPastVsync && isContinuation && topPriorityTask &&
       topPriorityTask->priority >= SchedulerPriority::NormalPriority &&
       FrameClock::nextVsyncIsNear()) {
@@ -502,7 +502,7 @@ void RuntimeScheduler_Modern::runEventLoop(jsi::Runtime& runtime) {
     // Loom: upstream drains the whole queue inside one message, which
     // was fine on a dedicated JS thread. Here it keeps a pending frame waiting
     // until every queued task (a React render split into continuations, say) is
-    // done. After a slice, hand the Looper back by re-posting the loop; the frame
+    // done. After a slice, hand the UI thread back by re-posting the loop; the frame
     // callback or input then runs before the next slice. Only non-urgent tasks
     // are deferred, and a task is never split.
     if (topPriorityTask && timeSliceYielded_ &&
@@ -586,7 +586,7 @@ void RuntimeScheduler_Modern::runEventLoopTick(
   lastYieldingOpportunity_ = taskStartTime;
   longestPeriodWithoutYieldingOpportunity_ = HighResDuration::zero();
 
-  // Loom: a requestAnimationFrame callback run outside a task (Android delivers
+  // Loom: a requestAnimationFrame callback run outside a task (a host that delivers
   // timers itself) still marks the first task after it, which holds the
   // microtasks it queued.
   {

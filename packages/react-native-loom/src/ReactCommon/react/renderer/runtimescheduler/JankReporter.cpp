@@ -18,10 +18,6 @@
 #include <thread>
 #include <vector>
 
-#if defined(__ANDROID__)
-#include <android/log.h>
-#include <sys/system_properties.h>
-#endif
 
 namespace facebook::react::jank {
 
@@ -56,17 +52,6 @@ struct TaskFacts {
 };
 
 thread_local TaskFacts tFacts;
-
-/** Reads `debug.loom.<name>`: a debug-only knob set with `adb shell setprop`. */
-int readIntProperty(const char* name, int fallback) {
-#if defined(__ANDROID__)
-  char value[PROP_VALUE_MAX] = {};
-  if (__system_property_get(name, value) > 0) {
-    return std::atoi(value);
-  }
-#endif
-  return fallback;
-}
 
 /** A finished over-budget task, waiting for its stack samples (if any). */
 struct Record {
@@ -122,11 +107,8 @@ Reporter& Reporter::instance() {
 
 Reporter::Reporter() : impl_(new Impl()) {
   impl_->owner = this;
-  // Debug-only knobs: `adb shell setprop debug.loom.jank_budget_ms 30` and
-  // `debug.loom.jank 0`. Read once; there is deliberately no release switch.
-  budgetMs_.store(
-      std::max(1, readIntProperty("debug.loom.jank_budget_ms", 50)));
-  enabled_.store(readIntProperty("debug.loom.jank", 1) != 0);
+  // The budget and the switch live in LoomSettings (`Loom.jankBudgetMs`, `Loom.jankReporter`),
+  // read on every use, so JavaScript can change them while the app runs.
 }
 
 void Reporter::beginTask() noexcept {

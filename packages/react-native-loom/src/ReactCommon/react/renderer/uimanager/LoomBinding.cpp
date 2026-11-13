@@ -14,6 +14,7 @@
 #include "LoomFabricBridge.h"
 #include "LoomLayoutAnimations.h"
 #include "LoomRendererInternals.h"
+#include "LoomSettingsHost.h"
 #include "LoomWorkerProfile.h"
 
 #include <algorithm>
@@ -25,12 +26,8 @@
 #include <react/renderer/runtimescheduler/JankReporter.h>
 #include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
 #include <shared_mutex>
+#include <stdexcept>
 #include <unordered_set>
-
-#if defined(__ANDROID__)
-#include <android/log.h>
-#include <fbjni/fbjni.h>
-#endif
 
 #include <jsi/JSIDynamic.h>
 
@@ -52,11 +49,14 @@ struct LoomBinding::Lifetime {
 
 namespace {
 
-using loom::isParagraphName;
-using loom::isRawTextName;
-using loom::isVirtualTextName;
 using loom::propsFromValue;
 using loom::requireArguments;
+
+template <typename Draft>
+void classifyDraft(Draft& draft) {
+  draft.roles =
+      LoomPlatformTraits::current().components.classify(*draft.componentName);
+}
 
 /**
  * Whether a node's live child list differs from the list this commit selected.
@@ -170,17 +170,29 @@ LoomBinding::LoomBinding(
     : UIManagerBinding(std::move(uiManager)) {
   lifetime_ = std::make_shared<Lifetime>();
   lifetime_->binding = this;
+  // Registered before the JS runtime installs this binding, by the platform
+  // that owns the UI manager; the context container is all this reads.
+  if (const auto container = getUIManager().getContextContainer()) {
+    hostOwner_ = LoomHost::findIn(*container);
+  }
+  if (hostOwner_ == nullptr) {
+    LOG(FATAL)
+        << "Loom: the UIManager's ContextContainer has no LoomHost. The platform must call "
+           "LoomHost::registerIn(contextContainer, host) before the JS runtime installs the "
+           "UI manager binding (iOS: RCTSurfacePresenter init; Android: "
+           "FabricUIManagerBinding::installFabricUIManager).";
+  }
+  host_ = hostOwner_.get();
+  text_ = host_->textServices();
   installLoomFabricBridge();
   // Power-of-two bucket counts keep these on mask indexing (see LoomTagHash).
   mountedIdentities_.reserve(1024);
   mountedTokens_.reserve(1024);
 #if LOOM_WORKER
   const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
-  // The platform UI executor is resolved on first use, not here: on Android the
-  // JS thread can create this binding while the UI manager's delegate is still
-  // being installed, and requiring it in the constructor made that race a
-  // startup crash. Every use of it comes after the first commit, by which time
-  // the delegate is in place.
+  // The host's UI executor is resolved on first use, not here: it can need
+  // platform state that exists only once the first surface runs. Every use of it
+  // comes after the first commit.
   worker_ = std::make_unique<LoomWorker>([weakLifetime] {
     auto lifetime = weakLifetime.lock();
     if (!lifetime || lifetime->binding == nullptr) {
@@ -203,9 +215,7 @@ LoomBinding::LoomBinding(
       }
     });
   });
-  // Nothing here may touch the UI manager's delegate: during startup it can be
-  // a Scheduler still under construction on another thread. The first commit
-  // resolves the executor (see publishWorkerCommit).
+  // The first commit resolves the executor (see publishWorkerCommit).
 #endif
 #if LOOM_WORKER && LOOM_JS_ON_MAIN
   // Loom: when timers and requestAnimationFrame callbacks have run in
@@ -233,8 +243,7 @@ std::function<void(std::function<void()>)> LoomBinding::platformUIExecutor() {
   if (uiExecutor_) {
     return uiExecutor_;
   }
-  auto* delegate = getUIManager().getDelegate();
-  auto executor = delegate ? delegate->loomGetUIExecutor() : nullptr;
+  auto executor = host_->uiExecutor();
   if (!executor) {
     return nullptr;
   }
@@ -362,9 +371,7 @@ void LoomBinding::setPointScaleFactor(float pointScaleFactor) {
     // `renderers_` is UI-thread state, but the host reports a new density on
     // whichever thread noticed it, so the propagation runs through the platform
     // UI executor. The lifetime token keeps the binding alive until it runs.
-    auto* delegate = binding->getUIManager().getDelegate();
-    auto uiExecutor =
-        delegate ? delegate->loomGetUIExecutor() : nullptr;
+    auto uiExecutor = binding->host()->uiExecutor();
     if (!uiExecutor) {
       binding->applyPointScaleFactor(pointScaleFactor);
       continue;
@@ -538,9 +545,7 @@ bool LoomBinding::layoutAnimationFrame(SurfaceId surfaceId) {
         if (batch.operations.empty()) {
           return;
         }
-        if (auto* delegate = binding.getUIManager().getDelegate()) {
-          delegate->loomApplyBatch(surfaceId, std::move(batch));
-        }
+        binding.host()->applyBatch(surfaceId, std::move(batch));
       });
 }
 
@@ -848,16 +853,12 @@ void LoomBinding::applyAnimatedPaintToView(
   if (props.empty()) {
     return;
   }
-  auto* delegate = getUIManager().getDelegate();
-  if (delegate == nullptr) {
-    return;
-  }
   const auto previousTag = replayingNativePropsTag_;
   const auto* previousProps = replayingNativeProps_;
   replayingNativePropsTag_ = tag;
   replayingNativeProps_ = &props;
   try {
-    delegate->uiManagerShouldSynchronouslyUpdateViewOnUIThread(tag, props);
+    host_->updateViewProps(tag, props);
   } catch (...) {
     replayingNativePropsTag_ = previousTag;
     replayingNativeProps_ = previousProps;
@@ -931,29 +932,14 @@ void LoomBinding::traceAnimationLane(
   if (!LoomWorkerProfile::enabled()) {
     return;
   }
-#if defined(__ANDROID__)
-  __android_log_print(
-      ANDROID_LOG_INFO,
+  loomLog(
+      LoomLogLevel::Profile,
       "LoomAnimLane",
-      "sync=%d cost=%.0fus nodes=%zu surface=%d",
-      synchronous ? 1 : 0,
-      micros,
-      nodes,
-      static_cast<int>(surfaceId));
-#elif defined(__APPLE__)
-  os_log(
-      OS_LOG_DEFAULT,
-      "LoomAnimLane sync=%d cost=%.0fus nodes=%lu surface=%d",
+      "sync=%d cost=%.0fus nodes=%lu surface=%d",
       synchronous ? 1 : 0,
       micros,
       static_cast<unsigned long>(nodes),
       static_cast<int>(surfaceId));
-#else
-  (void)surfaceId;
-  (void)synchronous;
-  (void)micros;
-  (void)nodes;
-#endif
 #else
   (void)surfaceId;
   (void)synchronous;
@@ -1174,22 +1160,20 @@ void LoomBinding::setWorkerNativeProps(
       ref.tag, ref.draft->identity, ref.surfaceToken, std::move(props));
   if (!payload || !isMounted || !onUIThread)
     return; // First mount replays the overlay before any layout events.
-  if (auto* delegate = getUIManager().getDelegate()) {
-    const auto previousTag = replayingNativePropsTag_;
-    const auto* previousProps = replayingNativeProps_;
-    replayingNativePropsTag_ = ref.tag;
-    replayingNativeProps_ = payload.get();
-    try {
-      delegate->uiManagerShouldSynchronouslyUpdateViewOnUIThread(
-          ref.tag, *payload);
-    } catch (...) {
-      replayingNativePropsTag_ = previousTag;
-      replayingNativeProps_ = previousProps;
-      throw;
-    }
+  const auto previousTag = replayingNativePropsTag_;
+  const auto* previousProps = replayingNativeProps_;
+  replayingNativePropsTag_ = ref.tag;
+  replayingNativeProps_ = payload.get();
+  try {
+    host_->updateViewProps(
+        ref.tag, *payload);
+  } catch (...) {
     replayingNativePropsTag_ = previousTag;
     replayingNativeProps_ = previousProps;
+    throw;
   }
+  replayingNativePropsTag_ = previousTag;
+  replayingNativeProps_ = previousProps;
 }
 #endif
 
@@ -1351,15 +1335,9 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   auto rendererToken = tokenFor(surfaceId);
   const std::weak_ptr<SurfaceToken> weakRendererToken = rendererToken;
 
-  // The delegate is resolved on every call rather than captured, because it can
-  // be replaced (and cleared) independently of this binding's lifetime.
   LoomRenderer::NativeOperations operations;
-#if defined(__APPLE__)
-  // The iOS ParagraphComponentView consumes attributed-string state and draws
-  // it through TextLayoutManager; the current iOS measurement API has no
-  // renderable prepared-layout handle to publish.
-  operations.prepareTextForMountProvidesLayout = false;
-#endif
+  operations.prepareTextForMountProvidesLayout =
+      LoomPlatformTraits::current().hasPreparedTextLayout;
   operations.isSurfaceActive = [weakRendererToken](SurfaceId surface) {
     auto token = weakRendererToken.lock();
     return token != nullptr && token->active && token->surfaceId == surface;
@@ -1370,86 +1348,77 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
     if (token == nullptr || !token->active || token->surfaceId != surface) {
       return;
     }
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomFailSurface(surface, reason);
-      token->active = false;
-    }
+    host_->failSurface(surface, reason);
+    token->active = false;
   };
   operations.applyBatch = [this](
                               SurfaceId surface,
                               LoomMountBatch batch) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      // Layout animations (Reanimated adapter): the driver sees the batch the
-      // platform is about to mount. Without a driver this is one atomic load.
-      if (auto driver = loomLayoutAnimationDriver(surface)) {
-        if (auto liveRenderer = findRenderer(surface)) {
-          const RendererGeometry geometry(*liveRenderer, /*inCommit*/ true);
-          driver->processBatch(surface, batch, geometry);
+    // Layout animations (Reanimated adapter): the driver sees the batch the
+    // platform is about to mount. Without a driver this is one atomic load.
+    if (auto driver = loomLayoutAnimationDriver(surface)) {
+      if (auto liveRenderer = findRenderer(surface)) {
+        const RendererGeometry geometry(*liveRenderer, /*inCommit*/ true);
+        driver->processBatch(surface, batch, geometry);
+      }
+    }
+    host_->applyBatch(surface, std::move(batch));
+#if LOOM_WORKER
+    // Only this surface's overlays can be replayed onto this surface, so the
+    // scan is bounded by them rather than by every overlay on every surface.
+    std::vector<Tag> overlayTags;
+    {
+      std::lock_guard state(stateMutex_);
+      auto surfaceOverlays = nativePropsOverlays_.find(surface);
+      if (surfaceOverlays != nativePropsOverlays_.end()) {
+        overlayTags.reserve(surfaceOverlays->second.size());
+        for (const auto& [tag, overlay] : surfaceOverlays->second) {
+          if (overlay.surfaceId == surface)
+            overlayTags.push_back(tag);
         }
       }
-      delegate->loomApplyBatch(surface, std::move(batch));
-#if LOOM_WORKER
-      // Only this surface's overlays can be replayed onto this surface, so the
-      // scan is bounded by them rather than by every overlay on every surface.
-      std::vector<Tag> overlayTags;
+    }
+    for (const auto tag : overlayTags) {
+      // Re-looked up rather than stored: applying native props can emit events
+      // and reenter this map, which may stage a distinct nested delta.
+      folly::dynamic props;
       {
         std::lock_guard state(stateMutex_);
         auto surfaceOverlays = nativePropsOverlays_.find(surface);
-        if (surfaceOverlays != nativePropsOverlays_.end()) {
-          overlayTags.reserve(surfaceOverlays->second.size());
-          for (const auto& [tag, overlay] : surfaceOverlays->second) {
-            if (overlay.surfaceId == surface)
-              overlayTags.push_back(tag);
-          }
-        }
+        if (surfaceOverlays == nativePropsOverlays_.end())
+          break;
+        auto it = surfaceOverlays->second.find(tag);
+        if (it == surfaceOverlays->second.end() ||
+            mountedIdentities_[tag] != it->second.identity)
+          continue;
+        // Native prop application can emit events and reenter this map. Keep
+        // this replay stable while allowing a distinct nested delta to stage.
+        props = it->second.props;
       }
-      for (const auto tag : overlayTags) {
-        // Re-looked up rather than stored: applying native props can emit events
-        // and reenter this map, which may stage a distinct nested delta.
-        folly::dynamic props;
-        {
-          std::lock_guard state(stateMutex_);
-          auto surfaceOverlays = nativePropsOverlays_.find(surface);
-          if (surfaceOverlays == nativePropsOverlays_.end())
-            break;
-          auto it = surfaceOverlays->second.find(tag);
-          if (it == surfaceOverlays->second.end() ||
-              mountedIdentities_[tag] != it->second.identity)
-            continue;
-          // Native prop application can emit events and reenter this map. Keep
-          // this replay stable while allowing a distinct nested delta to stage.
-          props = it->second.props;
-        }
-        const auto previousTag = replayingNativePropsTag_;
-        const auto* previousProps = replayingNativeProps_;
-        replayingNativePropsTag_ = tag;
-        replayingNativeProps_ = &props;
-        try {
-          delegate->uiManagerShouldSynchronouslyUpdateViewOnUIThread(
-              tag, props);
-        } catch (...) {
-          replayingNativePropsTag_ = previousTag;
-          replayingNativeProps_ = previousProps;
-          throw;
-        }
+      const auto previousTag = replayingNativePropsTag_;
+      const auto* previousProps = replayingNativeProps_;
+      replayingNativePropsTag_ = tag;
+      replayingNativeProps_ = &props;
+      try {
+        host_->updateViewProps(
+            tag, props);
+      } catch (...) {
         replayingNativePropsTag_ = previousTag;
         replayingNativeProps_ = previousProps;
+        throw;
       }
-#endif
+      replayingNativePropsTag_ = previousTag;
+      replayingNativeProps_ = previousProps;
     }
+#endif
   };
   operations.registerEventTarget =
       [this](SurfaceId surface, Tag tag, InstanceHandle::Shared handle) {
-        if (auto* delegate = getUIManager().getDelegate();
-            delegate != nullptr) {
-          delegate->loomRegisterEventTarget(
-              surface, tag, std::move(handle));
-        }
+        host_->registerEventTarget(
+            surface, tag, std::move(handle));
       };
   operations.unregisterEventTarget = [this](SurfaceId surface, Tag tag) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomUnregisterEventTarget(surface, tag);
-    }
+    host_->unregisterEventTarget(surface, tag);
   };
   operations.dispatchEvent = [this](
                                  SurfaceId surface,
@@ -1458,10 +1427,8 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
                                  folly::dynamic payload,
                                  RawEvent::Category category,
                                  bool unique) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomDispatchEvent(
-          surface, tag, eventName, std::move(payload), category, unique);
-    }
+    host_->dispatchEvent(
+        surface, tag, eventName, std::move(payload), category, unique);
   };
   operations
       .parseTextAttributes = [this](
@@ -1471,10 +1438,10 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
                                  const TextAttributes& inherited,
                                  ParagraphAttributes* outParagraphAttributes) {
     auto paragraphAttributes = ParagraphAttributes{};
-    auto* delegate = getUIManager().getDelegate();
-    auto attributes = delegate == nullptr
+    auto* t = text();
+    auto attributes = t == nullptr
         ? inherited
-        : delegate->loomParseTextAttributes(
+        : t->parseTextAttributes(
               surface, componentName, props, inherited, paragraphAttributes);
     if (outParagraphAttributes != nullptr) {
       *outParagraphAttributes = std::move(paragraphAttributes);
@@ -1488,8 +1455,8 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
                                const Size& minimumSize,
                                const Size& maximumSize) {
     LoomRenderer::TextMeasurement measurement;
-    auto* delegate = getUIManager().getDelegate();
-    if (delegate == nullptr) {
+    auto* t = text();
+    if (t == nullptr) {
       return measurement;
     }
 
@@ -1497,7 +1464,7 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
     // manager the shadow-tree path uses, so text is laid out for real
     // instead of estimated.
     LoomWorkerProfile::TextScope textProfile;
-    auto size = delegate->loomMeasureText(
+    auto size = t->measureText(
         surface,
         attributedString,
         paragraphAttributes,
@@ -1518,12 +1485,12 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
                                const ParagraphAttributes& paragraphAttributes,
                                const Size& minimumSize,
                                const Size& maximumSize) {
-    auto* delegate = getUIManager().getDelegate();
-    if (delegate == nullptr) {
+    auto* t = text();
+    if (t == nullptr) {
       return LoomTextMeasurement{};
     }
     LoomWorkerProfile::TextScope textProfile;
-    auto measurement = delegate->loomPrepareText(
+    auto measurement = t->prepareText(
         surface,
         attributedString,
         paragraphAttributes,
@@ -1542,12 +1509,12 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
           const ParagraphAttributes& paragraphAttributes,
           const Size& minimumSize,
           const Size& maximumSize) {
-        auto* delegate = getUIManager().getDelegate();
-        if (delegate == nullptr) {
+        auto* t = text();
+        if (t == nullptr) {
           return LoomTextMeasurement{};
         }
         LoomWorkerProfile::TextScope textProfile;
-        return delegate->loomPrepareTextForMount(
+        return t->prepareTextForMount(
             surface,
             attributedString,
             paragraphAttributes,
@@ -1558,9 +1525,9 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   operations.getScrollOffset = [this](SurfaceId surface, Tag tag) {
     // Live view state belongs to the UI thread; a JS-thread reader asks it.
     return readOnUIThread(
-               [surface, tag](UIManagerDelegate& delegate)
+               [surface, tag](LoomHost& h)
                    -> std::optional<std::pair<float, float>> {
-                 return delegate.loomGetScrollOffset(surface, tag);
+                 return h.getScrollOffset(surface, tag);
                },
                std::pair<float, float>{0, 0})
         .value_or(std::pair<float, float>{0, 0});
@@ -1568,33 +1535,25 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   operations.getViewLocationInSurface = [this](SurfaceId surface, Tag tag)
       -> std::optional<std::pair<float, float>> {
     return readOnUIThread(
-        [surface, tag](UIManagerDelegate& delegate) {
-          return delegate.loomGetViewLocationInSurface(
+        [surface, tag](LoomHost& h) {
+          return h.getViewLocationInSurface(
               surface, tag);
         },
         std::nullopt);
   };
 #else
   operations.getScrollOffset = [this](SurfaceId surface, Tag tag) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      return delegate->loomGetScrollOffset(surface, tag);
-    }
-    return std::pair<float, float>{0, 0};
+    return host_->getScrollOffset(surface, tag);
   };
   operations.getViewLocationInSurface = [this](SurfaceId surface, Tag tag)
       -> std::optional<std::pair<float, float>> {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      return delegate->loomGetViewLocationInSurface(surface, tag);
-    }
-    return std::nullopt;
+    return host_->getViewLocationInSurface(surface, tag);
   };
 #endif
   operations.reportUnsupportedInlineAttachment = [this](
                                                      SurfaceId surface,
                                                      Tag tag) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomReportUnsupportedInlineAttachment(surface, tag);
-    }
+    host_->reportUnsupportedInlineAttachment(surface, tag);
   };
   operations.reportUnsupportedTransform = [](SurfaceId surface, Tag tag) {
     std::fprintf(
@@ -1615,55 +1574,43 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
         static_cast<int>(surface));
   };
   operations.updateState = [this](LoomTextStateUpdate update) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomUpdateState(update);
-    }
+    host_->updateTextState(update);
   };
   operations.updateComponentState = [this](
                                         SurfaceId surface,
                                         Tag tag,
                                         State::Shared state) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomUpdateComponentState(surface, tag, state);
-    }
+    host_->updateComponentState(surface, tag, state);
   };
   operations.updateScrollContentBounds = [this](
                                              SurfaceId surface,
                                              Tag tag,
                                              const folly::dynamic& props,
                                              const Rect& bounds) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomUpdateScrollContentBounds(
-          surface, tag, props, bounds);
-    }
+    host_->updateScrollContentBounds(
+        surface, tag, props, bounds);
   };
   operations.dispatchCommand = [this](
                                    SurfaceId surface,
                                    Tag tag,
                                    const std::string& commandName,
                                    const folly::dynamic& args) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomDispatchCommand(
-          surface, tag, commandName, args);
-    }
+    host_->dispatchCommand(
+        surface, tag, commandName, args);
   };
   operations.sendAccessibilityEvent = [this](
                                           SurfaceId surface,
                                           Tag tag,
                                           const std::string& eventType) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomSendAccessibilityEvent(surface, tag, eventType);
-    }
+    host_->sendAccessibilityEvent(surface, tag, eventType);
   };
   operations.setIsJSResponder = [this](
                                     SurfaceId surface,
                                     Tag tag,
                                     bool isJSResponder,
                                     bool blockNativeResponder) {
-    if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-      delegate->loomSetIsJSResponder(
-          surface, tag, isJSResponder, blockNativeResponder);
-    }
+    host_->setIsJSResponder(
+        surface, tag, isJSResponder, blockNativeResponder);
   };
   operations.commitFinished = [this, weakRendererToken](SurfaceId surface) {
     auto token = weakRendererToken.lock();
@@ -1761,20 +1708,15 @@ void LoomBinding::submitWorkerJob(
       reason += exception.what();
     } catch (...) {
     }
-    if (auto* delegate = getUIManager().getDelegate()) {
-      delegate->loomFailSurface(token->surfaceId, reason);
-    }
+    host_->failSurface(token->surfaceId, reason);
   };
-  #if defined(__ANDROID__)
-  if (job->compute) {
+  if (const auto scope = LoomPlatformTraits::current().withWorkerScope;
+      scope != nullptr && job->compute) {
     auto compute = std::move(job->compute);
-    job->compute = [compute = std::move(compute)]() mutable {
-      jni::ThreadScope::WithClassLoader([&compute] { compute(); });
+    job->compute = [scope, compute = std::move(compute)]() mutable {
+      scope([&compute] { compute(); });
     };
   }
-#else
-  // Task is already owned by the job.
-#endif
   // A forced-sync commit computes on the UI thread either way. Running it here
   // when the worker is idle skips the worker round trip; when the worker still
   // owns work the job is queued behind it, which is what preserves ordering.
@@ -1810,9 +1752,8 @@ void LoomBinding::publishWorkerCommit(
     }
   } jankCommitTimer;
 #endif
-  // First commit: React only renders once startup has finished, so the
-  // delegate is fully constructed now. Resolving here also seeds the text
-  // capability answer from the UI thread.
+  // First commit: React only renders once startup has finished. Resolving here
+  // also seeds the text capability answer from the UI thread.
   (void)platformUIExecutor();
   auto packet = std::make_unique<WorkerCommit>();
   packet->surfaceId = surfaceId;
@@ -1879,14 +1820,8 @@ void LoomBinding::publishWorkerCommit(
              patch = patch->previous) {
           facts.unsafeTextProps |= patch->unsafeText;
         }
-        facts.hasText = draft->componentName &&
-            (*draft->componentName == "RCTText" ||
-             *draft->componentName == "Paragraph" ||
-             *draft->componentName == "Text");
-        if (facts.hasText && draft->componentName &&
-            (*draft->componentName == "RCTText" ||
-             *draft->componentName == "Paragraph" ||
-             *draft->componentName == "Text"))
+        facts.hasText = draft->roles.carriesText();
+        if (facts.hasText)
           ++changedTexts;
 
         for (const auto& child : *draft->children) {
@@ -1923,21 +1858,18 @@ void LoomBinding::publishWorkerCommit(
     packet->documentHandle = std::move(document->second);
     pendingDocumentInstanceHandles_.erase(document);
   }
-  if (auto* delegate = getUIManager().getDelegate()) {
-    // Asked only when the answer can change the decision: the query is a JNI
-    // call plus a view-manager registry lookup, and it must not be cached
-    // across commits because `TextEffectRegistry.hasRegisteredFactories()`
-    // changes when a library registers or unregisters a factory.
-    const bool textSafe =
-        !hasText || canMeasureTextOnWorker(*delegate);
-    // The text-safety decision belongs to this commit only. Earlier revisions
-    // kept it on the surface token, which made every later job on the surface
-    // (setNativeProps, constraints) synchronous as well.
-    const bool synchronousText =
-        retainsLiveSnapshot || (hasText && (!textSafe || unsafeTextProps));
-    forceSync = forceSync || synchronousText;
-  } else
-    forceSync = true;
+  // Asked only when the answer can change the decision: the query is a JNI
+  // call plus a view-manager registry lookup, and it must not be cached
+  // across commits because `TextEffectRegistry.hasRegisteredFactories()`
+  // changes when a library registers or unregisters a factory.
+  const bool textSafe =
+      !hasText || canMeasureTextOnWorker();
+  // The text-safety decision belongs to this commit only. Earlier revisions
+  // kept it on the surface token, which made every later job on the surface
+  // (setNativeProps, constraints) synchronous as well.
+  const bool synchronousText =
+      retainsLiveSnapshot || (hasText && (!textSafe || unsafeTextProps));
+  forceSync = forceSync || synchronousText;
   auto& live = renderer(surfaceId);
   std::shared_ptr<LoomRenderer> owner;
   {
@@ -2166,9 +2098,7 @@ void LoomBinding::reconcileWorkerCommit(
       if (!paintOnly)
         break;
       const auto& draft = *entry.draft;
-      const bool rawText = draft.componentName &&
-          (*draft.componentName == "RCTRawText" ||
-           *draft.componentName == "RawText");
+      const bool rawText = draft.roles.isRawText();
       if (liveRenderer.identityOf(draft.tag) != draft.identity ||
           (entry.childrenChanged &&
            childrenDifferFrom(liveRenderer, draft.tag, entry.childTags)) ||
@@ -2360,16 +2290,16 @@ LoomBinding::selectCommitDrafts(
   // whose child lists changed. Only such a parent can drop a child or gain an
   // unsupported one: an unchanged parent keeps its (already validated)
   // children.
-  const auto nameOf = [&](Tag tag) -> const std::string* {
+  const auto rolesOf = [&](Tag tag) -> LoomComponentTable::Roles {
     const auto record = selectionByTag.find(tag);
     if (record != selectionByTag.end() &&
         record->second.selectedIndex != noSelectedIndex) {
       const auto& draft = selected[record->second.selectedIndex].draft;
       if (draft->componentName != nullptr) {
-        return draft->componentName.get();
+        return draft->roles;
       }
     }
-    return liveRenderer.componentNameRef(tag);
+    return liveRenderer.componentRoles(tag);
   };
   const auto noteRemovedChildren = [&](Tag parentTag,
                                        const std::vector<Tag>& next) {
@@ -2388,7 +2318,6 @@ LoomBinding::selectCommitDrafts(
     }
   };
   noteRemovedChildren(selection.rootTag, selection.rootChildren);
-  static const std::string emptyName;
   for (const auto& entry : selected) {
     const auto& draft = *entry.draft;
     const auto liveIdentity = liveRenderer.identityOf(draft.tag);
@@ -2401,22 +2330,12 @@ LoomBinding::selectCommitDrafts(
     if (!entry.childrenChanged || selection.unsupportedAttachmentTag != 0) {
       continue;
     }
-    const auto* parentNamePointer = nameOf(draft.tag);
-    const auto& parentName =
-        parentNamePointer == nullptr ? emptyName : *parentNamePointer;
-    const bool parentInsideText = loom::isParagraphName(parentName) ||
-        loom::isVirtualTextName(parentName) ||
-        parentName.find("TextInput") != std::string::npos;
-    if (!parentInsideText) {
+    const auto parentRoles = rolesOf(draft.tag);
+    if (!parentRoles.isText() && !parentRoles.textInput) {
       continue;
     }
     for (const auto child : entry.childTags) {
-      const auto* childNamePointer = nameOf(child);
-      const auto& childName =
-          childNamePointer == nullptr ? emptyName : *childNamePointer;
-      if (!loom::isParagraphName(childName) &&
-          !loom::isVirtualTextName(childName) &&
-          !loom::isRawTextName(childName)) {
+      if (!rolesOf(child).isTextStack()) {
         selection.unsupportedAttachmentTag = child;
         break;
       }
@@ -2553,12 +2472,10 @@ void LoomBinding::publishRootCommit(
         {surfaceToken, children, profileGeneration});
     return;
   }
-#if defined(__APPLE__)
   const bool profileSyncCommit = LoomWorkerProfile::enabled();
   const auto syncCommitStart = profileSyncCommit
       ? LoomWorkerProfile::Clock::now()
       : LoomWorkerProfile::Clock::time_point{};
-#endif
   publishingRootCommits_.insert(surfaceId);
   // releaseSurfaceInternal removes the map entry immediately, but this strong
   // local reference keeps the active commit's renderer alive until callbacks
@@ -2592,13 +2509,11 @@ void LoomBinding::publishRootCommit(
       // applied and freeze the surface on its previous contents, and every later
       // commit carrying the attachment would be dropped the same way.
       surfaceToken->active = false;
-      if (auto* delegate = getUIManager().getDelegate(); delegate != nullptr) {
-        delegate->loomReportUnsupportedInlineAttachment(
-            surfaceId, commitSelection.unsupportedAttachmentTag);
-        delegate->loomFailSurface(
-            surfaceId,
-            "Loom renderer commit contains an unsupported inline text attachment");
-      }
+      host_->reportUnsupportedInlineAttachment(
+          surfaceId, commitSelection.unsupportedAttachmentTag);
+      host_->failSurface(
+          surfaceId,
+          "Loom renderer commit contains an unsupported inline text attachment");
       publishingRootCommits_.erase(surfaceId);
       drainPendingRootCommits(surfaceId);
       return;
@@ -2695,19 +2610,19 @@ void LoomBinding::publishRootCommit(
 #endif
 #if LOOM_PROFILE
     const auto profileAfterCommit = std::chrono::steady_clock::now();
-#if defined(__ANDROID__)
-    const auto profileMs = [](auto from, auto to) {
-      return std::chrono::duration<double, std::milli>(to - from).count();
-    };
-    __android_log_print(
-        ANDROID_LOG_INFO,
-        "LoomPublishProfile",
-        "surface=%d gen=%llu reconciliation=%.3fms rendererCommit=%.3fms",
-        static_cast<int>(surfaceId),
-        static_cast<unsigned long long>(profileGeneration),
-        profileMs(reconcileStart, reconcileEnd),
-        profileMs(reconcileEnd, profileAfterCommit));
-#endif
+    if (LoomWorkerProfile::enabled()) {
+      const auto profileMs = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+      };
+      loomLog(
+          LoomLogLevel::Profile,
+          "LoomPublishProfile",
+          "surface=%d gen=%llu reconciliation=%.3fms rendererCommit=%.3fms",
+          static_cast<int>(surfaceId),
+          static_cast<unsigned long long>(profileGeneration),
+          profileMs(reconcileStart, reconcileEnd),
+          profileMs(reconcileEnd, profileAfterCommit));
+    }
 #endif
     if (surfaceToken->active) {
       auto documentHandle = pendingDocumentInstanceHandles_.find(surfaceId);
@@ -2719,17 +2634,16 @@ void LoomBinding::publishRootCommit(
     }
     publishingRootCommits_.erase(surfaceId);
     drainPendingRootCommits(surfaceId);
-#if defined(__APPLE__)
     if (profileSyncCommit) {
-      os_log(
-          OS_LOG_DEFAULT,
-          "LoomDirectSyncProfile generation=%llu main=%d work=%.3f",
+      loomLog(
+          LoomLogLevel::Profile,
+          "LoomDirectSyncProfile",
+          "generation=%llu main=%d work=%.3f",
           static_cast<unsigned long long>(profileGeneration),
-          pthread_main_np(),
+          LoomPlatformTraits::current().onUIThread() ? 1 : 0,
           LoomWorkerProfile::ms(
               syncCommitStart, LoomWorkerProfile::Clock::now()));
     }
-#endif
   } catch (const std::exception& error) {
     liveRenderer.abortCommit(error.what());
     publishingRootCommits_.erase(surfaceId);
@@ -2975,11 +2889,10 @@ void LoomBinding::linkPendingPatches(
 
 bool LoomBinding::isRawTextRef(const NodeRef& ref) const {
   if (ref.draft != nullptr && ref.draft->componentName != nullptr) {
-    const auto& name = *ref.draft->componentName;
-    return isRawTextName(name);
+    return ref.draft->roles.isRawText();
   }
   const auto renderer = findRenderer(ref.surfaceId);
-  return renderer != nullptr && renderer->componentName(ref.tag) == "RCTRawText";
+  return renderer != nullptr && renderer->componentRoles(ref.tag).isRawText();
 }
 
 std::shared_ptr<LoomRenderer> LoomBinding::findRenderer(
@@ -2990,13 +2903,13 @@ std::shared_ptr<LoomRenderer> LoomBinding::findRenderer(
 }
 
 #if LOOM_WORKER
-bool LoomBinding::canMeasureTextOnWorker(
-    UIManagerDelegate& delegate) {
+bool LoomBinding::canMeasureTextOnWorker() {
   if (LoomWorker::kJavaScriptOnUIThread) {
     // Asked only when the answer can change the decision, and not cached:
     // `TextEffectRegistry.hasRegisteredFactories()` changes when a library
     // registers or unregisters a factory.
-    return delegate.loomCanMeasureTextOnWorker();
+    auto* t = text();
+    return t != nullptr && t->canMeasureOnWorker();
   }
   if (worker_->onUIThread())
     refreshCanMeasureTextOnWorker();
@@ -3006,21 +2919,16 @@ bool LoomBinding::canMeasureTextOnWorker(
 void LoomBinding::refreshCanMeasureTextOnWorker() {
   if (!worker_->onUIThread())
     return;
-  if (auto* delegate = getUIManager().getDelegate())
-    canMeasureTextOnWorker_ =
-        delegate->loomCanMeasureTextOnWorker() ? 1 : 0;
+  if (auto* t = text())
+    canMeasureTextOnWorker_ = t->canMeasureOnWorker() ? 1 : 0;
 }
 
 std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
-    std::function<std::optional<std::pair<float, float>>(UIManagerDelegate&)>
-        read,
+    std::function<std::optional<std::pair<float, float>>(LoomHost&)> read,
     std::optional<std::pair<float, float>> fallback) {
-  auto* delegate = getUIManager().getDelegate();
-  if (delegate == nullptr)
-    return fallback;
   if (worker_->onUIThread())
-    return read(*delegate);
-  auto uiExecutor = delegate->loomGetUIExecutor();
+    return read(*host_);
+  auto uiExecutor = host_->uiExecutor();
   if (!uiExecutor)
     return fallback;
   struct Reply {
@@ -3036,9 +2944,9 @@ std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
     if (auto lifetime = weakLifetime.lock()) {
       std::shared_lock held(lifetime->gate);
       if (auto* binding = lifetime->binding) {
-        if (auto* delegate = binding->getUIManager().getDelegate()) {
+        if (auto* uiHost = binding->host()) {
           try {
-            value = read(*delegate);
+            value = read(*uiHost);
           } catch (...) {
           }
         }
@@ -3056,12 +2964,10 @@ std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
   if (!reply->ready.wait_for(lock, std::chrono::seconds(5), [&] {
         return reply->done;
       })) {
-#if defined(__ANDROID__)
-    __android_log_print(
-        ANDROID_LOG_WARN,
+    loomLog(
+        LoomLogLevel::Warn,
         "LoomWorker",
         "live view read waited 5 s for the UI thread");
-#endif
     return fallback;
   }
   return reply->value;
@@ -3147,6 +3053,20 @@ jsi::Value LoomBinding::get(
   // thread with the UI, so long synchronous render passes block frames.
   if (method == "loomJsOnMain") {
     return jsi::Value(LoomWorker::kJavaScriptOnUIThread);
+  }
+
+  // `Loom` (react-native-loom): the runtime settings registry. The wrapper reads
+  // it once and keeps the object.
+  if (method == "loomSettings") {
+#if LOOM_WORKER
+    constexpr bool kWorker = true;
+#else
+    constexpr bool kWorker = false;
+#endif
+    return jsi::Object::createFromHostObject(
+        runtime,
+        std::make_shared<LoomSettingsHostObject>(
+            LoomWorker::kJavaScriptOnUIThread, kWorker));
   }
 
   // Read once at module load by the React renderer override: lets it use the
@@ -3239,9 +3159,9 @@ jsi::Value LoomBinding::get(
             interned = std::make_shared<const std::string>(componentName);
           }
           draft->componentName = interned;
+          classifyDraft(*draft);
           draft->compatDescriptor = compatDescriptorFor(interned);
-          const auto rawText =
-              (componentName == "RCTRawText" || componentName == "RawText")
+          const auto rawText = draft->roles.isRawText()
               ? rawTextFromValue(rt, arguments[3])
               : std::nullopt;
           if (rawText.has_value()) {
@@ -3811,56 +3731,56 @@ jsi::Value LoomBinding::get(
                   std::chrono::duration_cast<std::chrono::nanoseconds>(
                       std::chrono::steady_clock::now() - completeRootStart)
                       .count());
-#if defined(__ANDROID__)
-          const auto method =
-              [&hostProfile](
-                  ProfiledHostMethod value) -> const HostMethodStats& {
-            return hostProfile.methods[static_cast<size_t>(value)];
-          };
-          const auto methodMs = [](const HostMethodStats& stats) {
-            return static_cast<double>(stats.totalNanoseconds) / 1.0e6;
-          };
-          __android_log_print(
-              ANDROID_LOG_INFO,
-              "LoomHostProfile",
-              "surface=%d gen=%llu firstHostToCompleteRootMs=%.3f "
-              "createNode=%llu/%.3f clone=%llu/%.3f cloneProps=%llu/%.3f "
-              "cloneChildren=%llu/%.3f cloneChildrenProps=%llu/%.3f "
-              "createSet=%llu/%.3f appendSet=%llu/%.3f appendChild=%llu/%.3f "
-              "completeRoot=%llu/%.3f",
-              static_cast<int>(surface),
-              static_cast<unsigned long long>(generation),
-              hostCallsToCompleteRootMs,
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::CreateNode).calls),
-              methodMs(method(ProfiledHostMethod::CreateNode)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::CloneNode).calls),
-              methodMs(method(ProfiledHostMethod::CloneNode)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::CloneNodeWithNewProps).calls),
-              methodMs(method(ProfiledHostMethod::CloneNodeWithNewProps)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::CloneNodeWithNewChildren).calls),
-              methodMs(method(ProfiledHostMethod::CloneNodeWithNewChildren)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::CloneNodeWithNewChildrenAndProps)
-                      .calls),
-              methodMs(
-                  method(ProfiledHostMethod::CloneNodeWithNewChildrenAndProps)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::CreateChildSet).calls),
-              methodMs(method(ProfiledHostMethod::CreateChildSet)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::AppendChildToSet).calls),
-              methodMs(method(ProfiledHostMethod::AppendChildToSet)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::AppendChild).calls),
-              methodMs(method(ProfiledHostMethod::AppendChild)),
-              static_cast<unsigned long long>(
-                  method(ProfiledHostMethod::CompleteRoot).calls),
-              methodMs(method(ProfiledHostMethod::CompleteRoot)));
-#endif
+          if (LoomWorkerProfile::enabled()) {
+            const auto method =
+                [&hostProfile](
+                    ProfiledHostMethod value) -> const HostMethodStats& {
+              return hostProfile.methods[static_cast<size_t>(value)];
+            };
+            const auto methodMs = [](const HostMethodStats& stats) {
+              return static_cast<double>(stats.totalNanoseconds) / 1.0e6;
+            };
+            loomLog(
+                LoomLogLevel::Profile,
+                "LoomHostProfile",
+                "surface=%d gen=%llu firstHostToCompleteRootMs=%.3f "
+                "createNode=%llu/%.3f clone=%llu/%.3f cloneProps=%llu/%.3f "
+                "cloneChildren=%llu/%.3f cloneChildrenProps=%llu/%.3f "
+                "createSet=%llu/%.3f appendSet=%llu/%.3f appendChild=%llu/%.3f "
+                "completeRoot=%llu/%.3f",
+                static_cast<int>(surface),
+                static_cast<unsigned long long>(generation),
+                hostCallsToCompleteRootMs,
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::CreateNode).calls),
+                methodMs(method(ProfiledHostMethod::CreateNode)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::CloneNode).calls),
+                methodMs(method(ProfiledHostMethod::CloneNode)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::CloneNodeWithNewProps).calls),
+                methodMs(method(ProfiledHostMethod::CloneNodeWithNewProps)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::CloneNodeWithNewChildren).calls),
+                methodMs(method(ProfiledHostMethod::CloneNodeWithNewChildren)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::CloneNodeWithNewChildrenAndProps)
+                        .calls),
+                methodMs(
+                    method(ProfiledHostMethod::CloneNodeWithNewChildrenAndProps)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::CreateChildSet).calls),
+                methodMs(method(ProfiledHostMethod::CreateChildSet)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::AppendChildToSet).calls),
+                methodMs(method(ProfiledHostMethod::AppendChildToSet)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::AppendChild).calls),
+                methodMs(method(ProfiledHostMethod::AppendChild)),
+                static_cast<unsigned long long>(
+                    method(ProfiledHostMethod::CompleteRoot).calls),
+                methodMs(method(ProfiledHostMethod::CompleteRoot)));
+          }
 #endif
           return jsi::Value::undefined();
         });
@@ -3893,6 +3813,7 @@ jsi::Value LoomBinding::get(
           draft->tag = tag;
           draft->componentName =
               std::make_shared<const std::string>(owner->componentName(tag));
+          classifyDraft(*draft);
           draft->instanceHandle = owner->instanceHandle(tag);
           draft->committedSnapshot = true;
           draft->childrenExplicit = false;

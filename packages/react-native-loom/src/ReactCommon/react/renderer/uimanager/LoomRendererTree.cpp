@@ -11,9 +11,6 @@
 namespace facebook::react {
 namespace {
 
-using loom::isParagraphName;
-using loom::isRawTextName;
-using loom::isVirtualTextName;
 using loom::findProp;
 using loom::numberProp;
 using loom::propsFromValue;
@@ -173,19 +170,9 @@ std::string LoomRenderer::componentName(Tag tag) const {
   if (node != nullptr) {
     return node->componentName;
   }
-  return findRawText(tag) == nullptr ? std::string{} : "RCTRawText";
-}
-
-const std::string* LoomRenderer::componentNameRef(Tag tag) const {
-  if (const auto* node = find(tag); node != nullptr) {
-    return &node->componentName;
-  }
-  if (findRawText(tag) != nullptr) {
-    // Matches what `componentName` reports for a raw-text leaf.
-    static const auto rawTextComponentName = std::string{"RCTRawText"};
-    return &rawTextComponentName;
-  }
-  return nullptr;
+  return findRawText(tag) == nullptr
+      ? std::string{}
+      : LoomPlatformTraits::current().components.rawTextHostName;
 }
 
 std::string LoomRenderer::textContent(Tag tag) const {
@@ -271,13 +258,15 @@ bool LoomRenderer::isCommitting() const {
   return insideCommit_;
 }
 
-bool LoomRenderer::isTextComponentName(const std::string& componentName) {
-  return isParagraphName(componentName) || isVirtualTextName(componentName);
-}
-
-bool LoomRenderer::isRawTextComponentName(
-    const std::string& componentName) {
-  return componentName == "RCTRawText" || componentName == "RawText";
+LoomComponentTable::Roles LoomRenderer::componentRoles(Tag tag) const {
+  if (const auto* node = find(tag); node != nullptr) {
+    return node->componentRoles;
+  }
+  LoomComponentTable::Roles roles;
+  if (findRawText(tag) != nullptr) {
+    roles.flags = LoomComponentTable::RawText;
+  }
+  return roles;
 }
 
 bool LoomRenderer::isTextNode(Tag tag) const {
@@ -310,7 +299,8 @@ ShadowView LoomRenderer::shadowView(Tag tag) const {
               .height = YGNodeLayoutGetHeight(node->yogaNode)}};
     }
   } else if (findRawText(tag) != nullptr) {
-    view.componentName = internComponentName("RCTRawText");
+    view.componentName = internComponentName(
+        LoomPlatformTraits::current().components.rawTextHostName);
   }
   return view;
 }
