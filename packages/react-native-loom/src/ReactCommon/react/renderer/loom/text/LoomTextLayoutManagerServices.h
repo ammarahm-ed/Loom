@@ -18,7 +18,7 @@
 #include <react/renderer/core/RawProps.h>
 #include <react/renderer/core/RawPropsParser.h>
 #include <react/renderer/textlayoutmanager/TextLayoutManager.h>
-#include <react/renderer/uimanager/LoomTextServices.h>
+#include <react/renderer/loom/text/LoomTextServices.h>
 #include <react/utils/ContextContainer.h>
 
 namespace facebook::react {

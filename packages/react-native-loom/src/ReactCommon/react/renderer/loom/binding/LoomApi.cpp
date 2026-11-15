@@ -8,11 +8,11 @@
 // The library API (react/loom/Loom.h) on top of Loom's renderer: reads and prop writes go through
 // LoomBinding's `api*` entry points; frame and commit notifications are fed by LoomBinding.cpp.
 
-#include "../../loom/Loom.h"
+#include "../../../loom/Loom.h"
 
 #include <react/renderer/animationbackend/AnimatedPropsSerializer.h>
-#include <react/renderer/uimanager/LoomBinding.h>
-#include <react/renderer/uimanager/LoomHost.h>
+#include <react/renderer/loom/binding/LoomBinding.h>
+#include <react/renderer/loom/host/LoomHost.h>
 #include <react/renderer/uimanager/UIManagerBinding.h>
 
 #include <atomic>

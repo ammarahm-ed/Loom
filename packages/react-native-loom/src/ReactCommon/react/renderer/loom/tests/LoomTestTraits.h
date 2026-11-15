@@ -9,8 +9,8 @@
 #include <string>
 #include <thread>
 
-#include <react/renderer/uimanager/LoomPlatformTraits.h>
-#include <react/renderer/uimanager/LoomViewManagerNames.h>
+#include <react/renderer/loom/host/LoomPlatformTraits.h>
+#include <react/renderer/loom/host/LoomViewManagerNames.h>
 
 namespace facebook::react {
 

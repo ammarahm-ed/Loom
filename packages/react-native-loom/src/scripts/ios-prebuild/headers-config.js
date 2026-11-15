@@ -252,6 +252,13 @@ const PodspecExceptions /*: {[key: string]: PodSpecConfiguration} */ = {
         headerDir: 'react/renderer/uimanager',
       },
 
+      // Loom: the renderer module (react/renderer/loom/{binding,core,mounting,worker,text,host,compat}).
+      {
+        name: 'loomRenderer',
+        headerPatterns: ['react/renderer/loom/{binding,core,mounting,worker,text,host,compat}/**/*.h'],
+        headerDir: 'react/renderer/loom',
+      },
+
       // Loom: the library API (<react/loom/Loom.h>) and the build configuration header
       // (<react/renderer/LoomConfig.h>, kept in loom/config so it can be published at that path).
       {

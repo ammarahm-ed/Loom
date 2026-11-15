@@ -14,7 +14,7 @@
 #include <android/log.h>
 #include <fbjni/fbjni.h>
 #include <react/renderer/runtimescheduler/LoomSettings.h>
-#include <react/renderer/uimanager/LoomViewManagerNames.h>
+#include <react/renderer/loom/host/LoomViewManagerNames.h>
 #include <sys/syscall.h>
 #include <sys/system_properties.h>
 #include <unistd.h>

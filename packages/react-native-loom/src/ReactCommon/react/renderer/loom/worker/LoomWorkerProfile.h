@@ -8,7 +8,7 @@
 #include <cstdint>
 
 #include <react/renderer/runtimescheduler/LoomSettings.h>
-#include <react/renderer/uimanager/LoomPlatformTraits.h>
+#include <react/renderer/loom/host/LoomPlatformTraits.h>
 
 namespace facebook::react {
 // Runtime opt-in for profiling (`Loom.profileWorker`, see LoomSettings.h), without changing Release build flags.

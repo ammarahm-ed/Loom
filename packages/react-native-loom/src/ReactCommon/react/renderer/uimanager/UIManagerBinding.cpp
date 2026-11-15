@@ -7,7 +7,7 @@
 
 #include "UIManagerBinding.h"
 #if LOOM_RENDERER
-#include "LoomBinding.h"
+#include <react/renderer/loom/binding/LoomBinding.h>
 #endif
 
 #include <cxxreact/TraceSection.h>

@@ -16,7 +16,7 @@
 #include <react/renderer/attributedstring/TextAttributes.h>
 #include <react/renderer/core/ReactPrimitives.h>
 #include <react/renderer/graphics/Size.h>
-#include <react/renderer/uimanager/LoomTextMeasurement.h>
+#include <react/renderer/loom/text/LoomTextMeasurement.h>
 
 namespace facebook::react {
 

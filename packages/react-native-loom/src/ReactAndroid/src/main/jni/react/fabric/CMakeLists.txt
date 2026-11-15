@@ -47,6 +47,7 @@ target_link_libraries(
         react_renderer_telemetry
         react_renderer_textlayoutmanager
         react_renderer_uimanager
+        react_renderer_loom
         react_renderer_uimanager_consistency
         rrc_legacyviewmanagerinterop
         react_utils

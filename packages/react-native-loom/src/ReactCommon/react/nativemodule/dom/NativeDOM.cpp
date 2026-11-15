@@ -14,7 +14,7 @@
 #include <react/renderer/uimanager/consistency/ShadowTreeRevisionProvider.h>
 
 #if LOOM_RENDERER
-#include <react/renderer/uimanager/LoomBinding.h>
+#include <react/renderer/loom/binding/LoomBinding.h>
 #endif
 
 #ifdef RN_DISABLE_OSS_PLUGIN_HEADER

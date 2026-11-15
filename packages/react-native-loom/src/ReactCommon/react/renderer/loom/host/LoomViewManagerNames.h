@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <react/renderer/uimanager/LoomPlatformTraits.h>
+#include <react/renderer/loom/host/LoomPlatformTraits.h>
 
 namespace facebook::react {
 

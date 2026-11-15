@@ -16,9 +16,9 @@ native state. This page is the contract for writing one. iOS and Android impleme
 
 | Piece | Header | Role |
 | --- | --- | --- |
-| `LoomHost` | `uimanager/LoomHost.h` | Mounting, per-node effects, live queries, the UI executor. |
-| `LoomTextServices` | `uimanager/LoomTextServices.h` | Text measurement and its optional capabilities. |
-| `LoomPlatformTraits` | `uimanager/LoomPlatformTraits.h` | Data the core reads once: component names, policies, logging, thread setup. |
+| `LoomHost` | `loom/host/LoomHost.h` | Mounting, per-node effects, live queries, the UI executor. |
+| `LoomTextServices` | `loom/text/LoomTextServices.h` | Text measurement and its optional capabilities. |
+| `LoomPlatformTraits` | `loom/host/LoomPlatformTraits.h` | Data the core reads once: component names, policies, logging, thread setup. |
 | Frame inputs | `runtimescheduler/RuntimeSchedulerFrameCallbackScope.h` | Optional display-clock feeds. |
 
 Fabric's `UIManager` and `Scheduler` are constructed as without Loom and carry no Loom methods.
@@ -161,7 +161,7 @@ Install the traits before the first surface starts; they are process-wide.
 | `prepareText`, `prepareTextForMount` | invalid (no prepared layout) |
 
 A host that only has React Native's `TextLayoutManager` uses `LoomTextLayoutManagerServices`
-(`uimanager/LoomTextLayoutManagerServices.h`, included by hosts, never by the core):
+(`loom/text/LoomTextLayoutManagerServices.h`, included by hosts, never by the core):
 
 - `measureText` is `TextLayoutManager::measure`, with the point scale factor the host passes to
   `setPointScaleFactor`.

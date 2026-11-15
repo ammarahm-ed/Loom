@@ -8,7 +8,7 @@
 #include "SurfaceHandlerBinding.h"
 #include <react/renderer/scheduler/Scheduler.h>
 #if LOOM_RENDERER
-#include <react/renderer/uimanager/LoomBinding.h>
+#include <react/renderer/loom/binding/LoomBinding.h>
 #endif
 
 namespace facebook::react {

@@ -22,7 +22,7 @@
 #import <React/RCTUIManagerUtils.h>
 #import <React/RCTUtils.h>
 #if LOOM_RENDERER
-#import <react/renderer/uimanager/LoomBinding.h>
+#import <react/renderer/loom/binding/LoomBinding.h>
 #endif
 #import <react/renderer/core/ReactRootViewTagGenerator.h>
 #import <react/renderer/mounting/MountingCoordinator.h>

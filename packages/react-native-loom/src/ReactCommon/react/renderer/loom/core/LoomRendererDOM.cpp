@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#include "LoomBinding.h"
+#include "../binding/LoomBinding.h"
 #include "LoomRendererInternals.h"
 
 #include <algorithm>
@@ -13,7 +13,7 @@
 
 #include <jsi/JSIDynamic.h>
 #include <react/renderer/core/EventTarget.h>
-#include <react/renderer/uimanager/LoomEventManager.h>
+#include <react/renderer/loom/binding/LoomEventManager.h>
 
 #if LOOM_RENDERER
 namespace facebook::react {

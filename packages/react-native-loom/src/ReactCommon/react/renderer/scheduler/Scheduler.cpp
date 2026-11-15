@@ -28,7 +28,7 @@
 #include <react/renderer/uimanager/UIManager.h>
 #include <react/renderer/uimanager/UIManagerBinding.h>
 #if LOOM_RENDERER
-#include <react/renderer/uimanager/LoomBinding.h>
+#include <react/renderer/loom/binding/LoomBinding.h>
 #endif
 #if !LOOM_RENDERER
 #include <react/renderer/viewtransition/ViewTransitionModule.h>

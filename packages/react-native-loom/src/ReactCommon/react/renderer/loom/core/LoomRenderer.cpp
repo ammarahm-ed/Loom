@@ -2,7 +2,7 @@
 
 #include "LoomRenderer.h"
 #include "LoomRendererInternals.h"
-#include "LoomWorkerProfile.h"
+#include "../worker/LoomWorkerProfile.h"
 
 #include <react/featureflags/ReactNativeFeatureFlags.h>
 #include <react/renderer/core/DynamicEventPayload.h>

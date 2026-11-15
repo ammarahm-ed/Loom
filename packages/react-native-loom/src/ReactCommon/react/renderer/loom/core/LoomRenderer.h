@@ -31,12 +31,12 @@
 #include <react/renderer/graphics/Rect.h>
 #include <react/renderer/graphics/Size.h>
 #include <react/renderer/mounting/ShadowView.h>
-#include <react/renderer/uimanager/LoomCompat.h>
-#include <react/renderer/uimanager/LoomMountBatch.h>
-#include <react/renderer/uimanager/LoomEventManager.h>
-#include <react/renderer/uimanager/LoomPlatformTraits.h>
-#include <react/renderer/uimanager/LoomWorkerProfile.h>
-#include <react/renderer/uimanager/LoomTextMeasurement.h>
+#include <react/renderer/loom/compat/LoomCompat.h>
+#include <react/renderer/loom/mounting/LoomMountBatch.h>
+#include <react/renderer/loom/binding/LoomEventManager.h>
+#include <react/renderer/loom/host/LoomPlatformTraits.h>
+#include <react/renderer/loom/worker/LoomWorkerProfile.h>
+#include <react/renderer/loom/text/LoomTextMeasurement.h>
 #include <yoga/Yoga.h>
 
 namespace facebook::react {

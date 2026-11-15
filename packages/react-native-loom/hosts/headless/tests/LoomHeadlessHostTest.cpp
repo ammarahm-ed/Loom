@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-#include <react/renderer/uimanager/LoomRenderer.h>
+#include <react/renderer/loom/core/LoomRenderer.h>
 
 #include "../LoomHeadlessHost.h"
 

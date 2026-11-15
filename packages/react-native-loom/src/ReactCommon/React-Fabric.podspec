@@ -289,8 +289,20 @@ Pod::Spec.new do |s|
     ss.dependency             "React-Fabric/coreUmbrella"
     ss.dependency             "React-Fabric/componentregistryUmbrella"
     ss.dependency             "React-Fabric/components/viewUmbrella"
+    ss.dependency             "React-Fabric/loomRenderer"
     ss.source_files         = podspec_sources("react/renderer/uimanager/*.{m,mm,cpp,h}", "react/renderer/uimanager/*.h")
     ss.header_dir           = "react/renderer/uimanager"
+  end
+
+  # Loom: the renderer module (react/renderer/loom/{binding,core,mounting,worker,text,host,compat}).
+  s.subspec "loomRenderer" do |ss|
+    ss.dependency             "React-Fabric/coreUmbrella"
+    ss.dependency             "React-Fabric/components/viewUmbrella"
+    ss.dependency             "React-Fabric/componentregistryUmbrella"
+    ss.dependency             "React-Fabric/consistency"
+    ss.source_files         = podspec_sources("react/renderer/loom/{binding,core,mounting,worker,text,host,compat}/**/*.{m,mm,cpp,h}", "react/renderer/loom/{binding,core,mounting,worker,text,host,compat}/**/*.h")
+    ss.header_dir           = ""
+    ss.header_mappings_dir  = "./"
   end
 
   # Loom: the library API (<react/loom/Loom.h>) and the build configuration header

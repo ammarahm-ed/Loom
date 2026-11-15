@@ -10,7 +10,7 @@
 // Only the Loom renderer build (LOOM_RENDERER) compiles this header; without it Fabric is untouched.
 #if LOOM_RENDERER
 
-#include <react/renderer/uimanager/LoomWorker.h>
+#include <react/renderer/loom/worker/LoomWorker.h>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -26,9 +26,9 @@
 #include <folly/dynamic.h>
 #include <jsi/jsi.h>
 #include <react/renderer/uimanager/UIManagerBinding.h>
-#include <react/renderer/uimanager/LoomCompat.h>
-#include <react/renderer/uimanager/LoomHost.h>
-#include <react/renderer/uimanager/LoomRenderer.h>
+#include <react/renderer/loom/compat/LoomCompat.h>
+#include <react/renderer/loom/host/LoomHost.h>
+#include <react/renderer/loom/core/LoomRenderer.h>
 
 namespace facebook::react {
 

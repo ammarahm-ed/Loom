@@ -618,6 +618,222 @@
     },
     {
       "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomApi.cpp",
+      "area": "misc",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomApiInternal.h",
+      "area": "misc",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBinding.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBinding.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomEventManager.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomEventManager.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomFabricBridge.cpp",
+      "area": "fabric-compat",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomFabricBridge.h",
+      "area": "fabric-compat",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/CMakeLists.txt",
+      "area": "build",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/compat/LoomCompat.cpp",
+      "area": "compat",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/compat/LoomCompat.h",
+      "area": "compat",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomGeometry.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRenderer.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRenderer.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererDOM.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererInternals.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererMetrics.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererText.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererTree.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomYoga.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/host/LoomHost.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/host/LoomPlatformTraits.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/host/LoomSettingsHost.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/host/LoomViewManagerNames.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/mounting/LoomLayoutAnimations.cpp",
+      "area": "fabric-compat",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/mounting/LoomLayoutAnimations.h",
+      "area": "fabric-compat",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/mounting/LoomMountBatch.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/tests/LoomRendererTest.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/tests/LoomTestTraits.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/tests/LoomWorkerTest.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/tests/TestUIManagerDelegate.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/text/LoomTextLayoutManagerServices.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/text/LoomTextMeasurement.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/text/LoomTextServices.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/worker/LoomWorker.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/worker/LoomWorkerProfile.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
       "file": "ReactCommon/react/renderer/LoomConfig.h",
       "area": "renderer-core",
       "layer": "core"
@@ -742,216 +958,6 @@
       "area": "text",
       "layer": "ios",
       "baseHash": "d0a90936f558925ef739068649a7ceed170bdd17791bfa59e477051870a1be4c"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomApi.cpp",
-      "area": "misc",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomApiInternal.h",
-      "area": "misc",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomBinding.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomBinding.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomCompat.cpp",
-      "area": "compat",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomCompat.h",
-      "area": "compat",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomEventManager.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomEventManager.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomFabricBridge.cpp",
-      "area": "fabric-compat",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomFabricBridge.h",
-      "area": "fabric-compat",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomGeometry.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomHost.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomLayoutAnimations.cpp",
-      "area": "fabric-compat",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomLayoutAnimations.h",
-      "area": "fabric-compat",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomMountBatch.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomPlatformTraits.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomRenderer.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomRenderer.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomRendererDOM.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomRendererInternals.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomRendererMetrics.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomRendererText.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomRendererTree.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomSettingsHost.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomTextLayoutManagerServices.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomTextMeasurement.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomTextServices.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomViewManagerNames.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomWorker.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomWorkerProfile.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/LoomYoga.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/tests/LoomRendererTest.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/tests/LoomTestTraits.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/tests/LoomWorkerTest.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/uimanager/tests/TestUIManagerDelegate.h",
-      "area": "renderer-core",
-      "layer": "core"
     },
     {
       "type": "patch",

@@ -3,8 +3,8 @@
 #include "LoomEventManager.h"
 
 #include <react/renderer/core/DynamicEventPayload.h>
-#include <react/renderer/uimanager/LoomPlatformTraits.h>
-#include "LoomWorkerProfile.h"
+#include <react/renderer/loom/host/LoomPlatformTraits.h>
+#include "../worker/LoomWorkerProfile.h"
 
 #include <mutex>
 #include <unordered_set>

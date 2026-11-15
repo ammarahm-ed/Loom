@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include <react/renderer/uimanager/LoomHost.h>
+#include <react/renderer/loom/host/LoomHost.h>
 #include <react/renderer/uimanager/UIManagerDelegate.h>
 
 namespace facebook::react {

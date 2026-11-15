@@ -13,10 +13,10 @@
 #include "LoomApiInternal.h"
 #include "LoomBinding.h"
 #include "LoomFabricBridge.h"
-#include "LoomLayoutAnimations.h"
-#include "LoomRendererInternals.h"
-#include "LoomSettingsHost.h"
-#include "LoomWorkerProfile.h"
+#include "../mounting/LoomLayoutAnimations.h"
+#include "../core/LoomRendererInternals.h"
+#include "../host/LoomSettingsHost.h"
+#include "../worker/LoomWorkerProfile.h"
 
 #include <algorithm>
 #include <chrono>

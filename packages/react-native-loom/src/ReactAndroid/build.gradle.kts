@@ -261,6 +261,7 @@ val preparePrefab by
                       Pair("../ReactCommon/react/renderer/scheduler/", "react/renderer/scheduler/"),
                       // react_renderer_uimanager
                       Pair("../ReactCommon/react/renderer/uimanager/", "react/renderer/uimanager/"),
+                      Pair("../ReactCommon/react/renderer/loom/", "react/renderer/loom/"),
                       // Loom: the build configuration header (<react/renderer/LoomConfig.h>) and the library API
                       // (<react/loom/Loom.h>)
                       Pair("../ReactCommon/react/loom/config/", "react/renderer/"),
@@ -362,6 +363,7 @@ val preparePrefab by
                       Pair("../ReactCommon/react/renderer/scheduler/", "react/renderer/scheduler/"),
                       Pair("../ReactCommon/react/renderer/telemetry/", "react/renderer/telemetry/"),
                       Pair("../ReactCommon/react/renderer/uimanager/", "react/renderer/uimanager/"),
+                      Pair("../ReactCommon/react/renderer/loom/", "react/renderer/loom/"),
                       // Loom: the build configuration header (<react/renderer/LoomConfig.h>) and the library API
                       // (<react/loom/Loom.h>)
                       Pair("../ReactCommon/react/loom/config/", "react/renderer/"),

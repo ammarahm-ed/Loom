@@ -7,7 +7,7 @@
 
 #include "FabricUIManagerBinding.h"
 #if LOOM_RENDERER
-#include <react/renderer/uimanager/LoomBinding.h>
+#include <react/renderer/loom/binding/LoomBinding.h>
 #endif
 
 #include "AndroidAnimationChoreographer.h"
@@ -49,8 +49,8 @@
 #include <algorithm>
 
 #if LOOM_RENDERER
-#include <react/renderer/uimanager/LoomRenderer.h>
-#include <react/renderer/uimanager/LoomHost.h>
+#include <react/renderer/loom/core/LoomRenderer.h>
+#include <react/renderer/loom/host/LoomHost.h>
 #include <mutex>
 #include <thread>
 #include "LoomAndroidHost.h"

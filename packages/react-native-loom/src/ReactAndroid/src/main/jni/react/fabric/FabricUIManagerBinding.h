@@ -22,7 +22,7 @@
 #include <react/renderer/uimanager/LayoutAnimationStatusDelegate.h>
 #include <react/renderer/uimanager/primitives.h>
 #if LOOM_RENDERER
-#include <react/renderer/uimanager/LoomRenderer.h>
+#include <react/renderer/loom/core/LoomRenderer.h>
 #endif
 
 #include "AndroidAnimationChoreographer.h"

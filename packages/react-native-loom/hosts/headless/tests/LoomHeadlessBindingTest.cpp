@@ -11,7 +11,7 @@
 #include <react/renderer/components/root/RootComponentDescriptor.h>
 #include <react/renderer/components/view/ViewComponentDescriptor.h>
 #include <react/renderer/core/EventDispatcher.h>
-#include <react/renderer/uimanager/LoomBinding.h>
+#include <react/renderer/loom/binding/LoomBinding.h>
 #include <react/renderer/uimanager/UIManager.h>
 
 #include "../LoomHeadlessHost.h"

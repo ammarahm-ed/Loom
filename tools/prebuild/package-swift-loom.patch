@@ -1,5 +1,5 @@
 diff --git a/packages/react-native/Package.swift b/packages/react-native/Package.swift
-index ac1611c..281c7c8 100644
+index ac1611c..d60a1b3 100644
 --- a/packages/react-native/Package.swift
 +++ b/packages/react-native/Package.swift
 @@ -18,6 +18,58 @@ let REMOVE_LEGACY_MODULE_INTEROP =
@@ -70,6 +70,15 @@ index ac1611c..281c7c8 100644
    searchPaths: [FBLazyVectorPath],
    dependencies: [.reactNativeDependencies, .yoga]
  )
+@@ -504,7 +556,7 @@ let reactFabric = RNTarget(
+     "scheduler/tests",
+   ],
+   dependencies: [.reactNativeDependencies, .reactJsiExecutor, .rctTypesafety, .reactTurboModuleCore, .jsi, .logger, .reactDebug, .reactFeatureFlags, .reactUtils, .reactRuntimeScheduler, .reactCxxReact, .reactRendererDebug, .reactGraphics, .reactRendererCss, .yoga, .reactJsInspectorTracing],
+-  sources: ["animated", "animationbackend", "animations", "attributedstring", "core", "componentregistry", "componentregistry/native", "components/root", "components/view", "components/view/platform/cxx", "components/scrollview", "components/scrollview/platform/cxx", "components/scrollview/platform/ios", "components/legacyviewmanagerinterop", "components/legacyviewmanagerinterop/platform/ios", "dom", "scheduler", "mounting", "observers/events", "observers/intersection", "observers/mutation", "observers/resize", "telemetry", "consistency", "leakchecker", "uimanager", "uimanager/consistency", "viewtransition"]
++  sources: ["animated", "animationbackend", "animations", "attributedstring", "core", "componentregistry", "componentregistry/native", "components/root", "components/view", "components/view/platform/cxx", "components/scrollview", "components/scrollview/platform/cxx", "components/scrollview/platform/ios", "components/legacyviewmanagerinterop", "components/legacyviewmanagerinterop/platform/ios", "dom", "scheduler", "mounting", "observers/events", "observers/intersection", "observers/mutation", "observers/resize", "telemetry", "consistency", "leakchecker", "uimanager", "uimanager/consistency", "loom/binding", "loom/core", "loom/mounting", "loom/worker", "loom/text", "loom/host", "loom/compat", "viewtransition"]
+ )
+ 
+ let reactFabricInputAccessory = RNTarget(
 @@ -761,6 +813,21 @@ let targets = [
  
  // MARK: Package object

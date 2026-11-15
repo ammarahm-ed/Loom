@@ -1,6 +1,6 @@
 /* Copyright (c) Meta Platforms, Inc. and its affiliates. */
 
-#include "LoomBinding.h"
+#include "../binding/LoomBinding.h"
 
 #if LOOM_RENDERER
 

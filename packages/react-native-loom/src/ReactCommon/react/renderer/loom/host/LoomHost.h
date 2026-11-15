@@ -23,10 +23,10 @@
 #include <react/renderer/core/State.h>
 #include <react/renderer/graphics/Rect.h>
 #include <react/renderer/graphics/Size.h>
-#include <react/renderer/uimanager/LoomMountBatch.h>
-#include <react/renderer/uimanager/LoomPlatformTraits.h>
-#include <react/renderer/uimanager/LoomTextServices.h>
-#include <react/renderer/uimanager/LoomTextMeasurement.h>
+#include <react/renderer/loom/mounting/LoomMountBatch.h>
+#include <react/renderer/loom/host/LoomPlatformTraits.h>
+#include <react/renderer/loom/text/LoomTextServices.h>
+#include <react/renderer/loom/text/LoomTextMeasurement.h>
 #include <react/utils/ContextContainer.h>
 
 namespace facebook::react {

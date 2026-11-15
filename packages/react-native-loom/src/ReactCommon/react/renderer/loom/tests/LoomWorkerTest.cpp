@@ -3,7 +3,7 @@
  * Licensed under the MIT license in the LICENSE file in the root directory.
  */
 #include <gtest/gtest.h>
-#include <react/renderer/uimanager/LoomWorker.h>
+#include <react/renderer/loom/worker/LoomWorker.h>
 #include "LoomTestTraits.h"
 #include <atomic>
 #include <chrono>

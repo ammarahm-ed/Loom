@@ -11,8 +11,8 @@
 #include <atomic>
 #include <memory>
 
-#include <react/renderer/uimanager/LoomHost.h>
-#include <react/renderer/uimanager/LoomTextLayoutManagerServices.h>
+#include <react/renderer/loom/host/LoomHost.h>
+#include <react/renderer/loom/text/LoomTextLayoutManagerServices.h>
 
 namespace facebook::react {
 

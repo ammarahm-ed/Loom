@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include <react/renderer/uimanager/LoomLayoutAnimations.h>
+#include <react/renderer/loom/mounting/LoomLayoutAnimations.h>
 #include <reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h>
 #include <reanimated/Tools/FeatureFlags.h>
 

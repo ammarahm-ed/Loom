@@ -117,6 +117,8 @@ add_react_common_subdir(react/renderer/scheduler)
 add_react_common_subdir(react/renderer/telemetry)
 add_react_common_subdir(react/renderer/viewtransition)
 add_react_common_subdir(react/renderer/uimanager)
+# Loom: the renderer module (LoomBinding and the core), an OBJECT library next to uimanager.
+add_react_common_subdir(react/renderer/loom)
 add_react_common_subdir(react/renderer/bridging)
 add_react_common_subdir(react/renderer/core)
 add_react_common_subdir(react/renderer/consistency)
@@ -227,8 +229,8 @@ if(LOOM_BUILD_CPP_TESTS)
   add_subdirectory("${ANDROID_GTEST_DIR}" "third-party/googletest")
 
   add_executable(ui_thread_renderer_tests EXCLUDE_FROM_ALL
-          ${REACT_COMMON_DIR}/react/renderer/uimanager/tests/LoomRendererTest.cpp
-          ${REACT_COMMON_DIR}/react/renderer/uimanager/tests/LoomWorkerTest.cpp
+          ${REACT_COMMON_DIR}/react/renderer/loom/tests/LoomRendererTest.cpp
+          ${REACT_COMMON_DIR}/react/renderer/loom/tests/LoomWorkerTest.cpp
   )
   target_include_directories(ui_thread_renderer_tests PRIVATE ${REACT_COMMON_DIR})
   target_compile_reactnative_options(ui_thread_renderer_tests PRIVATE)
@@ -240,6 +242,7 @@ if(LOOM_BUILD_CPP_TESTS)
           gtest_main
           react_renderer_attributedstring
           react_renderer_uimanager
+          react_renderer_loom
           react_renderer_componentregistry
           react_renderer_consistency
           react_renderer_uimanager_consistency
@@ -403,6 +406,7 @@ add_library(reactnative
           $<TARGET_OBJECTS:react_renderer_telemetry>
           $<TARGET_OBJECTS:react_renderer_textlayoutmanager>
           $<TARGET_OBJECTS:react_renderer_uimanager>
+          $<TARGET_OBJECTS:react_renderer_loom>
           $<TARGET_OBJECTS:react_renderer_uimanager_consistency>
           $<$<NOT:$<BOOL:${LOOM_CUT_FABRIC}>>:$<TARGET_OBJECTS:react_renderer_viewtransition>>
           $<TARGET_OBJECTS:react_tracingjni>
@@ -521,6 +525,7 @@ target_include_directories(reactnative
         $<TARGET_PROPERTY:react_renderer_telemetry,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:react_renderer_textlayoutmanager,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:react_renderer_uimanager,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:react_renderer_loom,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:react_renderer_uimanager_consistency,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:react_renderer_viewtransition,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:react_tracingjni,INTERFACE_INCLUDE_DIRECTORIES>

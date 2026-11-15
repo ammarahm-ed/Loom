@@ -30,9 +30,9 @@
 #include <react/featureflags/ReactNativeFeatureFlags.h>
 #include <react/featureflags/ReactNativeFeatureFlagsDefaults.h>
 #include <react/renderer/animationbackend/AnimatedProps.h>
-#include <react/renderer/uimanager/LoomRenderer.h>
-#include <react/renderer/uimanager/LoomBinding.h>
-#include <react/renderer/uimanager/LoomWorker.h>
+#include <react/renderer/loom/core/LoomRenderer.h>
+#include <react/renderer/loom/binding/LoomBinding.h>
+#include <react/renderer/loom/worker/LoomWorker.h>
 
 namespace facebook::react {
 

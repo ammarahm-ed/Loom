@@ -19,8 +19,8 @@
 #include <vector>
 
 #include <folly/dynamic.h>
-#include <react/renderer/uimanager/LoomHost.h>
-#include <react/renderer/uimanager/LoomTextServices.h>
+#include <react/renderer/loom/host/LoomHost.h>
+#include <react/renderer/loom/text/LoomTextServices.h>
 
 namespace facebook::react {
 

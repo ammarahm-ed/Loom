@@ -21,8 +21,8 @@
 #include <react/renderer/attributedstring/ParagraphAttributes.h>
 #include <react/renderer/mapbuffer/MapBuffer.h>
 #include <react/renderer/mounting/ShadowView.h>
-#include <react/renderer/uimanager/LoomMountBatch.h>
-#include <react/renderer/uimanager/LoomTextMeasurement.h>
+#include <react/renderer/loom/mounting/LoomMountBatch.h>
+#include <react/renderer/loom/text/LoomTextMeasurement.h>
 #include <react/renderer/uimanager/primitives.h>
 
 namespace facebook::react {

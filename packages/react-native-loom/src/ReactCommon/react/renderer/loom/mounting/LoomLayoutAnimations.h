@@ -11,7 +11,7 @@
 
 #include <react/renderer/core/ReactPrimitives.h>
 #include <react/renderer/graphics/Rect.h>
-#include <react/renderer/uimanager/LoomMountBatch.h>
+#include <react/renderer/loom/mounting/LoomMountBatch.h>
 
 namespace facebook::react {
 

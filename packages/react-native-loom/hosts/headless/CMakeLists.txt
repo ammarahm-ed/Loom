@@ -30,10 +30,10 @@ if(NOT LOOM_REACT_NATIVE_DIR)
       "${CMAKE_CURRENT_LIST_DIR}/../../../../apps/loom-test-app/node_modules/.loom/react-native")
 endif()
 file(REAL_PATH "${LOOM_REACT_NATIVE_DIR}" LOOM_REACT_NATIVE_DIR)
-if(NOT EXISTS "${LOOM_REACT_NATIVE_DIR}/ReactCommon/react/renderer/uimanager/LoomHost.h")
+if(NOT EXISTS "${LOOM_REACT_NATIVE_DIR}/ReactCommon/react/renderer/loom/host/LoomHost.h")
   message(FATAL_ERROR
       "LOOM_REACT_NATIVE_DIR=${LOOM_REACT_NATIVE_DIR} is not a materialized Loom tree "
-      "(uimanager/LoomHost.h is missing). Run `loom materialize` first.")
+      "(loom/host/LoomHost.h is missing). Run `loom materialize` first.")
 endif()
 
 # The switches the Loom sources branch on (see cmake-utils/react-native-flags.cmake).
@@ -92,6 +92,7 @@ set(LOOM_RN_SUBDIRS
     react/renderer/textlayoutmanager
     react/renderer/uimanager
     react/renderer/uimanager/consistency
+    react/renderer/loom
     react/timing
     react/utils
     reactperflogger
@@ -152,8 +153,8 @@ target_compile_reactnative_options(loom-core PRIVATE)
 enable_testing()
 
 add_executable(loom-core-tests
-    "${REACT_COMMON_DIR}/react/renderer/uimanager/tests/LoomRendererTest.cpp"
-    "${REACT_COMMON_DIR}/react/renderer/uimanager/tests/LoomWorkerTest.cpp")
+    "${REACT_COMMON_DIR}/react/renderer/loom/tests/LoomRendererTest.cpp"
+    "${REACT_COMMON_DIR}/react/renderer/loom/tests/LoomWorkerTest.cpp")
 target_compile_reactnative_options(loom-core-tests PRIVATE)
 target_link_libraries(loom-core-tests PRIVATE loom-core GTest::gtest_main)
 add_test(NAME loom-core-tests COMMAND loom-core-tests)

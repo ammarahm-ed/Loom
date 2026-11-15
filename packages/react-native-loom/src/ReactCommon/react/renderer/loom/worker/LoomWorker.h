@@ -3,7 +3,7 @@
  * Licensed under the MIT license in the LICENSE file.
  */
 #pragma once
-#include "LoomPlatformTraits.h"
+#include "../host/LoomPlatformTraits.h"
 #include "LoomWorkerProfile.h"
 
 #include <atomic>

@@ -21,7 +21,7 @@
 #import "PlatformRunLoopObserver.h"
 #import "RCTConversions.h"
 #if LOOM_RENDERER
-#import <react/renderer/uimanager/LoomBinding.h>
+#import <react/renderer/loom/binding/LoomBinding.h>
 #endif
 
 using namespace facebook::react;

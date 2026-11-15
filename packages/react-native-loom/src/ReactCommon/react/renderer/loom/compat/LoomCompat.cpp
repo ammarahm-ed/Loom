@@ -1,7 +1,7 @@
 /* Copyright (c) Meta Platforms, Inc. and affiliates. */
 
 #include "LoomCompat.h"
-#include "LoomPlatformTraits.h"
+#include "../host/LoomPlatformTraits.h"
 
 #if LOOM_RENDERER
 

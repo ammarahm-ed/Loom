@@ -18,7 +18,7 @@
 #include <utility>
 
 #include <react/renderer/runtimescheduler/LoomRuntimeHooks.h>
-#include <react/renderer/uimanager/LoomTextMeasurement.h>
+#include <react/renderer/loom/text/LoomTextMeasurement.h>
 
 namespace facebook::react {
 
