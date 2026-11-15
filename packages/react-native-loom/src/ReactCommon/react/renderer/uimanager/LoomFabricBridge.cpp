@@ -354,6 +354,41 @@ std::optional<LayoutMetrics> LoomBinding::relativeLayoutMetrics(
   return result;
 }
 
+bool LoomBinding::apiRead(
+    SurfaceId surfaceId,
+    const std::function<void(const LoomRenderer&, const SurfaceConstraints&)>&
+        read) {
+  return withSurfaceRenderer(
+      surfaceId,
+      [&](LoomBinding& binding,
+          const std::shared_ptr<LoomRenderer>& liveRenderer) {
+        binding.synchronizeForFabricRead();
+        read(*liveRenderer, binding.constraintsFor(surfaceId));
+      });
+}
+
+void LoomBinding::apiUpdateProps(
+    SurfaceId surfaceId,
+    Tag tag,
+    folly::dynamic props) {
+  withSurfaceRenderer(
+      surfaceId,
+      [&](LoomBinding& binding,
+          const std::shared_ptr<LoomRenderer>& liveRenderer) {
+        binding.synchronizeForFabricRead();
+        if (!liveRenderer->exists(tag)) {
+          return;
+        }
+#if LOOM_WORKER
+        auto token = binding.tokenFor(surfaceId);
+        binding.stageNativeProps(
+            tag, liveRenderer->identityOf(tag), token, std::move(props));
+#else
+        liveRenderer->setNativeProps(tag, props);
+#endif
+      });
+}
+
 std::optional<ShadowTreeCommitStatus> LoomBinding::commitOnDemand(
     const ShadowTree& shadowTree,
     const ShadowTreeCommitTransaction& transaction) {

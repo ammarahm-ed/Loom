@@ -1,0 +1,745 @@
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ *
+ * @flow
+ * @format
+ */
+
+/*::
+export type PodSpecConfiguration = Readonly<{
+  name: string,
+  headerPatterns: Array<string>,
+  headerDir?: string,
+  excludePatterns?: Array<string>,
+  subSpecs?: ReadonlyArray<PodSpecConfiguration>,
+  preservePaths?: Array<string>,
+} | {disabled: true}>;
+*/
+
+const PodspecExceptions /*: {[key: string]: PodSpecConfiguration} */ = {
+  'ReactCommon/jsi/React-jsi.podspec': {
+    name: 'React-jsi',
+    headerPatterns: ['**/*.h'],
+    headerDir: 'jsi',
+    excludePatterns: ['**/test/*'],
+  },
+  'ReactCommon/react/bridging/React-bridging.podspec': {
+    name: 'React-bridging',
+    headerPatterns: ['**/*.h'],
+    excludePatterns: ['React/**', 'tests/**'],
+    headerDir: 'react/bridging',
+    subSpecs: [
+      {
+        name: 'bridgingUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'ReactCommon/hermes/React-hermes.podspec': {
+    name: 'React-hermes',
+    headerPatterns: [
+      'executor/*.h',
+      'inspector-modern/chrome/*.h',
+      'executor/HermesExecutorFactory.h',
+    ],
+    headerDir: 'reacthermes',
+  },
+  'ReactCommon/React-Fabric.podspec': {
+    name: 'React-Fabric',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'animated',
+        headerPatterns: ['react/renderer/animated/**/*.h'],
+        excludePatterns: ['react/renderer/animated/tests'],
+        headerDir: 'react/renderer/animated',
+      },
+
+      {
+        name: 'animations',
+        headerPatterns: ['react/renderer/animations/**/*.h'],
+        excludePatterns: ['react/renderer/animations/tests'],
+        headerDir: 'react/renderer/animations',
+      },
+
+      {
+        name: 'animationbackend',
+        headerPatterns: ['react/renderer/animationbackend/**/*.h'],
+        headerDir: 'react/renderer/animationbackend',
+      },
+
+      {
+        name: 'attributedstring',
+        headerPatterns: ['react/renderer/attributedstring/**/*.h'],
+        excludePatterns: ['react/renderer/attributedstring/tests'],
+        headerDir: 'react/renderer/attributedstring',
+      },
+
+      {
+        name: 'bridging',
+        headerPatterns: ['react/renderer/bridging/**/*.h'],
+        excludePatterns: ['react/renderer/bridging/tests'],
+        headerDir: 'react/renderer/bridging',
+      },
+
+      {
+        name: 'core',
+        headerPatterns: ['react/renderer/core/**/*.h'],
+        excludePatterns: [
+          'react/renderer/core/tests',
+          'react/renderer/core/React',
+        ],
+        headerDir: 'react/renderer/core',
+      },
+
+      {
+        name: 'coreUmbrella',
+        headerPatterns: ['react/renderer/core/React/*.h'],
+        headerDir: 'React',
+      },
+
+      {
+        name: 'componentregistry',
+        headerPatterns: ['react/renderer/componentregistry/*.h'],
+        headerDir: 'react/renderer/componentregistry',
+      },
+
+      {
+        name: 'componentregistryUmbrella',
+        headerPatterns: ['react/renderer/componentregistry/React/*.h'],
+        headerDir: 'React',
+      },
+
+      {
+        name: 'componentregistrynative',
+        headerPatterns: ['react/renderer/componentregistry/native/**/*.h'],
+        headerDir: 'react/renderer/componentregistry/native',
+      },
+
+      {
+        name: 'components',
+        headerPatterns: [],
+        headerDir: '',
+        subSpecs: [
+          {
+            name: 'root',
+            headerPatterns: ['react/renderer/components/root/**/*.h'],
+            excludePatterns: ['react/renderer/components/root/tests'],
+            headerDir: 'react/renderer/components/root',
+          },
+          {
+            name: 'view',
+            headerPatterns: [
+              'react/renderer/components/view/*.h',
+              'react/renderer/components/view/platform/cxx/**/*.h',
+            ],
+            headerDir: 'react/renderer/components/view',
+          },
+
+          {
+            name: 'viewUmbrella',
+            headerPatterns: ['react/renderer/components/view/React/*.h'],
+            headerDir: 'React',
+          },
+
+          {
+            name: 'scrollview',
+            headerPatterns: ['react/renderer/components/scrollview/**/*.h'],
+            headerDir: 'react/renderer/components/scrollview',
+            excludePatterns: [
+              'react/renderer/components/scrollview/tests',
+              'react/renderer/components/scrollview/platform/android',
+            ],
+          },
+
+          {
+            name: 'legacyviewmanagerinterop',
+            headerPatterns: [
+              'react/renderer/components/legacyviewmanagerinterop/**/*.h',
+            ],
+            excludePatterns: [
+              'react/renderer/components/legacyviewmanagerinterop/tests',
+            ],
+            headerDir: 'react/renderer/components/legacyviewmanagerinterop',
+          },
+        ],
+      },
+
+      {
+        name: 'dom',
+        headerPatterns: ['react/renderer/dom/**/*.h'],
+        excludePatterns: ['react/renderer/dom/tests'],
+        headerDir: 'react/renderer/dom',
+      },
+
+      {
+        name: 'scheduler',
+        headerPatterns: ['react/renderer/scheduler/**/*.h'],
+        headerDir: 'react/renderer/scheduler',
+      },
+
+      {
+        name: 'imagemanager',
+        headerPatterns: [
+          'react/renderer/imagemanager/*.h',
+          'react/renderer/imagemanager/platform/ios/react/renderer/imagemanager/ImageRequestParams.h',
+        ],
+        headerDir: 'react/renderer/imagemanager',
+      },
+
+      {
+        name: 'imagemanagerUmbrella',
+        headerPatterns: ['react/renderer/imagemanager/React/*.h'],
+        headerDir: 'React',
+      },
+
+      {
+        name: 'mounting',
+        headerPatterns: ['react/renderer/mounting/**/*.h'],
+        excludePatterns: ['react/renderer/mounting/tests'],
+        headerDir: 'react/renderer/mounting',
+      },
+
+      {
+        name: 'observers',
+        headerPatterns: [],
+        subSpecs: [
+          {
+            name: 'events',
+            headerPatterns: ['react/renderer/observers/events/**/*.h'],
+            excludePatterns: ['react/renderer/observers/events/tests'],
+            headerDir: 'react/renderer/observers/events',
+          },
+        ],
+      },
+
+      {
+        name: 'templateprocessor',
+        headerPatterns: ['react/renderer/templateprocessor/**/*.h'],
+        excludePatterns: ['react/renderer/templateprocessor/tests'],
+        headerDir: 'react/renderer/templateprocessor',
+      },
+
+      {
+        name: 'telemetry',
+        headerPatterns: ['react/renderer/telemetry/**/*.h'],
+        excludePatterns: ['react/renderer/telemetry/tests'],
+        headerDir: 'react/renderer/telemetry',
+      },
+
+      {
+        name: 'consistency',
+        headerPatterns: ['react/renderer/consistency/**/*.h'],
+        headerDir: 'react/renderer/consistency',
+      },
+
+      {
+        name: 'uimanager',
+        subSpecs: [
+          {
+            name: 'consistency',
+            headerPatterns: ['react/renderer/uimanager/consistency/*.h'],
+            headerDir: 'react/renderer/uimanager/consistency',
+          },
+        ],
+
+        headerPatterns: ['react/renderer/uimanager/*.h'],
+        headerDir: 'react/renderer/uimanager',
+      },
+
+      // Loom: the library API (<react/loom/Loom.h>) and the build configuration header
+      // (<react/renderer/LoomConfig.h>, kept in loom/config so it can be published at that path).
+      {
+        name: 'loom',
+        headerPatterns: ['react/loom/*.h'],
+        headerDir: 'react/loom',
+      },
+      {
+        name: 'loomConfig',
+        headerPatterns: ['react/loom/config/*.h'],
+        headerDir: 'react/renderer',
+      },
+
+      {
+        name: 'leakchecker',
+        headerPatterns: ['react/renderer/leakchecker/**/*.h'],
+        excludePatterns: ['react/renderer/leakchecker/tests'],
+        headerDir: 'react/renderer/leakchecker',
+      },
+
+      {
+        name: 'viewtransition',
+        headerPatterns: ['react/renderer/viewtransition/**/*.h'],
+        headerDir: 'react/renderer/viewtransition',
+      },
+    ],
+  },
+  // Yoga should preserve its directory structure
+  'ReactCommon/yoga/Yoga.podspec': {
+    name: 'Yoga',
+    headerPatterns: ['yoga/**/*.h'],
+    headerDir: 'yoga',
+    preservePaths: ['yoga/**/*.h'],
+  },
+
+  // ReactCommon.podspec has multiple subspecs with different header_dir values
+  // that the generic parser cannot handle (it only extracts the first header_dir).
+  'ReactCommon/ReactCommon.podspec': {
+    name: 'ReactCommon',
+    headerPatterns: [],
+    headerDir: 'ReactCommon',
+    subSpecs: [
+      {
+        name: 'bridging',
+        headerPatterns: ['react/bridging/**/*.h'],
+        excludePatterns: ['react/bridging/React/**', 'react/bridging/tests/**'],
+        headerDir: 'react/bridging',
+        subSpecs: [
+          {
+            name: 'bridgingUmbrella',
+            headerPatterns: ['react/bridging/React/*.h'],
+            headerDir: 'React',
+          },
+        ],
+      },
+      {
+        name: 'core',
+        headerPatterns: ['react/nativemodule/core/ReactCommon/**/*.h'],
+        headerDir: 'ReactCommon',
+      },
+      {
+        name: 'coreUmbrella',
+        headerPatterns: ['react/nativemodule/core/React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+
+  // these podspecs set `header_dir` via Ruby variables, which the generic
+  // podspec parser cannot infer. Add explicit exceptions so headers are emitted under
+  // the expected `jsinspector-modern/...` include paths.
+  'React/Runtime/React-RCTRuntime.podspec': {
+    name: 'React-RCTRuntime',
+    headerPatterns: ['*.h'],
+    headerDir: 'React',
+  },
+
+  'ReactCommon/jsinspector-modern/React-jsinspector.podspec': {
+    name: 'React-jsinspector',
+    headerPatterns: ['*.h'],
+    headerDir: 'jsinspector-modern',
+  },
+  'ReactCommon/jsinspector-modern/cdp/React-jsinspectorcdp.podspec': {
+    name: 'React-jsinspectorcdp',
+    headerPatterns: ['*.h'],
+    headerDir: 'jsinspector-modern/cdp',
+  },
+  'ReactCommon/jsinspector-modern/network/React-jsinspectornetwork.podspec': {
+    name: 'React-jsinspectornetwork',
+    headerPatterns: ['*.h'],
+    headerDir: 'jsinspector-modern/network',
+  },
+  'ReactCommon/jsinspector-modern/tracing/React-jsinspectortracing.podspec': {
+    name: 'React-jsinspectortracing',
+    headerPatterns: ['*.h'],
+    headerDir: 'jsinspector-modern/tracing',
+  },
+  'React/React-RCTFabric.podspec': {
+    name: 'React-RCTFabric',
+    headerPatterns: ['Fabric/**/*.h'],
+    headerDir: 'React',
+  },
+
+  'React/React-RCTFBReactNativeSpec.podspec': {
+    name: 'React-RCTFBReactNativeSpec',
+    headerPatterns: ['FBReactNativeSpec/**/*.h'],
+    headerDir: 'FBReactNativeSpec',
+    excludePatterns: ['FBReactNativeSpec/react/renderer/components/**'],
+    subSpecs: [
+      {
+        name: 'components',
+        headerPatterns: [
+          'FBReactNativeSpec/react/renderer/components/FBReactNativeSpec/**/*.h',
+        ],
+        headerDir: 'react/renderer/components/FBReactNativeSpec',
+      },
+    ],
+  },
+  'ReactCommon/React-FabricComponents.podspec': {
+    name: 'React-FabricComponents',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'components',
+        headerPatterns: [],
+        headerDir: '',
+        subSpecs: [
+          {
+            name: 'inputaccessory',
+            headerPatterns: ['react/renderer/components/inputaccessory/**/*.h'],
+            excludePatterns: ['react/renderer/components/inputaccessory/tests'],
+            headerDir: 'react/renderer/components/inputaccessory',
+          },
+
+          {
+            name: 'modal',
+            headerPatterns: ['react/renderer/components/modal/*.h'],
+            excludePatterns: ['react/renderer/components/modal/tests'],
+            headerDir: 'react/renderer/components/modal',
+          },
+
+          {
+            name: 'safeareaview',
+            headerPatterns: ['react/renderer/components/safeareaview/**/*.h'],
+            excludePatterns: ['react/renderer/components/safeareaview/tests'],
+            headerDir: 'react/renderer/components/safeareaview',
+          },
+
+          {
+            name: 'scrollview',
+            headerPatterns: [
+              'react/renderer/components/scrollview/*.h',
+              'react/renderer/components/scrollview/platform/cxx/**/*.h',
+            ],
+            excludePatterns: ['react/renderer/components/scrollview/tests'],
+            headerDir: 'react/renderer/components/scrollview',
+          },
+
+          {
+            name: 'text',
+            headerPatterns: [
+              'react/renderer/components/text/*.h',
+              'react/renderer/components/text/platform/cxx/**/*.h',
+            ],
+            headerDir: 'react/renderer/components/text',
+          },
+
+          {
+            name: 'iostextinput',
+            headerPatterns: [
+              'react/renderer/components/textinput/*.h',
+              'react/renderer/components/textinput/platform/ios/**/*.h',
+            ],
+            headerDir: 'react/renderer/components/iostextinput',
+          },
+
+          {
+            name: 'switch',
+            headerPatterns: [
+              'react/renderer/components/switch/iosswitch/**/*.h',
+            ],
+            excludePatterns: [
+              'react/renderer/components/switch/iosswitch/**/MacOS*.{m,mm,cpp,h}',
+            ],
+            headerDir: 'react/renderer/components/switch/',
+          },
+
+          {
+            name: 'textinput',
+            headerPatterns: ['react/renderer/components/textinput/**/*.h'],
+            headerDir: 'react/renderer/components/textinput',
+          },
+
+          {
+            name: 'unimplementedview',
+            headerPatterns: [
+              'react/renderer/components/unimplementedview/**/*.h',
+            ],
+            excludePatterns: [
+              'react/renderer/components/unimplementedview/tests',
+            ],
+            headerDir: 'react/renderer/components/unimplementedview',
+          },
+
+          {
+            name: 'virtualview',
+            headerPatterns: [
+              'react/renderer/components/virtualview/**/*.{m,mm,cpp,h}',
+            ],
+            excludePatterns: ['react/renderer/components/virtualview/tests'],
+            headerDir: 'react/renderer/components/virtualview',
+          },
+
+          {
+            name: 'virtualviewexperimental',
+            headerPatterns: [
+              'react/renderer/components/virtualviewexperimental/**/*.h',
+            ],
+            excludePatterns: [
+              'react/renderer/components/virtualviewexperimental/tests',
+            ],
+            headerDir: 'react/renderer/components/virtualviewexperimental',
+          },
+
+          {
+            name: 'rncore',
+            headerPatterns: ['react/renderer/components/rncore/**/*.h'],
+            headerDir: 'react/renderer/components/rncore',
+          },
+        ],
+      },
+      {
+        name: 'textlayoutmanager',
+
+        headerPatterns: [
+          'react/renderer/textlayoutmanager/platform/ios/**/*.h',
+          'react/renderer/textlayoutmanager/*.h',
+        ],
+        excludePatterns: [
+          'react/renderer/textlayoutmanager/tests',
+          'react/renderer/textlayoutmanager/platform/android',
+          'react/renderer/textlayoutmanager/platform/cxx',
+        ],
+        headerDir: 'react/renderer/textlayoutmanager',
+      },
+    ],
+  },
+  'ReactCommon/React-FabricImage.podspec': {
+    name: 'React-FabricImage',
+    headerPatterns: ['react/renderer/components/image/**/*.h'],
+    excludePatterns: [
+      'react/renderer/components/image/tests',
+      'react/renderer/components/image/React',
+    ],
+    headerDir: 'react/renderer/components/image',
+    subSpecs: [
+      {
+        name: 'imageUmbrella',
+        headerPatterns: ['react/renderer/components/image/React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'ReactCommon/React-Mapbuffer.podspec': {
+    name: 'React-Mapbuffer',
+    headerPatterns: ['react/renderer/mapbuffer/**/*.h'],
+    excludePatterns: [
+      'react/renderer/mapbuffer/tests',
+      'react/renderer/mapbuffer/React',
+    ],
+    headerDir: 'react/renderer/mapbuffer',
+    subSpecs: [
+      {
+        name: 'mapbufferUmbrella',
+        headerPatterns: ['react/renderer/mapbuffer/React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'ReactCommon/callinvoker/React-callinvoker.podspec': {
+    name: 'React-callinvoker',
+    headerPatterns: ['**/*.h'],
+    excludePatterns: ['React/**'],
+    headerDir: 'ReactCommon',
+    subSpecs: [
+      {
+        name: 'callinvokerUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'ReactCommon/react/debug/React-debug.podspec': {
+    name: 'React-debug',
+    headerPatterns: ['*.h'],
+    headerDir: 'react/debug',
+    subSpecs: [
+      {
+        name: 'debugUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+      {
+        name: 'redbox',
+        headerPatterns: ['redbox/*.h'],
+        headerDir: 'react/debug/redbox',
+      },
+    ],
+  },
+  'ReactCommon/react/renderer/graphics/React-graphics.podspec': {
+    name: 'React-graphics',
+    headerPatterns: ['*.h', 'platform/ios/**/*.h'],
+    headerDir: 'react/renderer/graphics',
+    subSpecs: [
+      {
+        name: 'graphicsUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'React-Core.podspec': {
+    name: 'React-Core',
+    headerPatterns: [],
+    headerDir: 'React',
+    subSpecs: [
+      {
+        name: 'Default',
+        headerPatterns: ['React/**/*.h'],
+        excludePatterns: [
+          'React/CoreModules/**/*',
+          'React/DevSupport/**/*',
+          'React/Fabric/**/*',
+          'React/FBReactNativeSpec/**/*',
+          'React/Tests/**/*',
+          'React/Inspector/**/*',
+          'React/Runtime/**/*',
+          'React/CxxBridge/JSCExecutorFactory.h',
+        ],
+      },
+      {
+        name: 'DevSupport',
+        headerPatterns: ['React/DevSupport/*.h', 'React/Inspector/*.h'],
+      },
+      {name: 'RCTWebSocket', headerPatterns: ['Libraries/WebSocket/*.h']},
+      {
+        name: 'CoreModulesHeaders',
+        headerPatterns: ['React/CoreModules/**/*.h'],
+      },
+      {
+        name: 'RCTActionSheetHeaders',
+        headerPatterns: ['Libraries/ActionSheetIOS/*.h'],
+      },
+      {
+        name: 'RCTAnimationHeaders',
+        headerPatterns: ['Libraries/NativeAnimation/{Drivers/*,Nodes/*,*}.h'],
+      },
+      {
+        name: 'RCTBlobHeaders',
+        headerPatterns: [
+          'Libraries/Blob/{RCTBlobManager,RCTFileReaderModule}.h',
+        ],
+      },
+      {name: 'RCTImageHeaders', headerPatterns: ['Libraries/Image/*.h']},
+      {
+        name: 'RCTLinkingHeaders',
+        headerPatterns: ['Libraries/LinkingIOS/*.h'],
+      },
+      {name: 'RCTNetworkHeaders', headerPatterns: ['Libraries/Network/*.h']},
+      {
+        name: 'RCTPushNotificationHeaders',
+        headerPatterns: ['Libraries/PushNotificationIOS/*.h'],
+      },
+      {
+        name: 'RCTSettingsHeaders',
+        headerPatterns: ['Libraries/Settings/*.h'],
+      },
+      {name: 'RCTTextHeaders', headerPatterns: ['Libraries/Text/**/*.h']},
+      {
+        name: 'RCTVibrationHeaders',
+        headerPatterns: ['Libraries/Vibration/*.h'],
+      },
+    ],
+  },
+  'React.podspec': {disabled: true},
+  'ReactCommon/react/timing/React-timing.podspec': {
+    name: 'React-timing',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'timing',
+        headerPatterns: ['*.h'],
+        headerDir: 'react/timing',
+      },
+      {
+        name: 'timingUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'Libraries/PushNotificationIOS/React-RCTPushNotification.podspec': {
+    disabled: true,
+  },
+  'ReactCommon/react/renderer/css/React-renderercss.podspec': {
+    name: 'React-renderercss',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'css',
+        headerPatterns: ['*.h'],
+        headerDir: 'react/renderer/css',
+      },
+    ],
+  },
+  'ReactCommon/react/utils/React-utils.podspec': {
+    name: 'React-utils',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'utils',
+        headerPatterns: ['*.h', 'platform/ios/**/*.h'],
+        excludePatterns: ['tests', 'React'],
+        headerDir: 'react/utils',
+      },
+      {
+        name: 'utilsUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'ReactCommon/cxxreact/React-cxxreact.podspec': {
+    name: 'React-cxxreact',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'cxxreact',
+        headerPatterns: ['*.h'],
+        headerDir: 'cxxreact',
+      },
+      {
+        name: 'cxxreactUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'ReactCommon/runtimeexecutor/React-runtimeexecutor.podspec': {
+    name: 'React-runtimeexecutor',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'runtimeexecutor',
+        headerPatterns: ['ReactCommon/*.h', 'platform/ios/**/*.h'],
+        excludePatterns: ['React'],
+        headerDir: 'ReactCommon',
+      },
+      {
+        name: 'runtimeexecutorUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+  'ReactCommon/react/renderer/debug/React-rendererdebug.podspec': {
+    name: 'React-rendererdebug',
+    headerPatterns: [],
+    headerDir: '',
+    subSpecs: [
+      {
+        name: 'debug',
+        headerPatterns: ['*.h'],
+        headerDir: 'react/renderer/debug',
+      },
+      {
+        name: 'debugUmbrella',
+        headerPatterns: ['React/*.h'],
+        headerDir: 'React',
+      },
+    ],
+  },
+};
+
+module.exports = {PodspecExceptions};

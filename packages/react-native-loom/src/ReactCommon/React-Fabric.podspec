@@ -29,9 +29,10 @@ Pod::Spec.new do |s|
   s.source                 = source
   s.source_files           = podspec_sources("dummyFile.cpp", "")
   direct_renderer_enabled = ENV["RCT_LOOM_RENDERER_IOS"] == "1"
-  direct_renderer_worker_enabled = ENV["RCT_LOOM_WORKER_IOS"] == "1"
+  # The worker is on by default with the Loom renderer; RCT_LOOM_WORKER_IOS=0 turns it off.
+  direct_renderer_worker_enabled = ENV["RCT_LOOM_WORKER_IOS"] ? ENV["RCT_LOOM_WORKER_IOS"] == "1" : ENV["RCT_LOOM_RENDERER_IOS"] == "1"
   abort 'RCT_LOOM_WORKER_IOS requires RCT_LOOM_RENDERER_IOS=1' if direct_renderer_worker_enabled && !direct_renderer_enabled
-  loom_js = ENV["RCT_LOOM_JS_IOS"] || "main"
+  loom_js = ENV["RCT_LOOM_JS_IOS"] || "background"
   abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
   abort 'RCT_LOOM_JS_IOS=background requires RCT_LOOM_WORKER_IOS=1' if direct_renderer_enabled && loom_js == "background" && !direct_renderer_worker_enabled
   fabric_definitions = ["$(inherited)"]
@@ -290,6 +291,21 @@ Pod::Spec.new do |s|
     ss.dependency             "React-Fabric/components/viewUmbrella"
     ss.source_files         = podspec_sources("react/renderer/uimanager/*.{m,mm,cpp,h}", "react/renderer/uimanager/*.h")
     ss.header_dir           = "react/renderer/uimanager"
+  end
+
+  # Loom: the library API (<react/loom/Loom.h>) and the build configuration header
+  # (<react/renderer/LoomConfig.h>, which lives in loom/config so it can be published at that path).
+  s.subspec "loom" do |ss|
+    ss.dependency             "React-Fabric/animationbackend"
+    ss.dependency             "React-Fabric/coreUmbrella"
+    ss.dependency             "React-runtimescheduler"
+    ss.source_files         = podspec_sources("react/loom/*.h", "react/loom/*.h")
+    ss.header_dir           = "react/loom"
+  end
+
+  s.subspec "loomConfig" do |ss|
+    ss.source_files         = podspec_sources("react/loom/config/*.h", "react/loom/config/*.h")
+    ss.header_dir           = "react/renderer"
   end
 
   s.subspec "leakchecker" do |ss|
