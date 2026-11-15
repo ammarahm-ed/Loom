@@ -242,7 +242,7 @@ struct LoomPlatformTraits {
   void (*withWorkerScope)(const std::function<void()>&){nullptr};
 
   static const LoomPlatformTraits& current() {
-    const auto* installed = installedTraits().load(std::memory_order_acquire);
+    const auto* installed = installed_.load(std::memory_order_acquire);
     return installed != nullptr ? *installed : defaults();
   }
 
@@ -252,7 +252,7 @@ struct LoomPlatformTraits {
    */
   static void install(LoomPlatformTraits traits) {
     LoomRuntimeHooks::install(traits.runtime);
-    installedTraits().store(
+    installed_.store(
         new LoomPlatformTraits(std::move(traits)), std::memory_order_release);
   }
 
@@ -260,11 +260,19 @@ struct LoomPlatformTraits {
     return isUIThread == nullptr || isUIThread();
   }
 
- private:
-  static std::atomic<const LoomPlatformTraits*>& installedTraits() {
-    static std::atomic<const LoomPlatformTraits*> installed{nullptr};
-    return installed;
+  /** True once a host installed traits (false means `current()` is the defaults). */
+  static bool isInstalled() {
+    return installed_.load(std::memory_order_acquire) != nullptr;
   }
+
+ private:
+  // Process-wide state lives in `static inline` data members, never in a function-local
+  // `static` of an inline function: with hidden inline functions (Xcode's default) and
+  // per-target prelinking (`ld -r`, as SwiftPM builds package targets), each target keeps
+  // its own copy of such a static, so a value installed by one target is invisible to
+  // another. Inline variables keep default visibility and stay one definition.
+  static inline std::atomic<const LoomPlatformTraits*> installed_{nullptr};
+  // Constant, so a per-target copy would be harmless.
   static const LoomPlatformTraits& defaults() {
     static const LoomPlatformTraits traits;
     return traits;

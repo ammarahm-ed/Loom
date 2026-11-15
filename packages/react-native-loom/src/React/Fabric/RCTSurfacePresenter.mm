@@ -1635,6 +1635,9 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
     std::lock_guard<std::mutex> accessLock(_schedulerAccessMutex);
 
     if (!_scheduler) {
+      // Already suspended: a target can still have been registered since (the JS thread registers
+      // them asynchronously), and it must not outlive the runtime either.
+      [self _releaseDirectRendererRuntimeHandles];
       return NO;
     }
     scheduler = _scheduler;
@@ -1645,8 +1648,31 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   LoomBinding::shutdownWorkerForUIManager(*scheduler.uiManager);
 #endif
   [self _stopAllSurfacesWithScheduler:scheduler];
+  [self _releaseDirectRendererRuntimeHandles];
 
   return YES;
+}
+
+// Event targets hold jsi::WeakObject instance handles, which can only be destroyed while their
+// runtime is alive. RCTInstance destroys the runtime right after suspending this presenter, but
+// the presenter itself is released later (scene teardown), so everything runtime-bound must be
+// dropped here, not in the destructor. Fabric gets the same by destroying its shadow trees when the
+// surfaces stop.
+- (void)_releaseDirectRendererRuntimeHandles
+{
+#if LOOM_RENDERER
+  dispatch_block_t release = ^{
+    // The manager's destructor drops every target it still holds.
+    self->_directEventManager.reset();
+    self->_directEventFamilies.clear();
+    self->_directInstanceHandles.clear();
+  };
+  if (RCTIsMainQueue()) {
+    release();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), release);
+  }
+#endif
 }
 
 - (BOOL)resume

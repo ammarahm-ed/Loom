@@ -7,6 +7,9 @@
 
 #pragma once
 
+// Only the Loom renderer build (LOOM_RENDERER) compiles this header; without it Fabric is untouched.
+#if LOOM_RENDERER
+
 #include <react/renderer/uimanager/LoomWorker.h>
 #include <array>
 #include <atomic>
@@ -44,9 +47,10 @@ namespace facebook::react {
  * reachable only through this binding's `NodeRef` host objects, so a collision is
  * not reachable today; this makes it impossible rather than argued.
  */
+// An inline variable, not a function-local static: see LoomPlatformTraits.h.
+inline std::atomic<uint64_t> gLoomNextPublishSequenceBase{1};
 inline uint64_t nextPublishSequenceBase() {
-  static std::atomic<uint64_t> next{1};
-  return next.fetch_add(uint64_t{1} << 40);
+  return gLoomNextPublishSequenceBase.fetch_add(uint64_t{1} << 40);
 }
 
 class LoomBinding final : public UIManagerBinding {
@@ -177,6 +181,19 @@ class LoomBinding final : public UIManagerBinding {
   static std::optional<ShadowTreeCommitStatus> commitOnDemand(
       const ShadowTree& shadowTree,
       const ShadowTreeCommitTransaction& transaction);
+
+  // ---- Support for the library API (react/loom/Loom.h, implemented in LoomApi.cpp) ----------------
+  /** Calls `visit` for the id of every running Loom surface. */
+  static void apiForEachSurface(const std::function<void(SurfaceId)>& visit);
+  /**
+   * Runs `read` with `surfaceId`'s live renderer and constraints, after the commits already submitted
+   * were applied (no wait on the UI thread). False when no binding owns the surface.
+   */
+  static bool apiRead(
+      SurfaceId surfaceId,
+      const std::function<void(const LoomRenderer&, const SurfaceConstraints&)>& read);
+  /** A JS-lane props write of a node of the surface (any thread). */
+  static void apiUpdateProps(SurfaceId surfaceId, Tag tag, folly::dynamic props);
 
   static void shutdownWorkerForUIManager(UIManager& manager);
   static void synchronizeWorkerForUIManager(UIManager& manager);
@@ -907,3 +924,5 @@ class LoomBinding final : public UIManagerBinding {
 };
 
 } // namespace facebook::react
+
+#endif // LOOM_RENDERER

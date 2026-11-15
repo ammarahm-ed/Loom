@@ -10,6 +10,7 @@
 #include <folly/json.h>
 #include <react/renderer/core/PropsParserContext.h>
 #include <react/renderer/core/RawProps.h>
+#include "LoomApiInternal.h"
 #include "LoomBinding.h"
 #include "LoomFabricBridge.h"
 #include "LoomLayoutAnimations.h"
@@ -183,6 +184,13 @@ LoomBinding::LoomBinding(
            "FabricUIManagerBinding::installFabricUIManager).";
   }
   host_ = hostOwner_.get();
+  // registerIn installed the host's traits. If this side still sees the defaults, the
+  // process holds two copies of the traits (a build that duplicated shared state per
+  // module): every thread would count as the UI thread and view work would run off it.
+  if (!LoomPlatformTraits::isInstalled()) {
+    LOG(FATAL) << "Loom: LoomHost was registered but its LoomPlatformTraits are not visible "
+                  "to the renderer; the build duplicated process-wide state across modules.";
+  }
   text_ = host_->textServices();
   installLoomFabricBridge();
   // Power-of-two bucket counts keep these on mask indexing (see LoomTagHash).
@@ -546,6 +554,7 @@ bool LoomBinding::layoutAnimationFrame(SurfaceId surfaceId) {
           return;
         }
         binding.host()->applyBatch(surfaceId, std::move(batch));
+        loom::internal::notifyFrameApplied(surfaceId);
       });
 }
 
@@ -567,6 +576,25 @@ bool LoomBinding::withSurfaceRenderer(
     return true;
   }
   return false;
+}
+
+void LoomBinding::apiForEachSurface(
+    const std::function<void(SurfaceId)>& visit) {
+  std::vector<SurfaceId> surfaceIds;
+  for (const auto& lifetime : bindingSnapshot()) {
+    std::shared_lock lock(lifetime->gate);
+    auto* binding = lifetime->binding;
+    if (binding == nullptr) {
+      continue;
+    }
+    std::lock_guard state(binding->stateMutex_);
+    for (const auto& entry : binding->renderers_) {
+      surfaceIds.push_back(entry.first);
+    }
+  }
+  for (const auto surfaceId : surfaceIds) {
+    visit(surfaceId);
+  }
 }
 
 void LoomBinding::recordNativeProps(Tag tag, folly::dynamic props) {
@@ -949,6 +977,7 @@ void LoomBinding::traceAnimationLane(
 }
 
 void LoomBinding::flushAnimationFrames() {
+  loom::internal::runBeforeFrame();
   for (const auto& lifetime : bindingSnapshot()) {
     std::shared_lock lock(lifetime->gate);
     auto* binding = lifetime->binding;
@@ -1363,6 +1392,7 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
       }
     }
     host_->applyBatch(surface, std::move(batch));
+    loom::internal::notifyFrameApplied(surface);
 #if LOOM_WORKER
     // Only this surface's overlays can be replayed onto this surface, so the
     // scan is bounded by them rather than by every overlay on every surface.
@@ -2448,6 +2478,14 @@ void LoomBinding::reconcileSelectedDrafts(
   }
 
   liveRenderer.completeRoot(surfaceId, selection.rootChildren);
+  if (loom::internal::wantsLayoutCommitted()) {
+    std::vector<Tag> changed;
+    changed.reserve(selected.size());
+    for (const auto& entry : selected) {
+      changed.push_back(entry.draft->tag);
+    }
+    loom::internal::notifyLayoutCommitted(surfaceId, std::move(changed));
+  }
 }
 
 void LoomBinding::publishRootCommit(

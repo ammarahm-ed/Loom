@@ -29,10 +29,7 @@ struct LoomWorkerProfile {
                time.time_since_epoch())
         .count();
   }
-  static Metrics& metrics() {
-    static thread_local Metrics value;
-    return value;
-  }
+  static Metrics& metrics();
   struct TextScope {
     Clock::time_point start{};
     TextScope() {
@@ -47,4 +44,12 @@ struct LoomWorkerProfile {
     }
   };
 };
+
+// Per thread. A namespace-scope inline variable, not a function-local static: see
+// LoomPlatformTraits.h (per-module copies under hidden inlines and prelinking).
+inline thread_local LoomWorkerProfile::Metrics gLoomWorkerProfileMetrics{};
+
+inline LoomWorkerProfile::Metrics& LoomWorkerProfile::metrics() {
+  return gLoomWorkerProfileMetrics;
+}
 } // namespace facebook::react

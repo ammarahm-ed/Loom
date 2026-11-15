@@ -32,19 +32,21 @@ struct LoomRuntimeHooks {
 
   static void install(const LoomRuntimeHooks& hooks) {
     if (hooks.postDelayed != nullptr) {
-      postDelayedSlot().store(hooks.postDelayed, std::memory_order_release);
+      postDelayedSlot_.store(hooks.postDelayed, std::memory_order_release);
     }
   }
 
   static PostDelayed installedPostDelayed() {
-    return postDelayedSlot().load(std::memory_order_acquire);
+    return postDelayedSlot_.load(std::memory_order_acquire);
   }
 
  private:
-  static std::atomic<PostDelayed>& postDelayedSlot() {
-    static std::atomic<PostDelayed> slot{nullptr};
-    return slot;
-  }
+  // Process-wide state lives in `static inline` data members, never in a function-local
+  // `static` of an inline function: with hidden inline functions (Xcode's default) and
+  // per-target prelinking (`ld -r`, as SwiftPM builds package targets), each target keeps
+  // its own copy of such a static, so a value installed by one target is invisible to
+  // another. Inline variables keep default visibility and stay one definition.
+  static inline std::atomic<PostDelayed> postDelayedSlot_{nullptr};
 };
 
 } // namespace facebook::react

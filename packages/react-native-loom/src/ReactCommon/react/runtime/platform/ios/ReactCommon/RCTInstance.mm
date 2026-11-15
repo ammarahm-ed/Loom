@@ -249,6 +249,10 @@ using namespace facebook::react;
      */
     [self->_turboModuleManager invalidate];
 
+    // Targets can be registered from this thread between the suspend above and here; they hold
+    // JS instance handles, so drop them while the runtime is still alive.
+    [self->_surfacePresenter suspend];
+
     // Clean up all the Resources
     self->_reactInstance = nullptr;
     self->_jsRuntimeFactory = nullptr;
