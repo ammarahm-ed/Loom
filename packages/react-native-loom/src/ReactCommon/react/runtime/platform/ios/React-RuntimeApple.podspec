@@ -23,9 +23,9 @@ header_search_paths = [
 ]
 runtime_definitions = ["$(inherited)"]
 runtime_definitions << "LOOM_RENDERER_IOS=1" if ENV["RCT_LOOM_RENDERER_IOS"] == "1"
-loom_js = ENV["RCT_LOOM_JS_IOS"] || "main"
+loom_js = ENV["RCT_LOOM_JS_IOS"] || "background"
 abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
-abort 'RCT_LOOM_JS_IOS=background requires RCT_LOOM_WORKER_IOS=1' if ENV["RCT_LOOM_RENDERER_IOS"] == "1" && loom_js == "background" && ENV["RCT_LOOM_WORKER_IOS"] != "1"
+abort 'RCT_LOOM_JS_IOS=background requires RCT_LOOM_WORKER_IOS=1' if ENV["RCT_LOOM_RENDERER_IOS"] == "1" && loom_js == "background" && !(ENV["RCT_LOOM_WORKER_IOS"] ? ENV["RCT_LOOM_WORKER_IOS"] == "1" : ENV["RCT_LOOM_RENDERER_IOS"] == "1")
 runtime_definitions << "LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if ENV["RCT_LOOM_RENDERER_IOS"] == "1"
 
 Pod::Spec.new do |s|

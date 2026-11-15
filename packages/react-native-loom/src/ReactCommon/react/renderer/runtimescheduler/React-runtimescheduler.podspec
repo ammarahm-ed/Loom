@@ -25,7 +25,7 @@ end
 # Loom: where JavaScript runs on iOS (see RCT_LOOM_JS_IOS in React-RuntimeApple.podspec).
 loom_defines = ["$(inherited)"]
 if ENV["RCT_LOOM_RENDERER_IOS"] == "1"
-  loom_js = ENV["RCT_LOOM_JS_IOS"] || "main"
+  loom_js = ENV["RCT_LOOM_JS_IOS"] || "background"
   abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
   loom_defines << "LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}"
 end

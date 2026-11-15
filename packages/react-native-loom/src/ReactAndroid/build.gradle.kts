@@ -54,13 +54,21 @@ extra["cmake_version"] = cmakeVersion
  *
  * Set as Gradle properties, in the app's `android/gradle.properties` or with `-P<name>=<value>`:
  *
- *   loom.renderer = fabric | loom   which renderer draws the app (default: fabric)
+ *   loom.renderer = true | false    which renderer draws the app: Loom, or React Native's Fabric (default: true)
  *   loom.js       = background | main  where JavaScript runs: React Native's own JS thread, or the
  *                                      Android main thread like a native app (default: background)
  *   loom.worker   = true | false     run Loom's commit preparation (layout, text, diff) on a worker
- *                                    thread; required by loom.js=background (default: false)
+ *                                    thread; required by loom.js=background
+ *                                    (default: true with loom.renderer=true, otherwise false)
  *   loom.profile  = true | false     diagnostic C++ and mount timers (default: false)
  *   loom.cppTests = true | false     build the C++ Loom renderer tests (default: false)
+ *   loom.leanRelease = true | false  release builds without inspector, DevTools and tracing code; every
+ *                                    exported name stays (zero-returning stubs). Needs
+ *                                    loom.exportStubsDir (tools/prebuild/gen-export-stubs.py).
+ *                                    debug and debugOptimized are never lean (default: false)
+ *   loom.releaseProfiling = true | false  React Native's profiling build mode for release: DevTools and
+ *                                    tracing kept (REACT_NATIVE_DEBUGGER_MODE_PROD), so a release build can
+ *                                    be profiled. Mutually exclusive with loom.leanRelease (default: false)
  *
  * With none set the build is stock upstream React Native: the switched-on behaviour and the upstream
  * behaviour stay side by side in the source and are selected at build time.
@@ -81,29 +89,39 @@ fun loomChoice(name: String, default: String, allowed: List<String>): String {
   return value
 }
 
-fun loomFlag(name: String): Boolean {
-  val value = loomProperty(name) ?: return false
+fun loomFlag(name: String, default: Boolean = false): Boolean {
+  val value = loomProperty(name) ?: return default
   return value.toBooleanStrictOrNull()
       ?: throw GradleException("$name must be true or false, got '$value'.")
 }
 
-val loomRenderer = loomChoice("loom.renderer", "fabric", listOf("fabric", "loom")) == "loom"
+val loomRenderer = loomFlag("loom.renderer", default = true)
 val loomJsOnMain = loomChoice("loom.js", "background", listOf("background", "main")) == "main"
-val loomWorker = loomFlag("loom.worker")
+// The worker is on by default with the Loom renderer (and meaningless without it).
+val loomWorker = loomFlag("loom.worker", default = loomRenderer)
 val loomBuildCppTests = loomFlag("loom.cppTests")
 val loomProfile = loomFlag("loom.profile")
+val loomLeanRelease = loomFlag("loom.leanRelease")
+val loomReleaseProfiling = loomFlag("loom.releaseProfiling")
+if (loomLeanRelease && loomReleaseProfiling) {
+  throw GradleException("loom.leanRelease=true and loom.releaseProfiling=true exclude each other.")
+}
+val loomExportStubsDir = loomProperty("loom.exportStubsDir") ?: ""
+if (loomLeanRelease && loomExportStubsDir.isEmpty()) {
+  throw GradleException("loom.leanRelease=true requires loom.exportStubsDir (see tools/prebuild/gen-export-stubs.py).")
+}
 
 // Loom calls Android view operations synchronously from its JS host methods when JavaScript runs
 // on the main thread. With JavaScript on its own thread, host methods cannot touch views, so every
 // view effect has to go through Loom's worker, whose results the main thread applies.
 if (loomRenderer && !loomJsOnMain && !loomWorker) {
   throw GradleException(
-      "loom.renderer=loom with loom.js=background requires loom.worker=true: view operations " +
+      "loom.renderer=true with loom.js=background requires loom.worker=true: view operations " +
           "must run on the Android main thread, so JavaScript on another thread can only hand " +
           "work to the worker.")
 }
 if (loomWorker && !loomRenderer) {
-  throw GradleException("loom.worker=true requires loom.renderer=loom.")
+  throw GradleException("loom.worker=true requires loom.renderer=true.")
 }
 
 /** CMake's spelling of a boolean switch. */
@@ -115,6 +133,9 @@ val loomCmakeArguments =
         "-DLOOM_RENDERER=${loomCmakeSwitch(loomRenderer)}",
         "-DLOOM_WORKER=${loomCmakeSwitch(loomWorker)}",
         "-DLOOM_PROFILE=${loomCmakeSwitch(loomProfile)}",
+        "-DLOOM_LEAN_RELEASE=${loomCmakeSwitch(loomLeanRelease)}",
+        "-DLOOM_RELEASE_PROFILING=${loomCmakeSwitch(loomReleaseProfiling)}",
+        "-DLOOM_EXPORT_STUBS_DIR=$loomExportStubsDir",
         "-DLOOM_BUILD_CPP_TESTS=${loomCmakeSwitch(loomBuildCppTests)}",
     )
 
@@ -240,6 +261,10 @@ val preparePrefab by
                       Pair("../ReactCommon/react/renderer/scheduler/", "react/renderer/scheduler/"),
                       // react_renderer_uimanager
                       Pair("../ReactCommon/react/renderer/uimanager/", "react/renderer/uimanager/"),
+                      // Loom: the build configuration header (<react/renderer/LoomConfig.h>) and the library API
+                      // (<react/loom/Loom.h>)
+                      Pair("../ReactCommon/react/loom/config/", "react/renderer/"),
+                      Pair("../ReactCommon/react/loom/", "react/loom/"),
                       // react_utils
                       Pair("../ReactCommon/react/utils/", "react/utils/"),
                       Pair("../ReactCommon/react/utils/platform/android/", ""),
@@ -337,6 +362,10 @@ val preparePrefab by
                       Pair("../ReactCommon/react/renderer/scheduler/", "react/renderer/scheduler/"),
                       Pair("../ReactCommon/react/renderer/telemetry/", "react/renderer/telemetry/"),
                       Pair("../ReactCommon/react/renderer/uimanager/", "react/renderer/uimanager/"),
+                      // Loom: the build configuration header (<react/renderer/LoomConfig.h>) and the library API
+                      // (<react/loom/Loom.h>)
+                      Pair("../ReactCommon/react/loom/config/", "react/renderer/"),
+                      Pair("../ReactCommon/react/loom/", "react/loom/"),
                       Pair("../ReactCommon/react/debug/", "react/debug/"),
                       Pair("../ReactCommon/react/debug/React/", "React/"),
                       Pair("../ReactCommon/react/cxxstableapi/", "react/cxxstableapi/"),
@@ -786,7 +815,9 @@ android {
   publishing {
     multipleVariants {
       withSourcesJar()
-      allVariants()
+      // loom.publishVariants=release (tools/prebuild/android.sh, release profiling): only those build types.
+      val onlyVariants = loomProperty("loom.publishVariants")
+      if (onlyVariants == null) allVariants() else includeBuildTypeValues(*onlyVariants.split(",").toTypedArray())
     }
   }
 
@@ -800,6 +831,13 @@ android {
       initWith(getByName("debug"))
       externalNativeBuild {
         cmake { arguments("-DCMAKE_BUILD_TYPE=Release", "-DREACT_NATIVE_DEBUG_OPTIMIZED=True") }
+      }
+    }
+    if (loomReleaseProfiling) {
+      // React Native's single switch for the inspector / DevTools / tracing code in a non-Debug build
+      // (it is what debugOptimized sets); the release flavor gets it too, plus the profiling-mode flag.
+      getByName("release") {
+        externalNativeBuild { cmake { arguments("-DREACT_NATIVE_DEBUG_OPTIMIZED=True") } }
       }
     }
   }
