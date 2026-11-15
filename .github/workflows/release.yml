@@ -1,0 +1,405 @@
+# Release Loom: build every prebuilt variant, then publish them.
+#
+#   - Maven Central: io.github.ammarahm-ed:{react-android, react-android-jsmain, react-android-profiling,
+#     react-android-jsmain-profiling, react-native-artifacts}, one Central Portal deployment per artifact.
+#   - GitHub release v<version>: every AAR, symbols zip and iOS tarball, plus SHASUMS256.txt.
+#   - npm: react-native-loom, as a STAGED publish (approve it on npmjs.com with 2FA).
+#
+# Manual only. The version is packages/react-native-loom/package.json's; bump it before running.
+# dry_run builds and verifies everything, validates the Maven bundles on the Central Portal (then drops them),
+# and runs `npm publish --dry-run`, without publishing anything.
+#
+# The three publish jobs are independent of each other except that npm waits for Maven, because the npm
+# package resolves its prebuilt binaries from Maven Central.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify everything without publishing
+        type: boolean
+        default: true
+      npm_tag:
+        description: npm dist-tag (empty = "next" for prereleases, "latest" otherwise)
+        type: string
+        default: ''
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  NDK_VERSION: 28.2.13676358
+  XCODE_VERSION: '16.4'
+
+jobs:
+  meta:
+    name: Version and checks
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      rn_version: ${{ steps.v.outputs.rn_version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      npm_tag: ${{ steps.v.outputs.npm_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - id: v
+        name: Read versions
+        run: |
+          VERSION=$(node -p "require('./packages/react-native-loom/package.json').version")
+          RN_VERSION=$(node -p "require('./packages/react-native-loom/overrides.json').upstream.version")
+          PRERELEASE=false; case "$VERSION" in *-*) PRERELEASE=true ;; esac
+          TAG="${{ inputs.npm_tag }}"
+          if [ -z "$TAG" ]; then if [ "$PRERELEASE" = true ]; then TAG=next; else TAG=latest; fi; fi
+          {
+            echo "version=$VERSION"; echo "rn_version=$RN_VERSION"
+            echo "prerelease=$PRERELEASE"; echo "npm_tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Loom $VERSION"
+            echo "- React Native: $RN_VERSION"
+            echo "- Prerelease: $PRERELEASE, npm tag: $TAG"
+            echo "- Dry run: ${{ inputs.dry_run }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check Loom's version matches React Native's minor
+        # Loom 0.<minor>.<patch> builds on React Native 0.<minor>.x. Loom can ship more patch releases than React
+        # Native (0.89.1 ... 0.89.10 on any RN 0.89.x): only major.minor must match.
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          RN_VERSION: ${{ steps.v.outputs.rn_version }}
+        run: |
+          loom_minor=$(echo "$VERSION" | cut -d. -f1,2)
+          rn_minor=$(echo "$RN_VERSION" | cut -d. -f1,2)
+          if [ "$loom_minor" != "$rn_minor" ]; then
+            echo "::error::Loom $VERSION must be $rn_minor.x to build on React Native $RN_VERSION"
+            exit 1
+          fi
+      - name: Check the version is not already released
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          problems=()
+          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1 \
+            && problems+=("git tag v$VERSION already exists")
+          npm view "react-native-loom@$VERSION" version >/dev/null 2>&1 \
+            && problems+=("react-native-loom@$VERSION is already on npm")
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            "https://repo1.maven.org/maven2/io/github/ammarahm-ed/react-android/$VERSION/react-android-$VERSION.pom")
+          [ "$code" = 200 ] && problems+=("io.github.ammarahm-ed:react-android:$VERSION is already on Maven Central")
+          for p in "${problems[@]}"; do
+            if [ "$DRY_RUN" = true ]; then echo "::warning::$p"; else echo "::error::$p"; fi
+          done
+          if [ "${#problems[@]}" -gt 0 ] && [ "$DRY_RUN" != true ]; then exit 1; fi
+
+  android:
+    name: Android ${{ matrix.js }}${{ matrix.profiling == '1' && ' profiling' || '' }}
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        js: [background, main]
+        profiling: ['0', '1']
+    env:
+      LOOM_JS: ${{ matrix.js }}
+      LOOM_PROFILING: ${{ matrix.profiling }}
+      LOOM_PUBLISH_VERSION: ${{ needs.meta.outputs.version }}
+      LOOM_PREBUILD_DIR: /mnt/loom/work
+      LOOM_BASELINE_DIR: /mnt/loom/baseline
+      LOOM_MAVEN_LOCAL: /mnt/loom/maven
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo mkdir -p /mnt/loom && sudo chown "$USER" /mnt/loom
+          df -h / /mnt
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - name: Install NDK and yarn
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" >/dev/null
+          npm install -g yarn@1.22.22
+      - name: React Native baseline AARs
+        env:
+          RN_VERSION: ${{ needs.meta.outputs.rn_version }}
+        run: |
+          mkdir -p "$LOOM_BASELINE_DIR"
+          for v in debug debugOptimized release; do
+            curl -fsSL -o "$LOOM_BASELINE_DIR/react-android-$RN_VERSION-$v.aar" \
+              "https://repo1.maven.org/maven2/com/facebook/react/react-android/$RN_VERSION/react-android-$RN_VERSION-$v.aar"
+          done
+      - name: Prepare the React Native build tree
+        run: tools/prebuild/prepare.sh
+      - name: Build, publish locally and verify
+        run: tools/prebuild/android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maven-android-${{ matrix.js }}-${{ matrix.profiling }}
+          path: /mnt/loom/maven/io/github/ammarahm-ed/
+          if-no-files-found: error
+          retention-days: 7
+
+  ios:
+    name: iOS ${{ matrix.js }} ${{ matrix.flavor }}
+    needs: meta
+    runs-on: macos-15
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        js: [background, main]
+        flavor: [Debug, Release, ReleaseProfiling]
+    env:
+      LOOM_JS: ${{ matrix.js }}
+      LOOM_PREBUILD_DIR: ${{ github.workspace }}/../cs/work
+      LOOM_IOS_OUT: ${{ github.workspace }}/../cs/ios-out
+      LOOM_BASELINE_DIR: ${{ github.workspace }}/../baseline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Select Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app" && xcodebuild -version
+      - name: Case-sensitive build volume
+        # React Native's prefab and header trees have React/ and react/ side by side.
+        run: |
+          CS="$GITHUB_WORKSPACE/../cs"
+          hdiutil create -size 60g -type SPARSE -fs "Case-sensitive APFS" -volname loomcs "$RUNNER_TEMP/loomcs.sparseimage"
+          mkdir -p "$CS" && hdiutil attach "$RUNNER_TEMP/loomcs.sparseimage" -mountpoint "$CS" -nobrowse
+      - name: Install yarn
+        run: npm install -g yarn@1.22.22
+      - name: React Native baseline tarballs
+        env:
+          RN_VERSION: ${{ needs.meta.outputs.rn_version }}
+        run: |
+          mkdir -p "$LOOM_BASELINE_DIR"
+          for c in debug release; do
+            f="react-native-artifacts-$RN_VERSION-reactnative-core-$c.tar.gz"
+            curl -fsSL -o "$LOOM_BASELINE_DIR/$f" \
+              "https://repo1.maven.org/maven2/com/facebook/react/react-native-artifacts/$RN_VERSION/$f"
+          done
+      - name: Prepare the React Native build tree
+        run: tools/prebuild/prepare.sh
+      - name: Build and verify
+        run: tools/prebuild/ios.sh ${{ matrix.flavor }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ matrix.js }}-${{ matrix.flavor }}
+          path: ${{ github.workspace }}/../cs/ios-out/${{ matrix.js }}/
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    name: Assemble, sign and checksum
+    needs: [meta, android, ios]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      REPO: ${{ github.workspace }}/../repo
+      OUT: ${{ github.workspace }}/../out
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: maven-android-*
+          path: ${{ github.workspace }}/../repo/io/github/ammarahm-ed
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ios-background-*
+          path: ${{ github.workspace }}/../ios-out/background
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ios-main-*
+          path: ${{ github.workspace }}/../ios-out/main
+          merge-multiple: true
+      - name: Add the iOS artifacts to the repository
+        env:
+          LOOM_PUBLISH_VERSION: ${{ needs.meta.outputs.version }}
+          LOOM_IOS_OUT: ${{ github.workspace }}/../ios-out
+          LOOM_MAVEN_LOCAL: ${{ github.workspace }}/../repo
+        run: |
+          LOOM_JS=background tools/prebuild/ios-publish.sh
+          LOOM_JS=main tools/prebuild/ios-publish.sh
+      - name: Check every expected artifact is present
+        run: |
+          base="$REPO/io/github/ammarahm-ed"
+          missing=0
+          for a in react-android react-android-jsmain react-android-profiling react-android-jsmain-profiling react-native-artifacts; do
+            [ -f "$base/$a/$VERSION/$a-$VERSION.pom" ] || { echo "::error::missing $a $VERSION"; missing=1; }
+          done
+          for js in "" "jsmain-"; do
+            for c in debug release release-profiling; do
+              for k in "reactnative-core-$js$c" "reactnative-core-${js}dSYM-$c" "reactnative-headers-$js$c"; do
+                [ -f "$base/react-native-artifacts/$VERSION/react-native-artifacts-$VERSION-$k.tar.gz" ] \
+                  || { echo "::error::missing iOS $k"; missing=1; }
+              done
+            done
+          done
+          exit $missing
+      - name: Checksums and signatures
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          printf '%s' "$SIGNING_KEY" | gpg --batch --import
+          cd "$REPO"
+          # Local-repository metadata is not part of a Central deployment.
+          find . -name 'maven-metadata*' -delete
+          find . -type f ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' ! -name '*.asc' |
+            while read -r f; do
+              [ -f "$f.md5" ] || md5sum "$f" | cut -d' ' -f1 > "$f.md5"
+              [ -f "$f.sha1" ] || sha1sum "$f" | cut -d' ' -f1 > "$f.sha1"
+              gpg --batch --yes --pinentry-mode loopback --passphrase "$SIGNING_PASSWORD" --armor --detach-sign "$f"
+            done
+          gpg --batch --verify "$(find . -name '*.pom' | head -1).asc" "$(find . -name '*.pom' | head -1)"
+      - name: Central bundles and release assets
+        run: |
+          mkdir -p "$OUT/bundles" "$OUT/assets"
+          cd "$REPO"
+          for d in io/github/ammarahm-ed/*/; do
+            a=$(basename "$d")
+            zip -q -r -0 "$OUT/bundles/$a-$VERSION.zip" "io/github/ammarahm-ed/$a/$VERSION"
+          done
+          find io -type f \( -name '*.aar' -o -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} "$OUT/assets/" \;
+          (cd "$OUT/assets" && sha256sum -- * > SHASUMS256.txt)
+          {
+            echo "### Artifacts"
+            echo '```'
+            (cd "$OUT/assets" && find . -type f -printf '%s %f\n' | sort -k2 | awk '{printf "%10.1f MB  %s\n", $1/1048576, $2}')
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: central-bundles
+          path: ${{ github.workspace }}/../out/bundles/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: ${{ github.workspace }}/../out/assets/
+          retention-days: 7
+
+  maven:
+    name: Maven Central${{ inputs.dry_run && ' (validate only)' || '' }}
+    needs: [meta, assemble]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: central-bundles
+          path: bundles
+      - name: Upload to the Central Portal
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          API=https://central.sonatype.com/api/v1/publisher
+          AUTH="Authorization: Bearer $(printf '%s:%s' "$MAVEN_CENTRAL_USERNAME" "$MAVEN_CENTRAL_PASSWORD" | base64 -w0)"
+          # Dry run: USER_MANAGED deployments are validated but wait for a manual publish; they are dropped below.
+          TYPE=AUTOMATIC; [ "$DRY_RUN" = true ] && TYPE=USER_MANAGED
+          failed=0
+          for b in bundles/*.zip; do
+            name=$(basename "$b" .zip)
+            id=$(curl -fsS -X POST -H "$AUTH" -F "bundle=@$b" "$API/upload?name=$name&publishingType=$TYPE")
+            echo "$name: deployment $id"
+            while :; do
+              status=$(curl -fsS -X POST -H "$AUTH" "$API/status?id=$id")
+              state=$(echo "$status" | jq -r .deploymentState)
+              case "$state" in
+                PENDING|VALIDATING|PUBLISHING) sleep 20 ;;
+                VALIDATED)
+                  if [ "$DRY_RUN" = true ]; then
+                    echo "$name: valid; dropping the dry-run deployment"
+                    curl -fsS -X DELETE -H "$AUTH" "$API/deployment/$id"
+                    break
+                  fi
+                  sleep 20 ;;
+                PUBLISHED) echo "$name: published"; break ;;
+                FAILED)
+                  echo "::error::$name: $(echo "$status" | jq -c .errors)"
+                  curl -fsS -X DELETE -H "$AUTH" "$API/deployment/$id" || true
+                  failed=1; break ;;
+                *) echo "::error::$name: unexpected state $state"; failed=1; break ;;
+              esac
+            done
+            echo "- $name: $state" >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $failed
+
+  github-release:
+    name: GitHub release${{ inputs.dry_run && ' (dry run)' || '' }}
+    needs: [meta, assemble]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: assets
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          (cd assets && sha256sum -c SHASUMS256.txt --quiet)
+          flags=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Loom $VERSION" --generate-notes)
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          if [ "$DRY_RUN" = true ]; then
+            echo "Dry run: would create v$VERSION ${flags[*]} with:"; ls -l assets
+            exit 0
+          fi
+          gh release create "v$VERSION" "${flags[@]}" assets/*
+
+  npm:
+    name: npm (staged)${{ inputs.dry_run && ' (dry run)' || '' }}
+    needs: [meta, maven]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+      - name: npm with staged publishing
+        run: npm install -g npm@11.21.1
+      - name: Stage react-native-loom
+        working-directory: packages/react-native-loom
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ needs.meta.outputs.npm_tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = true ]; then
+            npm publish --dry-run --tag "$TAG"
+          else
+            npm stage publish --tag "$TAG"
+            echo "Staged react-native-loom@$(node -p "require('./package.json').version") (tag $TAG). Approve it with \`npm stage approve\` or on npmjs.com." >> "$GITHUB_STEP_SUMMARY"
+          fi
