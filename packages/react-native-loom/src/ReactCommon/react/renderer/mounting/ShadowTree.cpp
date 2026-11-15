@@ -15,9 +15,11 @@
 #include <react/renderer/core/LayoutContext.h>
 #include <react/renderer/core/LayoutPrimitives.h>
 #include <react/renderer/mounting/ShadowTreeRevision.h>
-#include <react/renderer/mounting/ShadowViewMutation.h>
 #include <react/renderer/telemetry/TransactionTelemetry.h>
+#if !LOOM_RENDERER
+#include <react/renderer/mounting/ShadowViewMutation.h>
 #include "updateMountedFlag.h"
+#endif
 
 #include "ShadowTreeDelegate.h"
 
@@ -56,6 +58,7 @@ loomShadowTreeCommitInterceptor() {
 namespace {
 const int MAX_COMMIT_ATTEMPTS_BEFORE_LOCKING = 3;
 
+#if !LOOM_RENDERER
 std::string getShadowTreeCommitSourceName(ShadowTreeCommitSource source) {
   switch (source) {
     case ShadowTreeCommitSource::Unknown:
@@ -69,6 +72,8 @@ std::string getShadowTreeCommitSourceName(ShadowTreeCommitSource source) {
   }
 }
 
+#endif
+
 inline bool isPropsUpdatesAccumulationGuaranteed() {
 #ifdef __ANDROID__
   return ReactNativeFeatureFlags::enableAccumulatedUpdatesInRawPropsAndroid();
@@ -81,6 +86,7 @@ inline bool isPropsUpdatesAccumulationGuaranteed() {
 using CommitStatus = ShadowTree::CommitStatus;
 using CommitMode = ShadowTree::CommitMode;
 
+#if !LOOM_RENDERER
 /*
  * Generates (possibly) a new tree where all nodes with non-obsolete `State`
  * objects. If all `State` objects in the tree are not obsolete for the moment
@@ -253,6 +259,8 @@ static std::shared_ptr<RootShadowNode> progressRootLayoutInfo(
   return shadowNode;
 }
 
+#endif // !LOOM_RENDERER
+
 ShadowTree::ShadowTree(
     SurfaceId surfaceId,
     const LayoutConstraints& layoutConstraints,
@@ -376,6 +384,59 @@ CommitStatus ShadowTree::commit(
   }
 }
 
+#if LOOM_RENDERER
+/*
+ * Loom: a surface's real nodes live in Loom's renderer; this tree stays an
+ * empty root that libraries commit to (commitOnDemand answers the commits that
+ * touch Loom's nodes first). A commit here runs the transaction against the
+ * current root, lets the registered commit hooks see the result, and records
+ * the revision. Nothing is laid out, diffed or mounted: there is no Fabric
+ * mounting layer behind it.
+ *
+ * The seams the public Loom API (<react/loom/Loom.h>) sits on, all Loom-native:
+ * commit hooks and the empty-root revision (here and UIManager::shadowTreeWillCommit),
+ * node reads by tag (LoomBinding::newestShadowNode / relativeLayoutMetrics),
+ * surface enumeration (ShadowTreeRegistry::enumerate/visit), and the typed
+ * animated-prop lane (AnimationBackend -> loomRecordAnimationProps).
+ */
+CommitStatus ShadowTree::tryCommit(
+    const ShadowTreeCommitTransaction& transaction,
+    const CommitOptions& commitOptions) const {
+  ShadowTreeRevision oldRevision;
+  {
+    SharedLock lock = sharedRevisionLock();
+    oldRevision = currentRevision_;
+  }
+
+  const auto& oldRootShadowNode = oldRevision.rootShadowNode;
+  auto newRootShadowNode = transaction(*oldRootShadowNode);
+  if (!newRootShadowNode) {
+    return CommitStatus::Cancelled;
+  }
+
+  newRootShadowNode = delegate_.shadowTreeWillCommit(
+      *this, oldRootShadowNode, newRootShadowNode, commitOptions);
+  if (!newRootShadowNode) {
+    return CommitStatus::Cancelled;
+  }
+
+  RootShadowNode::Shared committedRoot;
+  {
+    UniqueLock lock = uniqueRevisionLock();
+    if (currentRevision_.number != oldRevision.number) {
+      return CommitStatus::Failed;
+    }
+    currentRevision_ = ShadowTreeRevision{
+        .rootShadowNode = std::move(newRootShadowNode),
+        .number = currentRevision_.number + 1,
+        .telemetry = TransactionTelemetry{}};
+    committedRoot = currentRevision_.rootShadowNode;
+  }
+
+  delegate_.shadowTreeDidCommit(*this, committedRoot, {});
+  return CommitStatus::Succeeded;
+}
+#else
 CommitStatus ShadowTree::tryCommit(
     const ShadowTreeCommitTransaction& transaction,
     const CommitOptions& commitOptions) const {
@@ -517,6 +578,8 @@ CommitStatus ShadowTree::tryCommit(
   return CommitStatus::Succeeded;
 }
 
+#endif // LOOM_RENDERER
+
 ShadowTreeRevision ShadowTree::getCurrentRevision() const {
   SharedLock lock = sharedRevisionLock();
   return currentRevision_;
@@ -529,9 +592,17 @@ std::optional<ShadowTreeRevision> ShadowTree::getCurrentReactRevision() const {
 
 void ShadowTree::mount(ShadowTreeRevision revision, bool mountSynchronously)
     const {
+#if LOOM_RENDERER
+  // Loom mounts through its renderer, never a shadow-tree transaction: the
+  // coordinator only keeps the base revision (what mount hooks read) current.
+  (void)mountSynchronously;
+  mountingCoordinator_->push(std::move(revision));
+  (void)mountingCoordinator_->pullTransaction();
+#else
   mountingCoordinator_->push(std::move(revision));
   delegate_.shadowTreeDidFinishTransaction(
       mountingCoordinator_, mountSynchronously);
+#endif
 }
 
 void ShadowTree::mergeReactRevision() const {

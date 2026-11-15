@@ -18,10 +18,9 @@ namespace facebook::react {
 
 class RCTMessageThread : public MessageQueueThread, public std::enable_shared_from_this<RCTMessageThread> {
  public:
-  RCTMessageThread(
-      NSRunLoop *runLoop,
-      RCTJavaScriptCompleteBlock errorBlock,
-      bool stopsRunLoopOnShutdown = true);
+  // React Native's own signature, kept exported (libraries link against it).
+  RCTMessageThread(NSRunLoop *runLoop, RCTJavaScriptCompleteBlock errorBlock);
+  RCTMessageThread(NSRunLoop *runLoop, RCTJavaScriptCompleteBlock errorBlock, bool stopsRunLoopOnShutdown);
   ~RCTMessageThread() override;
   void runOnQueue(std::function<void()> && /*func*/) override;
   void runOnQueueSync(std::function<void()> && /*func*/) override;

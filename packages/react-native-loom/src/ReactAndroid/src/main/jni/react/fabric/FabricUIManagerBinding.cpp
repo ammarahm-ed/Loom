@@ -23,7 +23,9 @@
 #include <jsi/JSIDynamic.h>
 #include <jsi/jsi.h>
 #include <react/featureflags/ReactNativeFeatureFlags.h>
+#if !LOOM_RENDERER
 #include <react/renderer/animations/LayoutAnimationDriver.h>
+#endif
 #include <react/renderer/componentregistry/ComponentDescriptorFactory.h>
 #include <react/renderer/core/EventBeat.h>
 #include <react/renderer/core/EventEmitter.h>
@@ -258,10 +260,12 @@ void FabricUIManagerBinding::startSurfaceWithSurfaceHandler(
 
   surfaceHandler.start();
 
+#if !LOOM_RENDERER // Loom animates layout itself (LoomLayoutAnimations)
   if (ReactNativeFeatureFlags::enableLayoutAnimationsOnAndroid()) {
     surfaceHandler.getMountingCoordinator()->setMountingOverrideDelegate(
         animationDriver_);
   }
+#endif
 
   {
     std::unique_lock lock(surfaceHandlerRegistryMutex_);
@@ -318,10 +322,12 @@ void FabricUIManagerBinding::startSurface(
 
   surfaceHandler->start();
 
+#if !LOOM_RENDERER
   if (ReactNativeFeatureFlags::enableLayoutAnimationsOnAndroid()) {
     surfaceHandler->getMountingCoordinator()->setMountingOverrideDelegate(
         animationDriver_);
   }
+#endif
 }
 
 jint FabricUIManagerBinding::findNextFocusableElement(
@@ -507,10 +513,12 @@ void FabricUIManagerBinding::startSurfaceWithConstraints(
 
   surfaceHandler->start();
 
+#if !LOOM_RENDERER
   if (ReactNativeFeatureFlags::enableLayoutAnimationsOnAndroid()) {
     surfaceHandler->getMountingCoordinator()->setMountingOverrideDelegate(
         animationDriver_);
   }
+#endif
 }
 
 // Used by non-bridgeless+Fabric
@@ -744,10 +752,14 @@ void FabricUIManagerBinding::installFabricUIManager(
   loomHost_ = std::make_shared<LoomAndroidHost>(this, contextContainer);
   LoomHost::registerIn(*contextContainer, loomHost_);
 #endif
+#if LOOM_RENDERER
+  scheduler_ = std::make_shared<Scheduler>(toolbox, nullptr, this);
+#else
   animationDriver_ = std::make_shared<LayoutAnimationDriver>(
       runtimeExecutor, contextContainer, this);
   scheduler_ =
       std::make_shared<Scheduler>(toolbox, animationDriver_.get(), this);
+#endif
 #if LOOM_RENDERER
   directTextLayoutManager_ =
       std::make_shared<const TextLayoutManager>(contextContainer);

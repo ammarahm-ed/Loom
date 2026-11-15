@@ -1,6 +1,9 @@
 /* Copyright (c) Meta Platforms, Inc. and affiliates. */
 #pragma once
 
+// Only the Loom renderer build (LOOM_RENDERER) compiles this header; without it Fabric is untouched.
+#if LOOM_RENDERER
+
 #include <atomic>
 #include <react/renderer/runtimescheduler/LoomSettings.h>
 
@@ -1381,3 +1384,5 @@ class LoomRenderer final {
 };
 
 } // namespace facebook::react
+
+#endif // LOOM_RENDERER

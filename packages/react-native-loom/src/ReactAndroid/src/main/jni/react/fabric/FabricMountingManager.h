@@ -137,6 +137,12 @@ class FabricMountingManager final {
 
   void setIsJSResponder(SurfaceId surfaceId, Tag tag, bool isJSResponder, bool blockNativeResponder);
 
+  // React Native's own signatures (taking the ShadowView), kept exported: libraries link against
+  // them. They forward to the (surfaceId, tag) overloads above.
+  void dispatchCommand(const ShadowView &shadowView, const std::string &commandName, const folly::dynamic &args);
+  void sendAccessibilityEvent(const ShadowView &shadowView, const std::string &eventType);
+  void setIsJSResponder(const ShadowView &shadowView, bool isJSResponder, bool blockNativeResponder);
+
   void onAnimationStarted();
 
   void onAllAnimationsComplete();

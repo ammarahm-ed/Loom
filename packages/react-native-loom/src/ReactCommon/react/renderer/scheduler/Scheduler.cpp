@@ -30,7 +30,9 @@
 #if LOOM_RENDERER
 #include <react/renderer/uimanager/LoomBinding.h>
 #endif
+#if !LOOM_RENDERER
 #include <react/renderer/viewtransition/ViewTransitionModule.h>
+#endif
 #include <mutex>
 
 namespace facebook::react {
@@ -187,10 +189,12 @@ Scheduler::Scheduler(
   uiManager_->setAnimationDelegate(animationDelegate);
 
   // Initialize ViewTransitionModule
+#if !LOOM_RENDERER // Loom answers the view-transition calls itself (LoomBinding)
   if (ReactNativeFeatureFlags::viewTransitionEnabled()) {
     viewTransitionModule_ = std::make_shared<ViewTransitionModule>();
     viewTransitionModule_->initialize(uiManager_.get(), viewTransitionModule_);
   }
+#endif
 
   uiManager->registerMountHook(*eventPerformanceLogger_);
 }

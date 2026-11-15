@@ -122,7 +122,14 @@ class TextLayoutManager {
       const ParagraphAttributes &paragraphAttributes,
       const TextLayoutContext &layoutContext,
       const LayoutConstraints &layoutConstraints,
-      TextLayoutManagerProfile *profile = nullptr) const;
+      TextLayoutManagerProfile *profile) const;
+
+  // React Native's own signature, kept exported (libraries link against it).
+  PreparedTextLayout prepareLayout(
+      const AttributedString &attributedString,
+      const ParagraphAttributes &paragraphAttributes,
+      const TextLayoutContext &layoutContext,
+      const LayoutConstraints &layoutConstraints) const;
 
   /**
    * Derive text and attachment measurements from a PreparedTextLayout.

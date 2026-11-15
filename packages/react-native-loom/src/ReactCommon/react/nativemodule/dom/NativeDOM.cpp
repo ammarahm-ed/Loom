@@ -77,6 +77,13 @@ facebook::react::NativeDOMModuleProvider(
 #endif
 }
 
+// React Native defines this in the global namespace; keep that exported symbol as well
+// (libraries and the default TurboModule provider link against it).
+std::shared_ptr<facebook::react::TurboModule> NativeDOMModuleProvider(
+    std::shared_ptr<facebook::react::CallInvoker> jsInvoker) {
+  return facebook::react::NativeDOMModuleProvider(std::move(jsInvoker));
+}
+
 namespace facebook::react {
 
 namespace {

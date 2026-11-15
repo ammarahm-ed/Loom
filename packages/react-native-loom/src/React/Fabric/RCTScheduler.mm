@@ -214,6 +214,7 @@ class RCTAnimationChoreographer : public AnimationChoreographer {
   if (self = [super init]) {
     _delegateProxy = std::make_unique<SchedulerDelegateProxy>((__bridge void *)self);
 
+#if !LOOM_RENDERER // Loom animates layout itself (LoomLayoutAnimations)
     if (ReactNativeFeatureFlags::enableLayoutAnimationsOnIOS()) {
       _layoutAnimationDelegateProxy = std::make_shared<LayoutAnimationDelegateProxy>((__bridge void *)self);
       _animationDriver = std::make_shared<LayoutAnimationDriver>(
@@ -224,6 +225,7 @@ class RCTAnimationChoreographer : public AnimationChoreographer {
 
       _uiRunLoopObserver->setDelegate(_layoutAnimationDelegateProxy.get());
     }
+#endif
 
     if (ReactNativeFeatureFlags::useSharedAnimatedBackend()) {
       toolbox.animationChoreographer = std::make_shared<RCTAnimationChoreographer>();
@@ -251,9 +253,11 @@ class RCTAnimationChoreographer : public AnimationChoreographer {
 #if LOOM_WORKER
   LoomBinding::shutdownWorkerForUIManager(*_scheduler->getUIManager());
 #endif
+#if !LOOM_RENDERER
   if (_animationDriver) {
     _animationDriver->setLayoutAnimationStatusDelegate(nullptr);
   }
+#endif
 
   _scheduler->setDelegate(nullptr);
 }
@@ -285,7 +289,11 @@ class RCTAnimationChoreographer : public AnimationChoreographer {
 
 - (void)setupAnimationDriver:(const facebook::react::SurfaceHandler &)surfaceHandler
 {
+#if !LOOM_RENDERER
   surfaceHandler.getMountingCoordinator()->setMountingOverrideDelegate(_animationDriver);
+#else
+  (void)surfaceHandler;
+#endif
 }
 
 - (void)onAnimationStarted

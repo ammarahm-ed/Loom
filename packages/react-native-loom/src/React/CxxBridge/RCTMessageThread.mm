@@ -22,6 +22,11 @@
 
 namespace facebook::react {
 
+RCTMessageThread::RCTMessageThread(NSRunLoop *runLoop, RCTJavaScriptCompleteBlock errorBlock)
+    : RCTMessageThread(runLoop, errorBlock, true)
+{
+}
+
 RCTMessageThread::RCTMessageThread(
     NSRunLoop *runLoop,
     RCTJavaScriptCompleteBlock errorBlock,

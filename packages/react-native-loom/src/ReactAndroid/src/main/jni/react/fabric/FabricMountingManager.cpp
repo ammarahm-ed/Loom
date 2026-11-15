@@ -775,6 +775,7 @@ inline bool isLayoutOnlyProp(const std::string& propName) {
              std::string_view{propName}) != layoutOnlyProps.end();
 }
 #endif
+#if !LOOM_RENDERER
 
 inline int getIntBufferSizeForType(CppMountItem::Type mountItemType) {
   switch (mountItemType) {
@@ -911,6 +912,7 @@ inline std::pair<int, int> computeBufferSizes(
   return std::make_pair(batchMountItemIntsSize, batchMountItemObjectsSize);
 }
 
+#endif // !LOOM_RENDERER
 // TODO: this method will be removed when binding for components are code-gen
 jni::local_ref<jstring> getPlatformComponentName(const ShadowView& shadowView) {
   constexpr static std::string_view scrollViewComponentName = "ScrollView";
@@ -925,6 +927,7 @@ jni::local_ref<jstring> getPlatformComponentName(const ShadowView& shadowView) {
   return jni::make_jstring(shadowView.componentName);
 }
 
+#if !LOOM_RENDERER
 inline float scale(Float value, Float pointScaleFactor) {
   std::feclearexcept(FE_ALL_EXCEPT);
   float result = value * pointScaleFactor;
@@ -940,6 +943,7 @@ inline float scale(Float value, Float pointScaleFactor) {
   }
   return result;
 }
+#endif
 
 bool shouldDiffInsertPropsAgainstPreallocatedProps() {
   return ReactNativeFeatureFlags::enableAccumulatedUpdatesInRawPropsAndroid() &&
@@ -994,6 +998,7 @@ jni::local_ref<jobject> getProps(
   return ReadableNativeMap::newObjectCxxArgs(newProps->rawProps);
 }
 
+#if !LOOM_RENDERER
 struct InstructionBuffer {
   InstructionBuffer(int intsSize, int objectsSize)
       : objects(jni::JArrayClass<jobject>::newArray(objectsSize)) {
@@ -1207,8 +1212,15 @@ inline void writeUpdateOverflowInsetMountItem(
           overflowInsetBottom});
 }
 
+#endif // !LOOM_RENDERER
 } // namespace
 
+#if LOOM_RENDERER
+// Loom mounts through its renderer (directApplyBatch); no shadow-tree transaction ever reaches here.
+void FabricMountingManager::executeMount(
+    const MountingTransaction& /*transaction*/,
+    bool /*synchronous*/) {}
+#else
 void FabricMountingManager::executeMount(
     const MountingTransaction& transaction,
     bool synchronous) {
@@ -1698,6 +1710,7 @@ void FabricMountingManager::executeMount(
 
   env->DeleteLocalRef(ints);
 }
+#endif // LOOM_RENDERER
 
 void FabricMountingManager::drainPreallocateViewsQueue() {
   std::vector<QueuedView> queuedViews;
@@ -1862,6 +1875,27 @@ bool FabricMountingManager::isOnMainThread() {
       JFabricUIManager::javaClassStatic()->getMethod<jboolean()>(
           "isOnMainThread");
   return isOnMainThread(javaUIManager_) != 0u;
+}
+
+void FabricMountingManager::dispatchCommand(
+    const ShadowView& shadowView,
+    const std::string& commandName,
+    const folly::dynamic& args) {
+  dispatchCommand(shadowView.surfaceId, shadowView.tag, commandName, args);
+}
+
+void FabricMountingManager::sendAccessibilityEvent(
+    const ShadowView& shadowView,
+    const std::string& eventType) {
+  sendAccessibilityEvent(shadowView.surfaceId, shadowView.tag, eventType);
+}
+
+void FabricMountingManager::setIsJSResponder(
+    const ShadowView& shadowView,
+    bool isJSResponder,
+    bool blockNativeResponder) {
+  setIsJSResponder(
+      shadowView.surfaceId, shadowView.tag, isJSResponder, blockNativeResponder);
 }
 
 void FabricMountingManager::dispatchCommand(

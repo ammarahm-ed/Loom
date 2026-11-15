@@ -301,6 +301,19 @@ TextLayoutManager::PreparedTextLayout TextLayoutManager::prepareLayout(
     const AttributedString& attributedString,
     const ParagraphAttributes& paragraphAttributes,
     const TextLayoutContext& layoutContext,
+    const LayoutConstraints& layoutConstraints) const {
+  return prepareLayout(
+      attributedString,
+      paragraphAttributes,
+      layoutContext,
+      layoutConstraints,
+      nullptr);
+}
+
+TextLayoutManager::PreparedTextLayout TextLayoutManager::prepareLayout(
+    const AttributedString& attributedString,
+    const ParagraphAttributes& paragraphAttributes,
+    const TextLayoutContext& layoutContext,
     const LayoutConstraints& layoutConstraints,
     TextLayoutManagerProfile* profile) const {
   static auto prepareTextLayout =

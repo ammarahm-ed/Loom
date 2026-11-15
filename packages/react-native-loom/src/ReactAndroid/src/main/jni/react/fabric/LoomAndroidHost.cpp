@@ -27,6 +27,10 @@
 
 namespace {
 
+using facebook::react::LoomSettingId;
+using facebook::react::LoomSettings;
+using facebook::react::LoomSettingType;
+
 // Text is left out of the prop diffs: one of its managers reads the stored
 // props in updateState, which would then see only the last delta.
 bool loomSendsPropDiffs(const std::string& name) {
