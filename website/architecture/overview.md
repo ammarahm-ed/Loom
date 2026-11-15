@@ -37,3 +37,9 @@ cached and handed from measuring to drawing, so a paragraph is not laid out twic
 
 A baseline profile for React Native's classes ships inside ReactAndroid, so store installs
 compile the startup path ahead of time.
+
+## Libraries
+
+Libraries reach Loom through React Native's Fabric C++ contracts, which Loom presents on its own
+tree, or through the native API in `<react/loom/Loom.h>`. See
+[Supporting Loom in your library](/guide/supporting-loom).

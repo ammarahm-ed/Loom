@@ -42,6 +42,7 @@ export default defineConfig({
             {text: 'Finding main-thread jank', link: '/guide/jank-reporter'},
             {text: 'Supported libraries', link: '/guide/compatibility'},
             {text: 'Reanimated', link: '/guide/reanimated'},
+            {text: 'Supporting Loom in your library', link: '/guide/supporting-loom'},
             {text: 'Implementing a platform', link: '/guide/platforms'},
             {text: 'Upgrading React Native', link: '/guide/upgrading'},
           ],

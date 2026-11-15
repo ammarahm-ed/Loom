@@ -4,6 +4,9 @@ aside: false
 
 # Implementing a platform
 
+Writing a library that supports Loom is a different job: see
+[Supporting Loom in your library](/guide/supporting-loom).
+
 The renderer core has no iOS or Android code. It computes layout and emits ordered mount
 operations; a *host* turns them into native views and answers the few questions that need live
 native state. This page is the contract for writing one. iOS and Android implement it today, and

@@ -1,9 +1,10 @@
 # Getting started
 
 ::: info
-Installation wires Loom into your app's native projects and builds React Native from source.
-A one-command install (`npx react-native-loom init`), an Expo config plugin and prebuilt
-binaries are coming.
+Loom ships prebuilt: the Android and iOS cores are consumed from a Maven repository, so a first
+build does not compile React Native. A source build (`loom.compileFromSource=true`) is still
+available. A one-command install (`npx react-native-loom init`) and an Expo config plugin are
+coming.
 :::
 
 ## Requirements
@@ -32,9 +33,12 @@ or, in `android/settings.gradle.kts`:
 apply(from = file("../node_modules/react-native-loom/integration/android/loom.settings.gradle"))
 ```
 
-That runs `loom materialize`, includes the materialized tree as a composite build, and
-substitutes `react-android` / `react-native` with `:packages:react-native:ReactAndroid` and
-`hermes-android` / `hermes-engine` with `:packages:react-native:ReactAndroid:hermes-engine`.
+That runs `loom materialize` and, by default, replaces `react-android` / `react-native` with Loom's
+prebuilt `io.github.ammarahm-ed:react-android` (the repository comes from `LOOM_MAVEN_REPOSITORY`).
+Hermes and everything else keep React Native's coordinates. With `loom.compileFromSource=true` it
+includes the materialized tree as a composite build instead, and substitutes `react-android` /
+`react-native` with `:packages:react-native:ReactAndroid` and `hermes-android` / `hermes-engine`
+with `:packages:react-native:ReactAndroid:hermes-engine`.
 
 `android/app/build.gradle`, pointing the React Native Gradle plugin at Loom's tree:
 
@@ -50,10 +54,12 @@ materialized tree, because an included Gradle build cannot see the app's `gradle
 
 ```properties
 # JavaScript on the main thread: instant updates
-loom.renderer=loom
+loom.renderer=true
 loom.js=main
-loom.worker=true
 ```
+
+The five switches (`loom.renderer`, `loom.js`, `loom.worker`, `loom.compileFromSource`,
+`loom.releaseProfiling`) are the same on iOS.
 
 ## iOS
 
@@ -69,14 +75,15 @@ use_react_native!(
 )
 ```
 
-`Loom.react_native_path(__dir__)` materializes the tree and returns its path. It also forces
-`RCT_USE_PREBUILT_RNCORE=0`, because prebuilt React Native core binaries cannot contain the
-overrides.
-
-Install pods with the Loom renderer switched on:
+`Loom.react_native_path(__dir__)` reads the switches (from `ios/Podfile.properties.json` or the
+environment), materializes the tree and returns its path. With the defaults the app links Loom's
+prebuilt core. With `loom.compileFromSource=true` it builds React Native from source, and with
+`loom.renderer=false` it returns the stock package, so React Native's own artifacts are used.
 
 ```sh
-RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 bundle exec pod install
+bundle exec pod install
+# or, for example:
+env loom.js=main bundle exec pod install
 ```
 
 ## Metro and the CLI

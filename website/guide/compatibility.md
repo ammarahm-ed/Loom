@@ -55,6 +55,9 @@ its own thread, on React Native 0.89.
 | @react-native-community/datetimepicker | 9.3.0 | |
 | react-native-linear-gradient | 2.8.3 | |
 
+A library that reaches into the renderer can also talk to Loom directly; see
+[Supporting Loom in your library](/guide/supporting-loom).
+
 A library missing from the list is likely to work if it uses only the interfaces above, which
 is what most libraries do. If one does not, a minimal reproduction in the compatibility app is
 the fastest way to get it fixed: Loom treats it as a Loom bug, since the goal is that libraries

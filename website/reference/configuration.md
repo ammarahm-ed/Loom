@@ -1,49 +1,62 @@
 # Configuration
 
+Loom has five public switches. They have the same names and meaning on Android and iOS.
+
+| Switch | Values | Effect |
+|---|---|---|
+| `loom.renderer` | `true` (default), `false` | Loom's renderer, or plain React Native (Fabric). With `false` the app uses React Native's own artifacts and no Loom code |
+| `loom.js` | `background` (default), `main` | JavaScript on its own thread, or on the main thread |
+| `loom.worker` | `true` (default), `false` | Layout, text and diffing on a worker thread. The prebuilt always has it; `false` only takes effect with `loom.compileFromSource=true` (and prints a warning otherwise). `loom.js=background` requires it |
+| `loom.compileFromSource` | `true`, `false` (default) | Build Loom from source instead of using the prebuilt |
+| `loom.releaseProfiling` | `true`, `false` (default) | Release builds that keep DevTools and tracing, so a release build can be profiled |
+
+The prebuilt Loom core is the default. It is published as one artifact per configuration, for debug,
+debugOptimized, release and release profiling (Android) and Debug, Release and ReleaseProfiling (iOS).
+
 ## Android
 
-Set these in `android/gradle.properties`, or on the command line with `-P<name>=<value>`
-(which wins). With none set, the build is stock React Native.
-
-| Property | Values | Effect |
-|---|---|---|
-| `loom.renderer` | `fabric` (default), `loom` | Which renderer draws the app |
-| `loom.js` | `background` (default), `main` | JavaScript on its own thread, or on the Android main thread |
-| `loom.worker` | `true`, `false` (default) | Layout, text and diffing on a worker thread. Requires `loom.renderer=loom`; required with `loom.js=background` |
-| `loom.profile` | `true`, `false` (default) | Diagnostic C++ and mount timers |
-| `loom.cppTests` | `true`, `false` (default) | Build Loom's C++ tests |
-
-The usual configurations:
+Set the switches in `android/gradle.properties`, or on the command line with `-P<name>=<value>`
+(which wins):
 
 ```properties
-# JavaScript on the main thread
-loom.renderer=loom
-loom.js=main
-loom.worker=true
-
-# JavaScript on its own thread
-loom.renderer=loom
+# JavaScript on its own thread (the default)
+loom.renderer=true
 loom.js=background
-loom.worker=true
+
+# JavaScript on the main thread
+loom.renderer=true
+loom.js=main
 ```
+
+`loom.settings.gradle` (see [Getting started](/guide/getting-started)) reads them. The prebuilt is
+`io.github.ammarahm-ed:react-android` (`-jsmain` for `loom.js=main`, plus `-profiling` for
+`loom.releaseProfiling`), and Hermes keeps React Native's own `com.facebook` coordinates. The
+repository comes from the `LOOM_MAVEN_REPOSITORY` environment variable (a local directory works).
+
+Diagnostics that only exist in a source build, `loom.profile` (C++ and mount timers) and
+`loom.cppTests`, imply `loom.compileFromSource=true`.
 
 Runtime settings have their own section below. The `debug.loom.*` system properties still work as
 overrides (`adb shell setprop <name> <value>`, then restart the app).
 
 ## iOS
 
-Environment variables at `pod install` time:
-
-| Variable | Values | Effect |
-|---|---|---|
-| `RCT_LOOM_RENDERER_IOS` | `1` | Use the Loom renderer |
-| `RCT_LOOM_WORKER_IOS` | `1` | Layout, text and diffing on a worker thread (requires the above) |
-| `RCT_LOOM_JS_IOS` | `main` (default), `background` | JavaScript on the main thread, or on its own thread (`background` requires the worker) |
+Set the switches in `ios/Podfile.properties.json` (`{"loom.js": "main"}`), or in the environment at
+`pod install` time, where the environment wins:
 
 ```bash
-# JavaScript on its own thread
-RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 RCT_LOOM_JS_IOS=background pod install
+# JavaScript on the main thread
+env loom.js=main pod install
+
+# Plain React Native
+env loom.renderer=false pod install
 ```
+
+`Loom.react_native_path` in the Podfile reads the switches and sets up the build. The prebuilt is
+`react-native-artifacts` under the `io.github.ammarahm-ed` group, with React Native's classifiers
+(`reactnative-core-release`, ...); `loom.js=main` adds `jsmain-`, and `loom.releaseProfiling` selects the
+`release-profiling` core for Release. The internal `RCT_LOOM_*_IOS` variables are derived from the
+switches; do not set them.
 
 iOS draws paragraph text on a background queue when it changes inside a box of the same size
 ([Asynchronous text on iOS](/guide/async-text)).
@@ -53,7 +66,7 @@ arguments such as `-LoomAsyncText NO`, still work as overrides.
 
 ## Runtime settings
 
-The build switches above are fixed at compile time. These settings can change while the app runs:
+The build switches above are fixed when the app is built. These settings can change while the app runs:
 
 ```js
 import {Loom} from 'react-native-loom';
@@ -102,7 +115,7 @@ Rules for the JS object:
   default.
 - A boolean setting takes a boolean and a number setting takes a number; anything else throws a
   `TypeError`.
-- Under stock React Native (`loom.renderer=fabric`) `Loom` still imports. `renderer` is `'fabric'`,
+- Under stock React Native (`loom.renderer=false`) `Loom` still imports. `renderer` is `'fabric'`,
   the other settings report their defaults, and writes do nothing (with a development warning).
 
 ### `asyncText`
@@ -210,8 +223,8 @@ Print worker and commit timing. Most of the timing code is compiled in only with
 | Name | Type | Meaning |
 |---|---|---|
 | `renderer` | `'loom'` or `'fabric'` | The renderer the app runs (`loom.renderer`) |
-| `jsOnMainThread` | boolean | JavaScript runs on the thread that owns native views (`loom.js=main`, `RCT_LOOM_JS_IOS=main`) |
-| `worker` | boolean | Layout, text and diffing run on a worker thread (`loom.worker`, `RCT_LOOM_WORKER_IOS`) |
+| `jsOnMainThread` | boolean | JavaScript runs on the thread that owns native views (`loom.js=main`) |
+| `worker` | boolean | Layout, text and diffing run on a worker thread (`loom.worker`) |
 | `version` | string | The `react-native-loom` package version |
 
 ## Debug-only settings

@@ -112,3 +112,24 @@
   .VPDoc:not(.has-aside) .content-container { max-width: 920px; }
   .VPDoc:not(.has-aside) .container { justify-content: flex-start; }
 }
+
+/* Frame timelines */
+.loom-vsync { stroke: var(--vp-c-text-3); stroke-width: 1.2; stroke-dasharray: 3 4; }
+.loom-vsync-label { fill: var(--vp-c-text-3); font-size: 11px; }
+.loom-tl-block rect { fill: var(--vp-c-brand-soft); stroke: var(--vp-c-brand-1); stroke-width: 1.2; }
+.loom-tl-block.green rect { fill: var(--vp-c-green-soft); stroke: var(--vp-c-green-1); }
+.loom-tl-block.purple rect { fill: var(--vp-c-purple-soft); stroke: var(--vp-c-purple-1); }
+.loom-tl-block.yellow rect { fill: var(--vp-c-yellow-soft); stroke: var(--vp-c-yellow-1); }
+.loom-tl-block.indigo rect { fill: var(--vp-c-indigo-soft); stroke: var(--vp-c-indigo-1); }
+.loom-tl-block.red rect { fill: var(--vp-c-red-soft); stroke: var(--vp-c-red-1); }
+.loom-tl-block.gray rect { fill: var(--vp-c-default-soft); stroke: var(--vp-c-text-3); }
+.loom-tl-text { fill: var(--vp-c-text-1); font-size: 12px; font-weight: 500; }
+.loom-tl-result rect { stroke-width: 1.2; }
+.loom-tl-result text { font-size: 11.5px; font-weight: 600; }
+.loom-tl-result.ok rect { fill: var(--vp-c-green-soft); stroke: var(--vp-c-green-1); }
+.loom-tl-result.ok text { fill: var(--vp-c-green-1); }
+.loom-tl-result.late rect { fill: var(--vp-c-red-soft); stroke: var(--vp-c-red-1); }
+.loom-tl-result.late text { fill: var(--vp-c-red-1); }
+.loom-tl-result.stale rect { fill: var(--vp-c-yellow-soft); stroke: var(--vp-c-yellow-1); }
+.loom-tl-result.stale text { fill: var(--vp-c-yellow-1); }
+.loom-tl-legend { fill: var(--vp-c-text-2); font-size: 11.5px; }

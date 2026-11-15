@@ -137,8 +137,8 @@ reference implementation and runs the core's tests on a desktop. See
 | **Host** | A platform's implementation of `LoomHost`: iOS, Android or the headless reference |
 | **Mount batch** | `LoomMountBatch`: the ordered view operations of one commit, applied by the host in one call |
 | **Inline commit** | A small commit processed on the current thread instead of the worker |
-| **Main-thread mode** | `loom.js=main` (`RCT_LOOM_JS_IOS=main` on iOS): JavaScript runs on the main thread |
-| **Background mode** | `loom.js=background` (`RCT_LOOM_JS_IOS=background` on iOS): JavaScript runs on its own thread |
+| **Main-thread mode** | `loom.js=main`: JavaScript runs on the main thread |
+| **Background mode** | `loom.js=background`: JavaScript runs on its own thread |
 | **Overrides** | The files Loom adds to or changes in `react-native`, listed in `overrides.json` |
 | **Materialized tree** | `node_modules/.loom/react-native`: the installed `react-native` with the overrides applied |
 
@@ -148,8 +148,8 @@ reference implementation and runs the core's tests on a desktop. See
 |---|---|---|
 | Loom renderer | Yes | Yes |
 | Worker | Yes | Yes |
-| JavaScript on the main thread | Yes (`loom.js=main`) | Yes (`RCT_LOOM_JS_IOS=main`) |
-| JavaScript on its own thread with the Loom renderer | Yes (`loom.js=background`) | Yes (`RCT_LOOM_JS_IOS=background`) |
+| JavaScript on the main thread | Yes (`loom.js=main`) | Yes (`loom.js=main`) |
+| JavaScript on its own thread with the Loom renderer | Yes (`loom.js=background`) | Yes (`loom.js=background`) |
 | Text drawn off the main thread | No | Yes ([asynchronous text](/guide/async-text)) |
 | Startup baseline profile | Yes | Not applicable |
 | Debug jank reporter | Yes | No |
