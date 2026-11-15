@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build and install the compat app for one platform and one variant.
 #   Usage: scripts/build.sh <ios|android> <main|bg|stock> [run]
-#   main   Loom renderer, JavaScript on the main thread (Android: loom.js=main; iOS: RCT_LOOM_JS_IOS=main)
-#   bg     Loom renderer, JavaScript on its own thread (loom.js=background; iOS: RCT_LOOM_JS_IOS=background)
+#   main   Loom renderer, JavaScript on the main thread (Android: loom.js=main; iOS: loom.js=main)
+#   bg     Loom renderer, JavaScript on its own thread (loom.js=background; iOS: loom.js=background)
 #   stock  stock React Native, no Loom (LOOM_BENCH_STOCK=1)
 # Without "run" the script only builds. Pod install (iOS) is rerun whenever the variant changes,
 # recorded in ios/.variant. Android passes the variant as -P properties, which win over gradle.properties.
@@ -14,8 +14,8 @@ APP="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$APP"
 
 case "$VARIANT" in
-  main)  export LOOM_BENCH_STOCK=0; RCT_JS=main;       LOOM_PROPS="-Ploom.renderer=loom -Ploom.js=main -Ploom.worker=true" ;;
-  bg)    export LOOM_BENCH_STOCK=0; RCT_JS=background; LOOM_PROPS="-Ploom.renderer=loom -Ploom.js=background -Ploom.worker=true" ;;
+  main)  export LOOM_BENCH_STOCK=0; RCT_JS=main;       LOOM_PROPS="-Ploom.renderer=true -Ploom.js=main -Ploom.worker=true -Ploom.compileFromSource=true" ;;
+  bg)    export LOOM_BENCH_STOCK=0; RCT_JS=background; LOOM_PROPS="-Ploom.renderer=true -Ploom.js=background -Ploom.worker=true -Ploom.compileFromSource=true" ;;
   stock) export LOOM_BENCH_STOCK=1; RCT_JS=none;       LOOM_PROPS="" ;;
   *) echo "unknown variant $VARIANT" >&2; exit 1 ;;
 esac
@@ -27,7 +27,7 @@ if [ "$PLATFORM" = ios ]; then
     if [ "$VARIANT" = stock ]; then
       bundle exec pod install
     else
-      RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 RCT_LOOM_JS_IOS=$RCT_JS bundle exec pod install
+      env loom.renderer=true loom.worker=true loom.js=$RCT_JS loom.compileFromSource=true bundle exec pod install
     fi
     echo "$WANT" > .variant
   fi

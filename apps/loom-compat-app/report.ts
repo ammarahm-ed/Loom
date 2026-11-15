@@ -29,6 +29,8 @@ export function report(lib: string, checks: Record<string, Check>) {
   console.log(line);
   NativeModules.LoomBuildConfig?.log?.(line);
   fetch(collectorUrl(), {method: 'POST', body: JSON.stringify(result)}).catch(() => {});
+  // Release builds have no dev server: scripts/collect.js listens here (iOS simulator shares the host network).
+  fetch('http://localhost:8099/', {method: 'POST', body: JSON.stringify(result)}).catch(() => {});
   listeners.forEach(fn => fn(result));
 }
 

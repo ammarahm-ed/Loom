@@ -24,9 +24,9 @@ for variant in ${@:-stock tuned off on}; do
     case $variant in
       stock) env LOOM_BENCH_STOCK=1 ./gradlew :app:assembleRelease -PbenchVariant=stock $COMMON ;;
       tuned) env LOOM_BENCH_STOCK=1 ./gradlew :app:assembleRelease -PbenchVariant=tuned -PbenchTunedFlags=true $COMMON ;;
-      off) ./gradlew :app:assembleRelease -PbenchVariant=off -Ploom.js=background -Ploom.renderer=fabric -Ploom.worker=false $COMMON ;;
-      on) ./gradlew :app:assembleRelease -PbenchVariant=on -Ploom.js=main -Ploom.renderer=loom -Ploom.worker=true $COMMON ;;
-      js) ./gradlew :app:assembleRelease -PbenchVariant=js -Ploom.js=background -Ploom.renderer=loom -Ploom.worker=true $COMMON ;;
+      off) ./gradlew :app:assembleRelease -PbenchVariant=off -Ploom.js=background -Ploom.renderer=false -Ploom.worker=false -Ploom.compileFromSource=true $COMMON ;;
+      on) ./gradlew :app:assembleRelease -PbenchVariant=on -Ploom.js=main -Ploom.renderer=true -Ploom.worker=true -Ploom.compileFromSource=true $COMMON ;;
+      js) ./gradlew :app:assembleRelease -PbenchVariant=js -Ploom.js=background -Ploom.renderer=true -Ploom.worker=true -Ploom.compileFromSource=true $COMMON ;;
       *) echo "unknown variant $variant" >&2; exit 1 ;;
     esac
     cp app/build/outputs/apk/release/app-release.apk "$OUT/app-$variant.apk"

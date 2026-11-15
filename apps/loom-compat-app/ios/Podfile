@@ -1,6 +1,6 @@
 # Loom: node_modules/.loom/react-native (pristine react-native + overrides), or stock with
 # LOOM_BENCH_STOCK=1 (the `stock` variant of scripts/build.sh). Loom switches are read at
-# `pod install` time: RCT_LOOM_RENDERER_IOS, RCT_LOOM_WORKER_IOS, RCT_LOOM_JS_IOS.
+# `pod install` time: loom.renderer, loom.js, loom.worker, loom.compileFromSource (env or Podfile.properties.json).
 if ENV['LOOM_BENCH_STOCK'] == '1'
   RN_PATH = File.expand_path('../node_modules/react-native', __dir__)
   require File.join(RN_PATH, 'scripts/react_native_pods')

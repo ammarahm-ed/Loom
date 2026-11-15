@@ -26,11 +26,11 @@ DD_ROOT=${DD_ROOT:-$REPO/.local/bench/ios-dd}
 mkdir -p "$DD_ROOT"
 
 case $CONFIG in
-  stock) export LOOM_BENCH_STOCK=1; unset RCT_LOOM_RENDERER_IOS RCT_LOOM_WORKER_IOS RCT_LOOM_JS_IOS
+  stock) export LOOM_BENCH_STOCK=1; LOOM_ENV=(env)
          DEFS="LOOM_BENCH_RENDERER=0 LOOM_BENCH_WORKER=0 LOOM_BENCH_JS_ON_MAIN=1 LOOM_BENCH_STOCK=1" ;;
-  on)    unset LOOM_BENCH_STOCK; export RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 RCT_LOOM_JS_IOS=main
+  on)    unset LOOM_BENCH_STOCK; LOOM_ENV=(env loom.renderer=true loom.worker=true loom.js=main loom.compileFromSource=true)
          DEFS="LOOM_BENCH_RENDERER=1 LOOM_BENCH_WORKER=1 LOOM_BENCH_JS_ON_MAIN=1 LOOM_BENCH_STOCK=0" ;;
-  js)    unset LOOM_BENCH_STOCK; export RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 RCT_LOOM_JS_IOS=background
+  js)    unset LOOM_BENCH_STOCK; LOOM_ENV=(env loom.renderer=true loom.worker=true loom.js=background loom.compileFromSource=true)
          DEFS="LOOM_BENCH_RENDERER=1 LOOM_BENCH_WORKER=1 LOOM_BENCH_JS_ON_MAIN=0 LOOM_BENCH_STOCK=0" ;;
   *) echo "unknown config $CONFIG" >&2; exit 2 ;;
 esac
@@ -40,7 +40,7 @@ cd "$APP" || exit 1
 if [ "$CONFIG" != stock ]; then
   node ../../packages/react-native-loom/bin/loom.js materialize || exit 1
 fi
-if [ -n "$SKIP_POD" ]; then : > "$LOG"; else (cd ios && pod install) > "$LOG" 2>&1; fi || { echo "pod install failed, see $LOG"; exit 1; }
+if [ -n "$SKIP_POD" ]; then : > "$LOG"; else (cd ios && "${LOOM_ENV[@]}" pod install) > "$LOG" 2>&1; fi || { echo "pod install failed, see $LOG"; exit 1; }
 cd ios || exit 1
 xcodebuild -workspace LoomTestApp.xcworkspace -scheme LoomTestApp -configuration Release \
   -destination "${DEST:-generic/platform=iOS}" -derivedDataPath "$DD_ROOT/dd-$CONFIG" \
