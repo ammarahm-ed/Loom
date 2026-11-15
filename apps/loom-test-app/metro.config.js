@@ -11,7 +11,17 @@ const {withLoom} = require('react-native-loom/integration/metro');
  *
  * @type {import('@react-native/metro-config').MetroConfig}
  */
-const config = {};
+const path = require('path');
+
+// The example library lives outside the app: let Metro watch and resolve it.
+const exampleLibrary = path.resolve(__dirname, '../../examples/loom-example-library');
+const config = {
+  // Setting watchFolders replaces the default, so list the app and the linked react-native-loom package too.
+  watchFolders: [__dirname, path.resolve(__dirname, '../../packages/react-native-loom'), exampleLibrary],
+  resolver: {
+    extraNodeModules: {'react-native-loom-example-library': exampleLibrary},
+  },
+};
 
 const merged = mergeConfig(getDefaultConfig(__dirname), config);
 

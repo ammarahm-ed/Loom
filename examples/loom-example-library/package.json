@@ -1,0 +1,13 @@
+{
+  "name": "react-native-loom-example-library",
+  "version": "0.1.0",
+  "description": "An example library that supports Fabric and Loom from one codebase (see the guide: Supporting Loom in your library).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": ["src", "cpp", "android", "ios", "react-native-loom-example-library.podspec", "react-native.config.js"],
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  }
+}

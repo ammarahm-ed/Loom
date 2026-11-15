@@ -12,6 +12,7 @@ import { StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Bench from './Bench';
 import Compat from './Compat';
+import LoomExample from './LoomExample';
 import LoomSmokeTest from './LoomSmokeTest';
 
 // `scenario` comes from the launch intent (see MainActivity) when bench/run.js drives the app.
@@ -29,6 +30,8 @@ function App({
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       {scenario === 'compat' ? (
         <Compat />
+      ) : scenario === 'example' ? (
+        <LoomExample />
       ) : scenario ? (
         <Bench scenario={scenario} autoscroll={autoscroll} />
       ) : (

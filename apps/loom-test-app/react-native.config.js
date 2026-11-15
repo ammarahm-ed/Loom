@@ -7,8 +7,18 @@
  * Paths here are resolved relative to the app root (the directory holding this
  * file), not to the current working directory.
  */
+const path = require('path');
+
+// The example library (examples/loom-example-library) is linked by path: autolinking reads it from here
+// and Metro resolves it through `watchFolders` and `extraNodeModules` (metro.config.js).
+const exampleLibrary = {
+  'react-native-loom-example-library': {
+    root: path.resolve(__dirname, '../../examples/loom-example-library'),
+  },
+};
+
 module.exports =
   // LOOM_BENCH_STOCK=1: the stock baseline build for the benchmarks (bench/run.js).
   process.env.LOOM_BENCH_STOCK === '1'
-    ? {}
-    : {reactNativePath: './node_modules/.loom/react-native'};
+    ? {dependencies: exampleLibrary}
+    : {reactNativePath: './node_modules/.loom/react-native', dependencies: exampleLibrary};

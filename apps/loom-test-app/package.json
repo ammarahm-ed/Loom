@@ -18,6 +18,7 @@
     "react-native": "0.89.0-rc.0",
     "@react-native/new-app-screen": "0.89.0-rc.0",
     "react-native-loom": "file:../../packages/react-native-loom",
+    "react-native-loom-example-library": "file:../../examples/loom-example-library",
     "react-native-safe-area-context": "^5.5.2"
   },
   "devDependencies": {
