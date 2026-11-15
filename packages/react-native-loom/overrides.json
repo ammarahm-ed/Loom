@@ -636,6 +636,36 @@
     },
     {
       "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBindingAnimation.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBindingCommit.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBindingJSI.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBindingNodes.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBindingInternals.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
       "file": "ReactCommon/react/renderer/loom/binding/LoomBinding.h",
       "area": "renderer-core",
       "layer": "core"
@@ -691,6 +721,30 @@
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/loom/core/LoomRenderer.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererCommit.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererEmit.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererProps.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererShared.h",
       "area": "renderer-core",
       "layer": "core"
     },
