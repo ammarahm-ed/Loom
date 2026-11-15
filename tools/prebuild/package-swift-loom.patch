@@ -1,0 +1,144 @@
+diff --git a/packages/react-native/Package.swift b/packages/react-native/Package.swift
+index ac1611c..281c7c8 100644
+--- a/packages/react-native/Package.swift
++++ b/packages/react-native/Package.swift
+@@ -18,6 +18,58 @@ let REMOVE_LEGACY_MODULE_INTEROP =
+ let REMOVE_LEGACY_COMPONENT_INTEROP =
+   ProcessInfo.processInfo.environment["RCT_REMOVE_LEGACY_COMPONENT_INTEROP"] == "1"
+ 
++// Loom: compile-time switches of the published configuration, same names and meaning as the
++// Loom podspecs (RCT_LOOM_*_IOS). The renderer is off unless RCT_LOOM_RENDERER_IOS=1; the worker
++// defaults to on with the renderer; JavaScript runs on `background` unless RCT_LOOM_JS_IOS=main.
++let LOOM_RENDERER = ProcessInfo.processInfo.environment["RCT_LOOM_RENDERER_IOS"] == "1"
++let LOOM_WORKER =
++  LOOM_RENDERER
++  && (ProcessInfo.processInfo.environment["RCT_LOOM_WORKER_IOS"].map { $0 == "1" } ?? true)
++let LOOM_JS_ON_MAIN = (ProcessInfo.processInfo.environment["RCT_LOOM_JS_IOS"] ?? "background") == "main"
++// Prebuild (tools/prebuild/ios.sh), every flavor: Fabric's renderer internals are not compiled under the Loom
++// renderer, every export of React Native's own binary of the same flavor is still exported by a generated stub
++// target (tools/prebuild/gen-export-stubs-ios.py): RCT_LOOM_STUBS_IOS=1. RCT_LOOM_STUBS_PASS1_IOS=1 is the first of
++// the two passes (no stubs, unresolved names tolerated, to learn which exports have no code).
++// RCT_LOOM_LEAN_RELEASE_IOS=1 (Release only) also drops the inspector, DevTools and tracing code;
++// RCT_LOOM_PROFILING_IOS=1 is Release with DevTools and tracing kept (not lean).
++let LOOM_STUBS = LOOM_RENDERER && ProcessInfo.processInfo.environment["RCT_LOOM_STUBS_IOS"] == "1"
++let LOOM_LEAN = ProcessInfo.processInfo.environment["RCT_LOOM_LEAN_RELEASE_IOS"] == "1"
++let LOOM_STUBS_PASS1 = ProcessInfo.processInfo.environment["RCT_LOOM_STUBS_PASS1_IOS"] == "1"
++let LOOM_PROFILING = ProcessInfo.processInfo.environment["RCT_LOOM_PROFILING_IOS"] == "1"
++// Release flavors only (set by tools/prebuild/ios.sh): `.when(configuration:)` is not honored for linker
++// unsafeFlags of a package product, which stripped the Debug core's local symbols too.
++let LOOM_STRIP_LOCALS = ProcessInfo.processInfo.environment["RCT_LOOM_STRIP_LOCALS_IOS"] == "1"
++let LOOM_STUBS_PATH = "loom-stubs"  // written by tools/prebuild/ios.sh: loom_export_stubs.S, stub.c, include/
++
++/// The .cpp/.mm files directly in `dir` (relative to the package root) that are not in `keep`.
++func loomLeanExcludeSources(_ dir: String, keeping keep: [String]) -> [String] {
++  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(dir).path
++  let names = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
++  return names.filter { ($0.hasSuffix(".cpp") || $0.hasSuffix(".mm")) && !keep.contains($0) }.sorted()
++}
++
++/// Sources left out of the target at `path` in a lean Release (paths relative to that target).
++func loomLeanExcludes(_ path: String) -> [String] {
++  switch path {
++  case "ReactCommon/jsinspector-modern" where LOOM_LEAN:
++    return loomLeanExcludeSources(path, keeping: ["FallbackRuntimeTargetDelegate.cpp", "InspectorFlags.cpp", "LoomLeanStubs.cpp"])
++  case "ReactCommon/jsinspector-modern/tracing" where LOOM_LEAN:
++    return loomLeanExcludeSources(path, keeping: ["EventLoopReporter.cpp"])
++  case "ReactCommon/jsinspector-modern/network" where LOOM_LEAN:
++    return loomLeanExcludeSources(path, keeping: ["HttpUtils.cpp"])
++  case "ReactCommon/react/renderer" where LOOM_STUBS:
++    // Fabric's renderer under the Loom renderer: Loom mounts, diffs and animates through its own renderer.
++    return [
++      "mounting/Differentiator.cpp", "mounting/updateMountedFlag.cpp", "mounting/stubs",
++      "mounting/internal/sliceChildShadowNodeViewPairs.cpp", "mounting/internal/CullingContext.cpp",
++      "animations/LayoutAnimationDriver.cpp", "animations/LayoutAnimationKeyFrameManager.cpp", "animations/utils.cpp",
++      "viewtransition/ViewTransitionModule.cpp",
++    ]
++  default:
++    return []
++  }
++}
++
+ /**
+  This is the `Package.swift` file that allows to build React Native core using Swift PM.
+  To build React Native, you need to follow these steps:
+@@ -402,7 +454,7 @@ let reactNativeModuleDom = RNTarget(
+ /// RCTTypeSafety.podspec
+ let rctTypesafety = RNTarget(
+   name: .rctTypesafety,
+-  path: "Libraries/Typesafety",
++  path: "Libraries/TypeSafety",
+   searchPaths: [FBLazyVectorPath],
+   dependencies: [.reactNativeDependencies, .yoga]
+ )
+@@ -761,6 +813,21 @@ let targets = [
+ 
+ // MARK: Package object
+ 
++let loomStubTargets: [Target] =
++  LOOM_STUBS
++  ? [
++    .target(
++      name: "LoomExportStubs",
++      path: LOOM_STUBS_PATH,
++      publicHeadersPath: "include",
++      linkerSettings:
++        (LOOM_STUBS_PASS1 ? [.unsafeFlags(["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"])] : [])
++        // Size, no behaviour: drop the local (non-exported) symbols of a Release binary; every exported name stays.
++        + (LOOM_STRIP_LOCALS ? [.unsafeFlags(["-Xlinker", "-x"])] : [])
++    )
++  ]
++  : []
++
+ let package = Package(
+   name: react,
+   platforms: [.iOS(.v15), .macCatalyst(SupportedPlatform.MacCatalystVersion.v13)],
+@@ -768,10 +835,10 @@ let package = Package(
+     .library(
+       name: react,
+       type: .dynamic,
+-      targets: targets.map { $0.name }
++      targets: targets.map { $0.name } + loomStubTargets.map { $0.name }
+     )
+   ],
+-  targets: targets.map { $0.target(targets: targets) }
++  targets: targets.map { $0.target(targets: targets) } + loomStubTargets
+ )
+ 
+ // MARK: Support & Utility Classes
+@@ -968,7 +1035,7 @@ extension Target {
+     defines: [CXXSetting] = []
+   ) -> Target {
+     let dependencies = dependencies.map { Dependency.byNameItem(name: $0, condition: nil) }
+-    let excludes = excludedPaths
++    let excludes = excludedPaths + loomLeanExcludes(path)
+     let numOfSlash = path.count { $0 == "/" }
+ 
+     let cxxCommonHeaderPaths: [CXXSetting] =
+@@ -983,6 +1050,18 @@ extension Target {
+       (REMOVE_LEGACY_MODULE_INTEROP ? [.define("RCT_REMOVE_LEGACY_MODULE_INTEROP", to: "1")] : [])
+       + (REMOVE_LEGACY_COMPONENT_INTEROP ? [.define("RCT_REMOVE_LEGACY_COMPONENT_INTEROP", to: "1")] : [])
+ 
++    let loomDefines: [CXXSetting] =
++      (LOOM_LEAN ? [.define("LOOM_LEAN_RELEASE", to: "1")] : [])
++      + (LOOM_PROFILING
++        ? [.define("REACT_NATIVE_DEBUGGER_ENABLED", to: "1", .when(configuration: .release)),
++           .define("REACT_NATIVE_DEBUGGER_MODE_PROD", to: "1", .when(configuration: .release))]
++        : [])
++      + (LOOM_RENDERER
++      ? [.define("LOOM_RENDERER", to: "1"), .define("LOOM_RENDERER_IOS", to: "1"),
++         .define("LOOM_JS_ON_MAIN", to: LOOM_JS_ON_MAIN ? "1" : "0")]
++        + (LOOM_WORKER ? [.define("LOOM_WORKER", to: "1")] : [])
++      : [])
++
+     // Every target built through this factory is React Native's own, so RN_BUILDING
+     // keeps the react/cxxstableapi guards inert for internal sources. cxxSettings are
+     // per-target and are not inherited by packages that depend on React, so this does
+@@ -996,7 +1075,7 @@ extension Target {
+         .define("RCT_REMOVE_LEGACY_ARCH", to: "1"),
+         .define("HERMES_V1_ENABLED", to: "1"),
+         .define("RN_BUILDING", to: "1"),
+-      ] + legacyInteropDefines + defines + cxxCommonHeaderPaths
++      ] + legacyInteropDefines + loomDefines + defines + cxxCommonHeaderPaths
+ 
+     return .target(
+       name: name,

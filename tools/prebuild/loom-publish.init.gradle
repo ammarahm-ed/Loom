@@ -1,0 +1,129 @@
+// Gradle init script: re-targets RN's own publishing (publish.gradle) at Loom's Maven coordinates
+// and a local repository. Used with the monorepo checkout prepared by tools/prebuild/prepare.sh.
+//
+//   LOOM_PUBLISHING_GROUP=io.github.ammarahm-ed   (default)
+//   LOOM_MAVEN_REPO=<dir>                         local repository directory (required)
+//   LOOM_PUBLISH_VERSION=<version>                Maven version (default: React Native's VERSION_NAME). The
+//                                                 release workflow sets it to react-native-loom's package.json version.
+//
+// RN's publish.gradle hardcodes group (project.group in each module's build.gradle.kts) and the
+// repository (file:///tmp/maven-local); this overrides both without editing RN's files.
+def loomGroup = System.getenv("LOOM_PUBLISHING_GROUP") ?: "io.github.ammarahm-ed"
+def loomRepo = System.getenv("LOOM_MAVEN_REPO")
+def loomVersion = System.getenv("LOOM_PUBLISH_VERSION")
+if (!loomRepo) throw new GradleException("LOOM_MAVEN_REPO=<dir> is required")
+
+gradle.allprojects { p ->
+  if (p.path == ":packages:react-native:ReactAndroid" || p.path == ":packages:react-native:ReactAndroid:external-artifacts") {
+    p.afterEvaluate {
+      p.group = loomGroup
+      if (loomVersion) p.version = loomVersion
+      p.publishing {
+        publications.configureEach {
+          groupId = loomGroup
+          if (loomVersion) version = loomVersion
+          // RN's publish.gradle describes React Native; Loom's artifacts point at Loom.
+          pom {
+            name = "Loom"
+            description = "Loom: a faster renderer for React Native. Prebuilt React Native core with the Loom renderer."
+            url = "https://github.com/ammarahm-ed/loom"
+            // RN already declared its own developers and license; these lists are additive in the DSL,
+            // so replace them in the generated XML.
+            withXml { xml ->
+              def root = xml.asNode()
+              root.children().findAll { it.name().toString().endsWith("developers") || it.name().toString().endsWith("licenses") }
+                  .each { root.remove(it) }
+              root.appendNode("licenses").appendNode("license").with {
+                appendNode("name", "MIT License")
+                appendNode("url", "https://github.com/ammarahm-ed/loom/blob/main/LICENSE")
+              }
+              root.appendNode("developers").appendNode("developer").with {
+                appendNode("id", "ammarahm-ed")
+                appendNode("name", "Ammar Ahmed")
+              }
+            }
+            scm {
+              url = "https://github.com/ammarahm-ed/loom"
+              connection = "scm:git:https://github.com/ammarahm-ed/loom.git"
+              developerConnection = "scm:git:git@github.com:ammarahm-ed/loom.git"
+            }
+          }
+          // loom.js=main is published next to the default (background) build under its own artifactId.
+          if (p.path == ":packages:react-native:ReactAndroid" && System.getenv("LOOM_JS") == "main") {
+            artifactId = "react-android-jsmain"
+          }
+          // loom.releaseProfiling=true is published beside the default release under its own artifactId.
+          if (p.path == ":packages:react-native:ReactAndroid" && p.findProperty("loom.releaseProfiling") == "true") {
+            artifactId = (System.getenv("LOOM_JS") == "main" ? "react-android-jsmain" : "react-android") + "-profiling"
+          }
+        }
+        repositories { maven { name = "loomLocal"; url = uri(loomRepo) } }
+      }
+    }
+  }
+}
+
+// Size: RN ships the UNSTRIPPED native libs as prefab link-time copies (about 146 MB of the 160 MB release
+// AAR). AGP packages the prefab copy into apps (not the AAR's jni/ copy), so it must stay a complete,
+// loadable library: strip it (like AGP strips jni/) and publish the full-symbol originals as a separate
+// `<variant>-symbols` zip, so crash symbolication still works. Same four ABIs as RN.
+// (Link-only llvm-ifs stubs were tried first: lld links against them, but AGP then packages the stub.)
+def ndk = System.getenv("ANDROID_NDK")
+def strip = ndk ? new File("$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-strip") : null
+if (strip == null || !strip.exists()) strip = ndk ? new File("$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip") : null
+if (strip == null || !strip.exists()) throw new GradleException("llvm-strip not found under ANDROID_NDK=$ndk")
+def runCmd = { cmd ->
+  def pr = new ProcessBuilder(cmd.collect { it.toString() }).redirectErrorStream(true).start()
+  def out = pr.inputStream.text
+  if (pr.waitFor() != 0) throw new GradleException("command failed: ${cmd}\n${out}")
+}
+gradle.allprojects { p ->
+  if (p.path == ":packages:react-native:ReactAndroid") {
+    def only = p.findProperty("loom.publishVariants")?.toString()?.split(",")?.collect { it.trim().toLowerCase() }
+    ["Debug", "DebugOptimized", "Release"].findAll { only == null || only.contains(it.toLowerCase()) }.each { V ->
+      def variant = V.substring(0, 1).toLowerCase() + V.substring(1)
+      def symDir = p.layout.buildDirectory.dir("loom-symbols/$variant")
+      p.tasks.matching { it.name == "prefab${V}Package" }.configureEach { t ->
+        t.outputs.dir(symDir)
+        t.inputs.property("loomPrefabMode", "strip-v2")   // keeps the build cache from restoring unstripped outputs
+        t.doLast {
+          def out = t.outputDirectory.get().asFile
+          def sym = symDir.get().asFile
+          sym.deleteDir()
+          def count = 0
+          new File(out, "modules").eachFileRecurse { f ->
+            if (f.isFile() && f.name.endsWith(".so")) {
+              def rel = out.toPath().relativize(f.toPath()).toString()
+              def keep = new File(sym, "prefab/" + rel)
+              keep.parentFile.mkdirs()
+              java.nio.file.Files.copy(f.toPath(), keep.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+              runCmd([strip.path, "--strip-unneeded", f.path])
+              count++
+            }
+          }
+          if (count == 0) throw new GradleException("no prefab libs found to strip in $out")
+        }
+      }
+      def zipTask = p.tasks.register("loomSymbols$V", Zip) {
+        dependsOn("prefab${V}Package")
+        archiveBaseName = "symbols"
+        destinationDirectory = p.layout.buildDirectory.dir("loom-symbols-zip")
+        archiveFileName = "symbols-${variant}.zip"
+        from(symDir)
+      }
+      p.afterEvaluate {
+        p.publishing.publications.matching { it.name == "release" }.configureEach { pub ->
+          pub.artifact(zipTask) { classifier = "${variant}-symbols"; extension = "zip" }
+        }
+      }
+    }
+  }
+}
+
+// LOOM_SKIP_NATIVE=1: the native libraries were built by earlier invocations (tools/prebuild/android.sh builds one
+// variant at a time to bound disk use); publish from their outputs without compiling again.
+if (System.getenv("LOOM_SKIP_NATIVE") == "1") {
+  gradle.taskGraph.whenReady { graph ->
+    graph.allTasks.each { t -> if (t.name.startsWith("buildCMake") || t.name.startsWith("configureCMake")) t.enabled = false }
+  }
+}
