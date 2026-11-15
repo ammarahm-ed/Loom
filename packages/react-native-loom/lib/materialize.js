@@ -22,6 +22,7 @@ const GRADLE_SWITCHES = [
   'loom.worker',
   'loom.profile',
   'loom.cppTests',
+  'loom.releaseProfiling',
 ];
 
 function readGradleSwitches(projectRoot) {
@@ -90,6 +91,7 @@ function materialize({projectRoot, force = false, out, log = console.log}) {
   let applied = 0;
   for (const o of manifest.overrides) {
     const target = path.join(tmp, o.file);
+    if (o.monorepoOnly && !fs.existsSync(target)) continue; // monorepo build tooling, not in the npm package
     if (o.type === 'patch' || o.type === 'platform') {
       fs.mkdirSync(path.dirname(target), {recursive: true});
       fs.copyFileSync(overridePath(o), target);

@@ -29,6 +29,10 @@ function validate({upstreamDir, upstreamVersion, manifest = loadManifest()}) {
     }
     const up = path.join(upstreamDir, o.file);
     if (o.type === 'patch' || o.type === 'delete') {
+      if (!fs.existsSync(up) && o.monorepoOnly) {
+        // Build tooling that exists only in the react-native monorepo (Loom's own prebuild), not in the npm package.
+        continue;
+      }
       if (!fs.existsSync(up)) {
         errors.push(`${o.file}: ${o.type} target no longer exists upstream`);
       } else if (sha256File(up) !== o.baseHash) {

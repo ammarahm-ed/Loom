@@ -17,12 +17,71 @@ require 'open3'
 module Loom
   LOOM_BIN = File.expand_path('../../bin/loom.js', __dir__)
 
-  # Materializes react-native + overrides and returns the absolute path.
-  # `ios_dir` is the directory containing the Podfile; the app root is its parent
-  # unless LOOM_APP_ROOT is set.
+  # The public switches, with the same names and meaning as android/gradle.properties:
+  #
+  #   loom.renderer          true | false       Loom, or plain React Native (Fabric)            (default: true)
+  #   loom.js                main | background  where JavaScript runs                          (default: background)
+  #   loom.worker            true | false       Loom's worker thread (prebuilt: always true)   (default: true)
+  #   loom.compileFromSource true | false       build Loom from source instead of the prebuilt (default: false)
+  #   loom.releaseProfiling  true | false       Release with DevTools and tracing kept         (default: false)
+  #
+  # Set them in ios/Podfile.properties.json (`{"loom.renderer": "true", ...}`) or, for CI, in the
+  # environment with env(1): `env loom.renderer=true pod install`. The environment wins.
+  def self.setting(ios_dir, key)
+    return ENV[key] if ENV[key] && !ENV[key].empty?
+    file = File.join(ios_dir, 'Podfile.properties.json')
+    return nil unless File.exist?(file)
+    value = JSON.parse(File.read(file))[key]
+    value.nil? ? nil : value.to_s
+  end
+
+  def self.boolean(ios_dir, key, default)
+    value = setting(ios_dir, key)
+    return default if value.nil?
+    raise "Loom: #{key} must be true or false, got '#{value}'" unless %w[true false].include?(value)
+    value == 'true'
+  end
+
+  # Applies the switches to the environment the Loom podspecs, Package.swift and rncore.rb read, and
+  # returns :stock (plain React Native), :prebuilt (Loom's published core) or :source.
+  def self.configure(ios_dir)
+    renderer = boolean(ios_dir, 'loom.renderer', true)
+    compile = boolean(ios_dir, 'loom.compileFromSource', false)
+    js = setting(ios_dir, 'loom.js') || 'background'
+    raise "Loom: loom.js must be main or background, got '#{js}'" unless %w[main background].include?(js)
+    worker = boolean(ios_dir, 'loom.worker', true)
+
+    # The internal variables are derived, never set by apps.
+    %w[RCT_LOOM_RENDERER_IOS RCT_LOOM_WORKER_IOS RCT_LOOM_JS_IOS RCT_LOOM_PROFILING_IOS].each { |k| ENV.delete(k) }
+    if renderer
+      ENV['RCT_LOOM_RENDERER_IOS'] = '1'
+      ENV['RCT_LOOM_JS_IOS'] = js
+      # A prebuilt has the worker built in; loom.worker=false only exists in a source build.
+      if !compile && !worker
+        Pod::UI.warn 'Loom: loom.worker=false only takes effect when compiling from source; the prebuilt has the worker built in. Set loom.compileFromSource=true to build without it.' if defined?(Pod::UI)
+        worker = true
+      end
+      ENV['RCT_LOOM_WORKER_IOS'] = worker ? '1' : '0'
+    end
+
+    # Release with DevTools and tracing: the release-profiling core of the prebuilt, or the debugger
+    # macros in Release pods of a source build (scripts/cocoapods/utils.rb). Without the renderer it
+    # applies to the source build only (React Native's own prebuilt has no such flavor).
+    ENV['RCT_LOOM_PROFILING_IOS'] = '1' if boolean(ios_dir, 'loom.releaseProfiling', false)
+
+    return :stock if !renderer && !compile
+    ENV['RCT_USE_PREBUILT_RNCORE'] = compile ? '0' : '1'
+    compile ? :source : :prebuilt
+  end
+
+  # Returns the absolute react-native path to build with. `ios_dir` is the directory containing the
+  # Podfile; the app root is its parent unless LOOM_APP_ROOT is set. Plain React Native (renderer off,
+  # no source build) returns the stock package, so React Native's own prebuilt artifacts are used;
+  # everything else materializes react-native + overrides.
   def self.react_native_path(ios_dir)
     @path ||= begin
       app_root = ENV['LOOM_APP_ROOT'] || File.expand_path('..', ios_dir)
+      mode = configure(ios_dir)
       unless ENV['LOOM_SKIP_MATERIALIZE'] == '1'
         out, status = Open3.capture2e('node', LOOM_BIN, 'materialize', chdir: app_root)
         raise "loom materialize failed:\n#{out}" unless status.success?
@@ -30,9 +89,14 @@ module Loom
       end
       dir = File.join(app_root, 'node_modules', '.loom', 'react-native')
       raise "Loom: #{dir} missing; run `npx loom materialize`" unless File.exist?(File.join(dir, '.loom-stamp.json'))
-      # Overrides patch React-Core sources; prebuilt RN core binaries cannot contain them.
-      ENV['RCT_USE_PREBUILT_RNCORE'] = '0'
-      dir
+      Pod::UI.puts "Loom: #{mode}" if defined?(Pod::UI)
+      if mode == :stock
+        stock, status = Open3.capture2('node', '-p', "require('path').dirname(require.resolve('react-native/package.json', {paths: [process.argv[1]]}))", app_root)
+        raise 'Loom: cannot resolve react-native' unless status.success?
+        stock.strip
+      else
+        dir
+      end
     end
   end
 end

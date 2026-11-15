@@ -6,6 +6,13 @@
   "overrides": [
     {
       "type": "patch",
+      "file": "index.js",
+      "area": "js-renderer",
+      "layer": "core",
+      "baseHash": "fd589b1e3fbceb1aeddd59b42f8460f12dd10b0c7c1f67147a148e985c428cf1"
+    },
+    {
+      "type": "patch",
       "file": "Libraries/Components/View/View.js",
       "area": "js-renderer",
       "layer": "core",
@@ -18,17 +25,17 @@
       "layer": "core"
     },
     {
+      "type": "platform",
+      "file": "Libraries/LayoutAnimation/__tests__/LayoutAnimation-test.js",
+      "area": "animation",
+      "layer": "core"
+    },
+    {
       "type": "patch",
       "file": "Libraries/LayoutAnimation/LayoutAnimation.js",
       "area": "animation",
       "layer": "core",
       "baseHash": "c46dee650df343ffd2993d4c14159fd788939b593134c0deea01eb4537ac1d52"
-    },
-    {
-      "type": "platform",
-      "file": "Libraries/LayoutAnimation/__tests__/LayoutAnimation-test.js",
-      "area": "animation",
-      "layer": "core"
     },
     {
       "type": "patch",
@@ -49,6 +56,13 @@
       "area": "lists",
       "layer": "core",
       "baseHash": "94d0e1f682f3422648451be3070a68a6e69eeddce7bed4c43cc3124e89565b5e"
+    },
+    {
+      "type": "patch",
+      "file": "Libraries/Performance/Systrace.js",
+      "area": "profiling",
+      "layer": "core",
+      "baseHash": "80e101c7265f79d029f408fd1f702431d9e1dabd898928a881cff2ebd791b8f0"
     },
     {
       "type": "patch",
@@ -183,17 +197,17 @@
       "layer": "android"
     },
     {
-      "type": "platform",
-      "file": "ReactAndroid/src/main/java/com/facebook/react/common/JankReporterSupport.kt",
-      "area": "threading",
-      "layer": "android"
-    },
-    {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/common/assets/ReactFontManager.kt",
       "area": "threading",
       "layer": "android",
       "baseHash": "a696068cc51b2180c06612baaae46cd62cce348824d19734be1c05d7bfc01aa8"
+    },
+    {
+      "type": "platform",
+      "file": "ReactAndroid/src/main/java/com/facebook/react/common/JankReporterSupport.kt",
+      "area": "threading",
+      "layer": "android"
     },
     {
       "type": "patch",
@@ -460,6 +474,19 @@
     },
     {
       "type": "patch",
+      "file": "ReactCommon/cmake-utils/react-native-flags.cmake",
+      "area": "build",
+      "layer": "core",
+      "baseHash": "b29f562f538ea3e3de5fc68755be79acb1d7c24cb60b7e39a279a3b2ecffa994"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/jsinspector-modern/LoomLeanStubs.cpp",
+      "area": "build",
+      "layer": "core"
+    },
+    {
+      "type": "patch",
       "file": "ReactCommon/React-Fabric.podspec",
       "area": "build",
       "layer": "ios",
@@ -474,17 +501,22 @@
     },
     {
       "type": "patch",
-      "file": "ReactCommon/cmake-utils/react-native-flags.cmake",
-      "area": "build",
-      "layer": "core",
-      "baseHash": "b29f562f538ea3e3de5fc68755be79acb1d7c24cb60b7e39a279a3b2ecffa994"
-    },
-    {
-      "type": "patch",
       "file": "ReactCommon/react/featureflags/ReactNativeFeatureFlagsDefaults.h",
       "area": "fabric-compat",
       "layer": "core",
       "baseHash": "cf2c4801705fe1fa0ce44885fe749d9505d61371cd73b774836b19d8d378c679"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/loom/config/LoomConfig.h",
+      "area": "misc",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/loom/Loom.h",
+      "area": "misc",
+      "layer": "core"
     },
     {
       "type": "patch",
@@ -520,6 +552,13 @@
       "area": "dom",
       "layer": "ios",
       "baseHash": "43bd4db179fbc21a8c7df3f6b9127c74aa7dc4ea4cc09b9d58c7716f0ec29e4a"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/renderer/animated/internal/AnimatedMountingOverrideDelegate.cpp",
+      "area": "fabric-compat",
+      "baseHash": "b2781adea7d7af07f5b2a9384f7d9804b2e510b07116c29d4df8bdc160ac41a8",
+      "layer": "core"
     },
     {
       "type": "patch",
@@ -578,6 +617,19 @@
       "baseHash": "a598e7866d734644534d8de9045f2ad5925ff259c6b344543f99e930cd925f49"
     },
     {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/LoomConfig.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/renderer/mounting/MountingCoordinator.cpp",
+      "area": "fabric-compat",
+      "baseHash": "650b1f53b85676244bf26c4611447fc1e0fa69d9bbef9de1924f9dddde477e0a",
+      "layer": "core"
+    },
+    {
       "type": "patch",
       "file": "ReactCommon/react/renderer/mounting/ShadowTree.cpp",
       "area": "fabric-compat",
@@ -624,6 +676,20 @@
     },
     {
       "type": "patch",
+      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.cpp",
+      "area": "threading",
+      "layer": "core",
+      "baseHash": "ef3359e748689497725711d7143a2c4f3cfc621ad41338ced0e6bcc11befcb08"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.h",
+      "area": "threading",
+      "layer": "core",
+      "baseHash": "8de303270ad4ff2092671ad8e3cb8ddeed2d7b4e79f4e0d07bc193875e4f9077"
+    },
+    {
+      "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler.cpp",
       "area": "threading",
       "layer": "core",
@@ -641,20 +707,6 @@
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h",
       "area": "threading",
       "layer": "core"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.cpp",
-      "area": "threading",
-      "layer": "core",
-      "baseHash": "ef3359e748689497725711d7143a2c4f3cfc621ad41338ced0e6bcc11befcb08"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.h",
-      "area": "threading",
-      "layer": "core",
-      "baseHash": "8de303270ad4ff2092671ad8e3cb8ddeed2d7b4e79f4e0d07bc193875e4f9077"
     },
     {
       "type": "patch",
@@ -690,6 +742,18 @@
       "area": "text",
       "layer": "ios",
       "baseHash": "d0a90936f558925ef739068649a7ceed170bdd17791bfa59e477051870a1be4c"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomApi.cpp",
+      "area": "misc",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/uimanager/LoomApiInternal.h",
+      "area": "misc",
+      "layer": "core"
     },
     {
       "type": "platform",
@@ -866,20 +930,6 @@
       "layer": "core"
     },
     {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/uimanager/UIManager.cpp",
-      "area": "fabric-compat",
-      "layer": "core",
-      "baseHash": "c64a4beca1dbbe38e49d4fb5f784c89695340770febf77661173854008f7244d"
-    },
-    {
-      "type": "patch",
-      "file": "ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp",
-      "area": "delegate-plumbing",
-      "layer": "core",
-      "baseHash": "622fbbc9a71b668e8d8d4e08b437a3712640323a2d2881c08c0a0d7d3a849a78"
-    },
-    {
       "type": "platform",
       "file": "ReactCommon/react/renderer/uimanager/tests/LoomRendererTest.cpp",
       "area": "renderer-core",
@@ -905,17 +955,17 @@
     },
     {
       "type": "patch",
-      "file": "ReactCommon/react/runtime/TimerManager.cpp",
-      "area": "runtime",
+      "file": "ReactCommon/react/renderer/uimanager/UIManager.cpp",
+      "area": "fabric-compat",
       "layer": "core",
-      "baseHash": "4da567def5bf1c65895cb8dc70682c03371008f30f30f7022a56c9412ce57275"
+      "baseHash": "c64a4beca1dbbe38e49d4fb5f784c89695340770febf77661173854008f7244d"
     },
     {
       "type": "patch",
-      "file": "ReactCommon/react/runtime/TimerManager.h",
-      "area": "runtime",
+      "file": "ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp",
+      "area": "delegate-plumbing",
       "layer": "core",
-      "baseHash": "afa6c08ee7fac1a5a994c9b66f70200ae719b3ef1ab29abd8838ab989ff4aac3"
+      "baseHash": "622fbbc9a71b668e8d8d4e08b437a3712640323a2d2881c08c0a0d7d3a849a78"
     },
     {
       "type": "patch",
@@ -954,10 +1004,39 @@
     },
     {
       "type": "patch",
-      "file": "index.js",
-      "area": "js-renderer",
+      "file": "ReactCommon/react/runtime/TimerManager.cpp",
+      "area": "runtime",
       "layer": "core",
-      "baseHash": "fd589b1e3fbceb1aeddd59b42f8460f12dd10b0c7c1f67147a148e985c428cf1"
+      "baseHash": "4da567def5bf1c65895cb8dc70682c03371008f30f30f7022a56c9412ce57275"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommon/react/runtime/TimerManager.h",
+      "area": "runtime",
+      "layer": "core",
+      "baseHash": "afa6c08ee7fac1a5a994c9b66f70200ae719b3ef1ab29abd8838ab989ff4aac3"
+    },
+    {
+      "type": "patch",
+      "file": "scripts/cocoapods/rncore.rb",
+      "area": "build",
+      "layer": "ios",
+      "baseHash": "111e09df4e5e7768c91f03f22f1a4330379e4bde4f75bdece10020123359fc1e"
+    },
+    {
+      "type": "patch",
+      "file": "scripts/cocoapods/utils.rb",
+      "area": "build",
+      "baseHash": "a7106212e0ef022ccb8c05eb2074e8bef0568445d867114a94475594a905b715",
+      "layer": "ios"
+    },
+    {
+      "type": "patch",
+      "file": "scripts/ios-prebuild/headers-config.js",
+      "monorepoOnly": true,
+      "area": "build",
+      "baseHash": "0332fe189f9868522f3735a6d99dbf9a7dcc8abf062916a55b29e147dce92098",
+      "layer": "ios"
     },
     {
       "type": "patch",

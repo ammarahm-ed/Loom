@@ -75,14 +75,94 @@ gradle.beforeProject { p ->
   }
 }
 
-includeBuild(loomReactNativeDir) {
-  dependencySubstitution {
-    substitute(module("com.facebook.react:react-android")).using(project(":packages:react-native:ReactAndroid"))
-    substitute(module("com.facebook.react:react-native")).using(project(":packages:react-native:ReactAndroid"))
-    substitute(module("com.facebook.react:hermes-android")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
-    substitute(module("com.facebook.react:hermes-engine")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+// Public switches (gradle.properties or -P). Everything else (loom.profile, loom.cppTests) is a
+// diagnostic that only exists in a from-source build and therefore implies one.
+//
+//   loom.renderer          true | false    Loom, or plain React Native (Fabric)            (default: true)
+//   loom.js                main | background  where JavaScript runs                       (default: background)
+//   loom.worker            true | false    Loom's worker thread (prebuilt: always true)   (default: true)
+//   loom.compileFromSource true | false    build Loom from source instead of the prebuilt (default: false)
+//   loom.releaseProfiling  true | false    release builds with DevTools and tracing kept   (default: false)
+def loomProp = { String name -> def v = settings.providers.gradleProperty(name).orNull; v == null ? null : v.trim() }
+def loomBool = { String name, boolean dflt ->
+  def v = loomProp(name)
+  if (v == null) return dflt
+  if (v != "true" && v != "false") throw new GradleException("${name} must be true or false, got '${v}'.")
+  return v == "true"
+}
+def loomRendererOn = loomBool("loom.renderer", true)
+def loomJs = loomProp("loom.js") ?: "background"
+if (loomJs != "main" && loomJs != "background") {
+  throw new GradleException("loom.js must be main or background, got '${loomJs}'.")
+}
+def loomWorkerOn = loomBool("loom.worker", true)
+def loomCompileFromSource = loomBool("loom.compileFromSource", false)
+def loomReleaseProfiling = loomBool("loom.releaseProfiling", false)
+def loomDiagnostics = loomBool("loom.profile", false) || loomBool("loom.cppTests", false)
+
+// A prebuilt exists for exactly one configuration per flavor: renderer on, worker on, js main|background.
+def loomFromSource = loomCompileFromSource || loomDiagnostics
+if (!loomFromSource && loomRendererOn && !loomWorkerOn) {
+  logger.warn("Loom: loom.worker=false only takes effect when compiling from source; the prebuilt " +
+      "has the worker built in. Set loom.compileFromSource=true to build without it.")
+}
+if (!loomFromSource && !loomRendererOn) {
+  // Plain React Native: no Loom code at all, RN's own com.facebook artifacts.
+  logger.lifecycle("Loom: loom.renderer=false, using React Native's own artifacts.")
+} else if (!loomFromSource) {
+  // Loom's prebuilt react-android (debug, debugOptimized and release come with the one artifact).
+  // Hermes and everything else keep React Native's coordinates: nothing but Loom's core is republished.
+  def loomVersion = new groovy.json.JsonSlurper().parse(new File(loomReactNativeDir, "package.json")).version
+  def loomArtifact = loomJs == "main" ? "react-android-jsmain" : "react-android"
+  // loom.releaseProfiling: the release-profiling build (DevTools and tracing kept) replaces the release
+  // variant; it is published as its own artifact with that one variant, so only release configurations use it.
+  def loomArtifactFor = { cfg ->
+    def n = cfg.name.toLowerCase()
+    (loomReleaseProfiling && n.contains("release") && !n.contains("debug")) ? loomArtifact + "-profiling" : loomArtifact
+  }
+  def loomRepo = System.getenv("LOOM_MAVEN_REPOSITORY") ?: "https://repo1.maven.org/maven2"
+  logger.lifecycle("Loom: using prebuilt io.github.ammarahm-ed:${loomArtifact}:${loomVersion} (loom.js=${loomJs}).")
+  gradle.allprojects { p ->
+    p.repositories {
+      maven {
+        url = uri(loomRepo)
+        content { includeGroup("io.github.ammarahm-ed") }
+      }
+    }
+    def loomSubstitute = { cfg ->
+      cfg.resolutionStrategy.dependencySubstitution {
+        substitute(module("com.facebook.react:react-android"))
+            .using(module("io.github.ammarahm-ed:${loomArtifactFor(cfg)}:${loomVersion}"))
+        substitute(module("com.facebook.react:react-native"))
+            .using(module("io.github.ammarahm-ed:${loomArtifactFor(cfg)}:${loomVersion}"))
+      }
+    }
+    p.configurations.configureEach { cfg -> loomSubstitute(cfg) }
+    // React Native's Gradle plugin rewrites react-native to react-android while the projects are
+    // configured, and a later rule wins. Register once more after every project is evaluated.
+    gradle.projectsEvaluated {
+      p.configurations.configureEach { cfg ->
+        loomSubstitute(cfg)
+        cfg.resolutionStrategy.eachDependency { details ->
+          if (details.requested.group == "com.facebook.react" &&
+              (details.requested.name == "react-android" || details.requested.name == "react-native")) {
+            details.useTarget("io.github.ammarahm-ed:${loomArtifactFor(cfg)}:${loomVersion}")
+          }
+        }
+      }
+    }
+  }
+} else {
+  includeBuild(loomReactNativeDir) {
+    dependencySubstitution {
+      substitute(module("com.facebook.react:react-android")).using(project(":packages:react-native:ReactAndroid"))
+      substitute(module("com.facebook.react:react-native")).using(project(":packages:react-native:ReactAndroid"))
+      substitute(module("com.facebook.react:hermes-android")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+      substitute(module("com.facebook.react:hermes-engine")).using(project(":packages:react-native:ReactAndroid:hermes-engine"))
+    }
   }
 }
+gradle.ext.loomFromSource = loomFromSource
 
 // Native libraries that link Hermes (react-native-worklets, Reanimated, ...) read its Prefab
 // package when their CMake build is configured. Gradle does not carry that dependency across the
@@ -90,6 +170,7 @@ includeBuild(loomReactNativeDir) {
 // headers-only Hermes package and fails to link libhermesvm. Make each CMake configure task wait
 // for the matching Hermes Prefab configuration.
 gradle.allprojects { p ->
+  if (!loomFromSource) return // a prebuilt: Hermes comes from Maven and brings its own Prefab
   p.tasks.configureEach { t ->
     if (t.name.startsWith("configureCMake")) {
       def variant = t.name.contains("Debug") && !t.name.contains("RelWithDebInfo") ? "Debug" : "Release"
@@ -113,7 +194,7 @@ def loomReanimatedFlags = { String flags ->
           "[FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS:false]")
 }
 gradle.beforeProject { p ->
-  if (p.name != "react-native-reanimated") {
+  if (p.name != "react-native-reanimated" || !loomRendererOn) { // renderer off: plain React Native, stock Reanimated
     return
   }
   p.plugins.withId("com.android.library") {
