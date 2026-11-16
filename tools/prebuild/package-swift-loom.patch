@@ -1,10 +1,9 @@
 diff --git a/packages/react-native/Package.swift b/packages/react-native/Package.swift
-index 57ec592..ba6e047 100644
 --- a/packages/react-native/Package.swift
 +++ b/packages/react-native/Package.swift
-@@ -11,6 +11,58 @@ import PackageDescription
- 
- let BUILD_FROM_SOURCE = false
+@@ -18,6 +18,58 @@
+ let REMOVE_LEGACY_COMPONENT_INTEROP =
+   ProcessInfo.processInfo.environment["RCT_REMOVE_LEGACY_COMPONENT_INTEROP"] == "1"
  
 +// Loom: compile-time switches of the published configuration, same names and meaning as the
 +// Loom podspecs (RCT_LOOM_*_IOS). The renderer is off unless RCT_LOOM_RENDERER_IOS=1; the worker
@@ -61,7 +60,7 @@ index 57ec592..ba6e047 100644
  /**
   This is the `Package.swift` file that allows to build React Native core using Swift PM.
   To build React Native, you need to follow these steps:
-@@ -376,7 +428,7 @@ let reactNativeModuleDom = RNTarget(
+@@ -392,7 +444,7 @@
  /// RCTTypeSafety.podspec
  let rctTypesafety = RNTarget(
    name: .rctTypesafety,
@@ -70,16 +69,16 @@ index 57ec592..ba6e047 100644
    searchPaths: [FBLazyVectorPath],
    dependencies: [.reactNativeDependencies, .yoga]
  )
-@@ -476,7 +528,7 @@ let reactFabric = RNTarget(
+@@ -493,7 +545,7 @@
      "scheduler/tests",
    ],
    dependencies: [.reactNativeDependencies, .reactJsiExecutor, .rctTypesafety, .reactTurboModuleCore, .jsi, .logger, .reactDebug, .reactFeatureFlags, .reactUtils, .reactRuntimeScheduler, .reactCxxReact, .reactRendererDebug, .reactGraphics, .yoga, .reactJsInspectorTracing],
--  sources: ["animated", "animationbackend", "animations", "attributedstring", "core", "componentregistry", "componentregistry/native", "components/root", "components/view", "components/view/platform/cxx", "components/scrollview", "components/scrollview/platform/cxx", "components/scrollview/platform/ios", "components/legacyviewmanagerinterop", "components/legacyviewmanagerinterop/platform/ios", "dom", "scheduler", "mounting", "observers/events", "observers/intersection", "observers/mutation", "telemetry", "consistency", "leakchecker", "uimanager", "uimanager/consistency", "viewtransition"]
-+  sources: ["animated", "animationbackend", "animations", "attributedstring", "core", "componentregistry", "componentregistry/native", "components/root", "components/view", "components/view/platform/cxx", "components/scrollview", "components/scrollview/platform/cxx", "components/scrollview/platform/ios", "components/legacyviewmanagerinterop", "components/legacyviewmanagerinterop/platform/ios", "dom", "scheduler", "mounting", "observers/events", "observers/intersection", "observers/mutation", "telemetry", "consistency", "leakchecker", "uimanager", "uimanager/consistency", "loom/binding", "loom/core", "loom/mounting", "loom/worker", "loom/text", "loom/host", "loom/compat", "viewtransition"]
+-  sources: ["animated", "animationbackend", "animations", "attributedstring", "core", "componentregistry", "componentregistry/native", "components/root", "components/view", "components/view/platform/cxx", "components/scrollview", "components/scrollview/platform/cxx", "components/scrollview/platform/ios", "components/legacyviewmanagerinterop", "components/legacyviewmanagerinterop/platform/ios", "dom", "scheduler", "mounting", "observers/events", "observers/intersection", "observers/mutation", "observers/resize", "telemetry", "consistency", "leakchecker", "uimanager", "uimanager/consistency", "viewtransition"]
++  sources: ["animated", "animationbackend", "animations", "attributedstring", "core", "componentregistry", "componentregistry/native", "components/root", "components/view", "components/view/platform/cxx", "components/scrollview", "components/scrollview/platform/cxx", "components/scrollview/platform/ios", "components/legacyviewmanagerinterop", "components/legacyviewmanagerinterop/platform/ios", "dom", "scheduler", "mounting", "observers/events", "observers/intersection", "observers/mutation", "observers/resize", "telemetry", "consistency", "leakchecker", "uimanager", "uimanager/consistency", "loom/binding", "loom/core", "loom/mounting", "loom/worker", "loom/text", "loom/host", "loom/compat", "viewtransition"]
  )
  
  let reactFabricInputAccessory = RNTarget(
-@@ -731,6 +783,21 @@ let targets = [
+@@ -749,6 +801,21 @@
  
  // MARK: Package object
  
@@ -101,7 +100,7 @@ index 57ec592..ba6e047 100644
  let package = Package(
    name: react,
    platforms: [.iOS(.v15), .macCatalyst(SupportedPlatform.MacCatalystVersion.v13)],
-@@ -738,10 +805,10 @@ let package = Package(
+@@ -756,10 +823,10 @@
      .library(
        name: react,
        type: .dynamic,
@@ -114,7 +113,7 @@ index 57ec592..ba6e047 100644
  )
  
  // MARK: Support & Utility Classes
-@@ -937,7 +1004,7 @@ extension Target {
+@@ -956,7 +1023,7 @@
      defines: [CXXSetting] = []
    ) -> Target {
      let dependencies = dependencies.map { Dependency.byNameItem(name: $0, condition: nil) }
@@ -123,10 +122,11 @@ index 57ec592..ba6e047 100644
      let numOfSlash = path.count { $0 == "/" }
  
      let cxxCommonHeaderPaths: [CXXSetting] =
-@@ -948,6 +1015,18 @@ extension Target {
+@@ -966,6 +1033,18 @@
+         CXXSetting.headerSearchPath(relativeSearchPath(numOfSlash + 1, ".build/headers")),
          CXXSetting.headerSearchPath(relativeSearchPath(numOfSlash + 1, ".build/headers/React")),
        ]
- 
++
 +    let loomDefines: [CXXSetting] =
 +      (LOOM_LEAN ? [.define("LOOM_LEAN_RELEASE", to: "1")] : [])
 +      + (LOOM_PROFILING
@@ -138,16 +138,15 @@ index 57ec592..ba6e047 100644
 +         .define("LOOM_JS_ON_MAIN", to: LOOM_JS_ON_MAIN ? "1" : "0")]
 +        + (LOOM_WORKER ? [.define("LOOM_WORKER", to: "1")] : [])
 +      : [])
-+
-     let cxxSettings =
-       [
-         .unsafeFlags(["-std=c++20"]),
-@@ -956,7 +1035,7 @@ extension Target {
-         .define("USE_HERMES", to: "1"),
+ 
+     let legacyInteropDefines: [CXXSetting] =
+       (REMOVE_LEGACY_MODULE_INTEROP ? [.define("RCT_REMOVE_LEGACY_MODULE_INTEROP", to: "1")] : [])
+@@ -984,7 +1063,7 @@
          .define("RCT_REMOVE_LEGACY_ARCH", to: "1"),
          .define("HERMES_V1_ENABLED", to: "1"),
--      ] + defines + cxxCommonHeaderPaths
-+      ] + loomDefines + defines + cxxCommonHeaderPaths
+         .define("RN_BUILDING", to: "1"),
+-      ] + legacyInteropDefines + defines + cxxCommonHeaderPaths
++      ] + legacyInteropDefines + loomDefines + defines + cxxCommonHeaderPaths
  
      return .target(
        name: name,

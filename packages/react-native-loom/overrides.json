@@ -1092,7 +1092,7 @@
       "file": "scripts/ios-prebuild/headers-config.js",
       "monorepoOnly": true,
       "area": "build",
-      "baseHash": "c130a582e380539d89a7e13ee802b322be4aeb8b22fd40aa27acfd086bc96251",
+      "baseHash": "5aba2b82f84e9db6cd94c3fd59ffd9cc88b718decf3088a89d665a861705e5ec",
       "layer": "ios"
     },
     {
