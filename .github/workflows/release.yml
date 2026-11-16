@@ -9,8 +9,12 @@
 # dry_run builds and verifies everything, validates the Maven bundles on the Central Portal (then drops them),
 # and runs `npm publish --dry-run`, without publishing anything.
 #
-# The three publish jobs are independent of each other except that npm waits for Maven, because the npm
-# package resolves its prebuilt binaries from Maven Central.
+# Order: Maven Central (every bundle validated before any is published), then npm (it resolves its
+# prebuilt binaries from Maven Central), then the GitHub release and tag last, so a failure never leaves a
+# tag for a version that is not fully out.
+#
+# A run that failed part-way is resumed with `resume: true`: artifacts already on Maven Central are skipped
+# (Central is immutable), and only what is missing is published.
 name: release
 
 on:
@@ -24,6 +28,10 @@ on:
         description: npm dist-tag (empty = "next" for prereleases, "latest" otherwise)
         type: string
         default: ''
+      resume:
+        description: Continue a release that failed part-way (skip what is already published)
+        type: boolean
+        default: false
 
 concurrency:
   group: release
@@ -34,7 +42,6 @@ permissions:
 
 env:
   NODE_VERSION: '22'
-  NDK_VERSION: 28.2.13676358
   XCODE_VERSION: '16.4'
 
 jobs:
@@ -53,12 +60,18 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - id: v
         name: Read versions
+        env:
+          # Inputs reach scripts only through the environment, never pasted into the script text.
+          NPM_TAG_INPUT: ${{ inputs.npm_tag }}
         run: |
           VERSION=$(node -p "require('./packages/react-native-loom/package.json').version")
           RN_VERSION=$(node -p "require('./packages/react-native-loom/overrides.json').upstream.version")
           PRERELEASE=false; case "$VERSION" in *-*) PRERELEASE=true ;; esac
-          TAG="${{ inputs.npm_tag }}"
+          TAG="$NPM_TAG_INPUT"
           if [ -z "$TAG" ]; then if [ "$PRERELEASE" = true ]; then TAG=next; else TAG=latest; fi; fi
+          if ! printf '%s' "$TAG" | grep -Eq '^[a-z][a-z0-9._-]{0,63}$'; then
+            echo "::error::npm_tag must be a plain dist-tag name, got '$TAG'"; exit 1
+          fi
           {
             echo "version=$VERSION"; echo "rn_version=$RN_VERSION"
             echo "prerelease=$PRERELEASE"; echo "npm_tag=$TAG"
@@ -86,15 +99,19 @@ jobs:
         env:
           VERSION: ${{ steps.v.outputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
+          RESUME: ${{ inputs.resume }}
         run: |
           problems=()
-          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1 \
-            && problems+=("git tag v$VERSION already exists")
+          # npm is published before the tag, so npm having the version means the release went through.
           npm view "react-native-loom@$VERSION" version >/dev/null 2>&1 \
             && problems+=("react-native-loom@$VERSION is already on npm")
-          code=$(curl -s -o /dev/null -w '%{http_code}' \
-            "https://repo1.maven.org/maven2/io/github/ammarahm-ed/react-android/$VERSION/react-android-$VERSION.pom")
-          [ "$code" = 200 ] && problems+=("io.github.ammarahm-ed:react-android:$VERSION is already on Maven Central")
+          if [ "$RESUME" != true ]; then
+            git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1 \
+              && problems+=("git tag v$VERSION already exists")
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              "https://repo1.maven.org/maven2/io/github/ammarahm-ed/react-android/$VERSION/react-android-$VERSION.pom")
+            [ "$code" = 200 ] && problems+=("io.github.ammarahm-ed:react-android:$VERSION is already on Maven Central (use resume: true to finish a partial release)")
+          fi
           for p in "${problems[@]}"; do
             if [ "$DRY_RUN" = true ]; then echo "::warning::$p"; else echo "::error::$p"; fi
           done
@@ -104,7 +121,8 @@ jobs:
     name: Android ${{ matrix.js }}${{ matrix.profiling == '1' && ' profiling' || '' }}
     needs: meta
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    # Under GitHub's 6 h job cap, so an overrun fails with a clear timeout instead of a cancellation.
+    timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
@@ -117,10 +135,15 @@ jobs:
       LOOM_PREBUILD_DIR: /mnt/loom/work
       LOOM_BASELINE_DIR: /mnt/loom/baseline
       LOOM_MAVEN_LOCAL: /mnt/loom/maven
+      # 4 vCPU / 16 GB: a clang job per core next to the Gradle daemon is what gets OOM-killed. Two
+      # workers and two compile jobs keep the peak well under the limit.
+      GRADLE_OPTS: -Dorg.gradle.workers.max=2 -Dorg.gradle.jvmargs=-Xmx4g
+      CMAKE_BUILD_PARALLEL_LEVEL: '3'
     steps:
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" \
+            /usr/local/lib/android/sdk/ndk/* /opt/hostedtoolcache/CodeQL
           sudo mkdir -p /mnt/loom && sudo chown "$USER" /mnt/loom
           df -h / /mnt
       - uses: actions/checkout@v4
@@ -131,10 +154,8 @@ jobs:
         with:
           distribution: zulu
           java-version: '17'
-      - name: Install NDK and yarn
-        run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" >/dev/null
-          npm install -g yarn@1.22.22
+      - name: Install yarn
+        run: npm install -g yarn@1.22.22
       - name: React Native baseline AARs
         env:
           RN_VERSION: ${{ needs.meta.outputs.rn_version }}
@@ -146,11 +167,22 @@ jobs:
           done
       - name: Prepare the React Native build tree
         run: tools/prebuild/prepare.sh
+      - name: Install the NDK React Native pins
+        # One source of truth: React Native's libs.versions.toml (android.sh reads the same file).
+        run: |
+          NDK=$(sed -n 's/^ndkVersion = "\(.*\)"/\1/p' "$LOOM_PREBUILD_DIR/rn-src/packages/react-native/gradle/libs.versions.toml")
+          [ -n "$NDK" ] || { echo "::error::no ndkVersion in libs.versions.toml"; exit 1; }
+          echo "NDK $NDK"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" >/dev/null
+          df -h / /mnt
       - name: Build, publish locally and verify
         run: tools/prebuild/android.sh
+      - name: Disk after build
+        if: always()
+        run: df -h / /mnt
       - uses: actions/upload-artifact@v4
         with:
-          name: maven-android-${{ matrix.js }}-${{ matrix.profiling }}
+          name: maven-android-${{ matrix.js }}-${{ matrix.profiling }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
           path: /mnt/loom/maven/io/github/ammarahm-ed/
           if-no-files-found: error
           retention-days: 7
@@ -159,7 +191,7 @@ jobs:
     name: iOS ${{ matrix.js }} ${{ matrix.flavor }}
     needs: meta
     runs-on: macos-15
-    timeout-minutes: 360
+    timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
@@ -177,6 +209,18 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Select Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app" && xcodebuild -version
+      - name: Free disk space
+        # The image ships several Xcodes (10-30 GB each), simulator runtimes and the Android SDK; the
+        # SwiftPM builds below need that room.
+        run: |
+          df -h /
+          for x in /Applications/Xcode_*.app; do
+            [ "$x" = "/Applications/Xcode_${XCODE_VERSION}.app" ] || sudo rm -rf "$x"
+          done
+          sudo rm -rf ~/Library/Android "$ANDROID_HOME" /usr/local/share/android-sdk \
+            ~/Library/Developer/CoreSimulator/Caches /Library/Developer/CoreSimulator/Volumes/* 2>/dev/null || true
+          xcrun simctl delete all 2>/dev/null || true
+          df -h /
       - name: Case-sensitive build volume
         # React Native's prefab and header trees have React/ and react/ side by side.
         run: |
@@ -198,10 +242,15 @@ jobs:
       - name: Prepare the React Native build tree
         run: tools/prebuild/prepare.sh
       - name: Build and verify
-        run: tools/prebuild/ios.sh ${{ matrix.flavor }}
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+        run: tools/prebuild/ios.sh "$FLAVOR"
+      - name: Disk after build
+        if: always()
+        run: df -h / "$GITHUB_WORKSPACE/../cs"
       - uses: actions/upload-artifact@v4
         with:
-          name: ios-${{ matrix.js }}-${{ matrix.flavor }}
+          name: ios-${{ matrix.js }}-${{ matrix.flavor }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
           path: ${{ github.workspace }}/../cs/ios-out/${{ matrix.js }}/
           if-no-files-found: error
           retention-days: 7
@@ -212,35 +261,46 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.meta.outputs.version }}
-      REPO: ${{ github.workspace }}/../repo
-      OUT: ${{ github.workspace }}/../out
+      # /mnt has the room: the repository, its bundles and the release assets are each the full payload.
+      REPO: /mnt/loom/repo
+      OUT: /mnt/loom/out
     steps:
       - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo mkdir -p /mnt/loom && sudo chown "$USER" /mnt/loom
+          df -h / /mnt
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: maven-android-*
-          path: ${{ github.workspace }}/../repo/io/github/ammarahm-ed
+          pattern: maven-android-*-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          path: /mnt/loom/repo/io/github/ammarahm-ed
+          merge-multiple: true
+      - name: Android publishes only react-android*
+        # RN's external-artifacts project would also publish react-native-artifacts from every Android
+        # job; the iOS step below owns those coordinates.
+        run: |
+          if [ -d "$REPO/io/github/ammarahm-ed/react-native-artifacts" ]; then
+            echo "::error::an Android job published react-native-artifacts"; exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ios-background-*-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          path: /mnt/loom/ios-out/background
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          pattern: ios-background-*
-          path: ${{ github.workspace }}/../ios-out/background
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ios-main-*
-          path: ${{ github.workspace }}/../ios-out/main
+          pattern: ios-main-*-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          path: /mnt/loom/ios-out/main
           merge-multiple: true
       - name: Add the iOS artifacts to the repository
         env:
           LOOM_PUBLISH_VERSION: ${{ needs.meta.outputs.version }}
-          LOOM_IOS_OUT: ${{ github.workspace }}/../ios-out
-          LOOM_MAVEN_LOCAL: ${{ github.workspace }}/../repo
+          LOOM_IOS_OUT: /mnt/loom/ios-out
+          LOOM_MAVEN_LOCAL: /mnt/loom/repo
         run: |
           LOOM_JS=background tools/prebuild/ios-publish.sh
           LOOM_JS=main tools/prebuild/ios-publish.sh
@@ -260,6 +320,17 @@ jobs:
             done
           done
           exit $missing
+      - name: Javadoc and sources jars for jar/aar publications
+        # Central requires -javadoc.jar and -sources.jar next to jar/aar artifacts. React Native publishes
+        # sources but no javadoc; an empty javadoc jar is what Central accepts for that.
+        run: |
+          cd "$REPO/io/github/ammarahm-ed"
+          mkdir -p /tmp/empty-javadoc && echo "See https://github.com/ammarahm-ed/Loom" > /tmp/empty-javadoc/README
+          for a in react-android react-android-jsmain react-android-profiling react-android-jsmain-profiling; do
+            d="$a/$VERSION"
+            [ -f "$d/$a-$VERSION-javadoc.jar" ] || (cd /tmp/empty-javadoc && zip -q "$OLDPWD/$d/$a-$VERSION-javadoc.jar" README)
+            ls "$d"/*-sources.jar >/dev/null 2>&1 || { echo "::error::$a has no sources jar"; exit 1; }
+          done
       - name: Checksums and signatures
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
@@ -270,7 +341,7 @@ jobs:
           # Local-repository metadata is not part of a Central deployment.
           find . -name 'maven-metadata*' -delete
           find . -type f ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' ! -name '*.asc' |
-            while read -r f; do
+            while IFS= read -r f; do
               [ -f "$f.md5" ] || md5sum "$f" | cut -d' ' -f1 > "$f.md5"
               [ -f "$f.sha1" ] || sha1sum "$f" | cut -d' ' -f1 > "$f.sha1"
               gpg --batch --yes --pinentry-mode loopback --passphrase "$SIGNING_PASSWORD" --armor --detach-sign "$f"
@@ -284,83 +355,120 @@ jobs:
             a=$(basename "$d")
             zip -q -r -0 "$OUT/bundles/$a-$VERSION.zip" "io/github/ammarahm-ed/$a/$VERSION"
           done
-          find io -type f \( -name '*.aar' -o -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} "$OUT/assets/" \;
+          # Hard links: the assets are the same files as the repository's, not a third copy on disk.
+          find io -type f \( -name '*.aar' -o -name '*.zip' -o -name '*.tar.gz' \) -exec ln {} "$OUT/assets/" \;
           (cd "$OUT/assets" && sha256sum -- * > SHASUMS256.txt)
           {
             echo "### Artifacts"
             echo '```'
             (cd "$OUT/assets" && find . -type f -printf '%s %f\n' | sort -k2 | awk '{printf "%10.1f MB  %s\n", $1/1048576, $2}')
             echo '```'
+            echo "### Central bundles"
+            echo '```'
+            (cd "$OUT/bundles" && find . -type f -printf '%s %f\n' | sort -k2 | awk '{printf "%10.1f MB  %s\n", $1/1048576, $2}')
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: central-bundles
-          path: ${{ github.workspace }}/../out/bundles/
+          name: central-bundles-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          path: /mnt/loom/out/bundles/
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
-          name: release-assets
-          path: ${{ github.workspace }}/../out/assets/
+          name: release-assets-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          path: /mnt/loom/out/assets/
           retention-days: 7
 
   maven:
     name: Maven Central${{ inputs.dry_run && ' (validate only)' || '' }}
     needs: [meta, assemble]
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: central-bundles
+          name: central-bundles-${{ needs.meta.outputs.version }}-${{ github.sha }}
           path: bundles
-      - name: Upload to the Central Portal
+      - name: Validate every bundle, then publish them together
+        # Central is immutable, so nothing is published until every bundle has validated: all bundles are
+        # uploaded as USER_MANAGED deployments, and only when all are VALIDATED is each one published. A
+        # bundle whose POM is already on Central (a resumed release) is skipped.
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           DRY_RUN: ${{ inputs.dry_run }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
+          set -uo pipefail
           API=https://central.sonatype.com/api/v1/publisher
           AUTH="Authorization: Bearer $(printf '%s:%s' "$MAVEN_CENTRAL_USERNAME" "$MAVEN_CENTRAL_PASSWORD" | base64 -w0)"
-          # Dry run: USER_MANAGED deployments are validated but wait for a manual publish; they are dropped below.
-          TYPE=AUTOMATIC; [ "$DRY_RUN" = true ] && TYPE=USER_MANAGED
-          failed=0
-          for b in bundles/*.zip; do
-            name=$(basename "$b" .zip)
-            id=$(curl -fsS -X POST -H "$AUTH" -F "bundle=@$b" "$API/upload?name=$name&publishingType=$TYPE")
-            echo "$name: deployment $id"
+          CURL=(curl -fsS --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30)
+          declare -A ids
+          drop_all() { for n in "${!ids[@]}"; do "${CURL[@]}" -X DELETE -H "$AUTH" "$API/deployment/${ids[$n]}" >/dev/null || true; done; }
+          # wait_for <name> <id> <wanted state> <minutes>: echoes the final state
+          wait_for() {
+            local deadline=$(( $(date +%s) + $4 * 60 )) state
             while :; do
-              status=$(curl -fsS -X POST -H "$AUTH" "$API/status?id=$id")
-              state=$(echo "$status" | jq -r .deploymentState)
+              state=$("${CURL[@]}" -X POST -H "$AUTH" "$API/status?id=$2" | jq -r .deploymentState) || state=UNKNOWN
               case "$state" in
-                PENDING|VALIDATING|PUBLISHING) sleep 20 ;;
-                VALIDATED)
-                  if [ "$DRY_RUN" = true ]; then
-                    echo "$name: valid; dropping the dry-run deployment"
-                    curl -fsS -X DELETE -H "$AUTH" "$API/deployment/$id"
-                    break
-                  fi
-                  sleep 20 ;;
-                PUBLISHED) echo "$name: published"; break ;;
-                FAILED)
-                  echo "::error::$name: $(echo "$status" | jq -c .errors)"
-                  curl -fsS -X DELETE -H "$AUTH" "$API/deployment/$id" || true
-                  failed=1; break ;;
-                *) echo "::error::$name: unexpected state $state"; failed=1; break ;;
+                "$3"|FAILED) echo "$state"; return ;;
               esac
+              [ "$(date +%s)" -lt "$deadline" ] || { echo TIMEOUT; return; }
+              sleep 20
             done
+          }
+
+          for b in bundles/*.zip; do
+            name=$(basename "$b" .zip); artifact=${name%-"$VERSION"}
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              "https://repo1.maven.org/maven2/io/github/ammarahm-ed/$artifact/$VERSION/$artifact-$VERSION.pom")
+            if [ "$code" = 200 ]; then
+              echo "$name: already on Maven Central, skipped"; echo "- $name: already published" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            id=$("${CURL[@]}" --max-time 3600 -X POST -H "$AUTH" -F "bundle=@$b" \
+              "$API/upload?name=$name&publishingType=USER_MANAGED") || { echo "::error::$name: upload failed"; drop_all; exit 1; }
+            ids[$name]=$id; echo "$name: deployment $id"
+          done
+
+          failed=0
+          for name in "${!ids[@]}"; do
+            state=$(wait_for "$name" "${ids[$name]}" VALIDATED 60)
             echo "- $name: $state" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$state" != VALIDATED ]; then
+              echo "::error::$name: $state $("${CURL[@]}" -X POST -H "$AUTH" "$API/status?id=${ids[$name]}" | jq -c .errors 2>/dev/null)"
+              failed=1
+            fi
+          done
+          if [ "$failed" = 1 ] || [ "$DRY_RUN" = true ]; then
+            [ "$DRY_RUN" = true ] && [ "$failed" = 0 ] && echo "Dry run: every bundle validated; dropping the deployments."
+            drop_all
+            exit $failed
+          fi
+
+          # Every bundle validated: publish them all.
+          for name in "${!ids[@]}"; do
+            "${CURL[@]}" -X POST -H "$AUTH" "$API/deployment/${ids[$name]}" >/dev/null \
+              || { echo "::error::$name: publish request failed (re-run with resume: true)"; failed=1; }
+          done
+          for name in "${!ids[@]}"; do
+            state=$(wait_for "$name" "${ids[$name]}" PUBLISHED 120)
+            echo "- $name: $state" >> "$GITHUB_STEP_SUMMARY"
+            [ "$state" = PUBLISHED ] || { echo "::error::$name: $state (re-run with resume: true)"; failed=1; }
           done
           exit $failed
 
   github-release:
     name: GitHub release${{ inputs.dry_run && ' (dry run)' || '' }}
-    needs: [meta, assemble]
+    # Last: the tag exists only once Maven Central and npm have the version.
+    needs: [meta, maven, npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-assets
+          name: release-assets-${{ needs.meta.outputs.version }}-${{ github.sha }}
           path: assets
       - name: Create the release
         env:
@@ -376,7 +484,12 @@ jobs:
             echo "Dry run: would create v$VERSION ${flags[*]} with:"; ls -l assets
             exit 0
           fi
-          gh release create "v$VERSION" "${flags[@]}" assets/*
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v$VERSION exists (resumed run); uploading any missing assets."
+            gh release upload "v$VERSION" assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "v$VERSION" "${flags[@]}" assets/*
+          fi
 
   npm:
     name: npm (staged)${{ inputs.dry_run && ' (dry run)' || '' }}
@@ -398,6 +511,10 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           if [ "$DRY_RUN" = true ]; then
+            # The real path, without publishing: the token works, this npm has staged publishing, and the
+            # package packs.
+            npm whoami
+            npm stage --help >/dev/null 2>&1 || { echo "::error::this npm has no 'npm stage'"; exit 1; }
             npm publish --dry-run --tag "$TAG"
           else
             npm stage publish --tag "$TAG"

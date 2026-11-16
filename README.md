@@ -52,4 +52,4 @@ MIT, see [LICENSE](LICENSE). Files under `packages/react-native-loom/src/` are d
 
 Loom is not affiliated with Meta. React Native is a trademark of Meta Platforms, Inc.
 
-<!-- Repository: https://github.com/ammarahm-ed/loom -->
+<!-- Repository: https://github.com/ammarahm-ed/Loom -->

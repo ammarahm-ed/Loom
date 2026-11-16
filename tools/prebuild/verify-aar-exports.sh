@@ -5,7 +5,9 @@
 # Usage: verify-aar-exports.sh <ours.aar> <baseline.aar>
 set -euo pipefail
 export LC_ALL=C
-NM="$(ls "${ANDROID_NDK:-$ANDROID_HOME/ndk/28.2.13676358}"/toolchains/llvm/prebuilt/*/bin/llvm-nm | head -1)"
+# ANDROID_NDK is set by android.sh from React Native's pinned ndkVersion.
+: "${ANDROID_NDK:?set ANDROID_NDK (android.sh does)}"
+NM="$(ls "$ANDROID_NDK"/toolchains/llvm/prebuilt/*/bin/llvm-nm | head -1)"
 ours="$1"; base="$2"; t="$(mktemp -d)"; trap 'rm -rf "$t"' EXIT
 # Compiler instantiations are not API: whether such a symbol is emitted at all depends on inlining, so
 # they may differ between two builds of the same source. ONLY these two families are ignored:

@@ -1,0 +1,59 @@
+# Watch React Native for new patch releases of the minor this Loom line supports, and report what an
+# upgrade would take: `loom upgrade --to <version> --dry-run` merges every override onto it without
+# writing anything. Read-only: it opens no pull request and publishes nothing; the summary says whether a
+# release can simply be added to `upstream.supported` or needs a rebase.
+name: upstream-watch
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: New React Native releases of this minor
+        id: find
+        working-directory: packages/react-native-loom
+        run: |
+          minor=$(node -p "require('./overrides.json').upstream.minor")
+          known=$(node -p "(require('./overrides.json').upstream.supported || []).join(' ')")
+          all=$(npm view react-native versions --json | node -e "
+            const v = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+            console.log(v.filter(x => x.startsWith('$minor.') && !x.includes('nightly')).join(' '))")
+          new=()
+          for v in $all; do [[ " $known " == *" $v "* ]] || new+=("$v"); done
+          echo "versions=${new[*]}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### React Native $minor"
+            echo "- verified: $known"
+            echo "- not yet verified: ${new[*]:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Dry-run upgrade onto each
+        if: steps.find.outputs.versions != ''
+        working-directory: packages/react-native-loom
+        env:
+          VERSIONS: ${{ steps.find.outputs.versions }}
+        run: |
+          for v in $VERSIONS; do
+            echo "## $v"
+            { echo "#### $v"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            node bin/loom.js upgrade --to "$v" --dry-run | tee -a "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Override divergence
+        working-directory: packages/react-native-loom
+        run: |
+          version=$(node -p "require('./overrides.json').upstream.version")
+          dir=$(node -e "console.log(require('./lib/upstream').fetchUpstream('$version'))")
+          { echo "### Override divergence (top 15)"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          node bin/loom.js status --files --upstream "$dir" | head -16 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

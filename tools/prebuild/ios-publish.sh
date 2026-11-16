@@ -31,13 +31,13 @@ cat > "$DIR/react-native-artifacts-$VER.pom" <<POM
   <packaging>pom</packaging>
   <name>Loom</name>
   <description>Loom: a faster renderer for React Native. Prebuilt React Native core for iOS with the Loom renderer.</description>
-  <url>https://github.com/ammarahm-ed/loom</url>
-  <licenses><license><name>MIT License</name><url>https://github.com/ammarahm-ed/loom/blob/main/LICENSE</url></license></licenses>
+  <url>https://github.com/ammarahm-ed/Loom</url>
+  <licenses><license><name>MIT License</name><url>https://github.com/ammarahm-ed/Loom/blob/main/LICENSE</url></license></licenses>
   <developers><developer><id>ammarahm-ed</id><name>Ammar Ahmed</name></developer></developers>
   <scm>
-    <url>https://github.com/ammarahm-ed/loom</url>
-    <connection>scm:git:https://github.com/ammarahm-ed/loom.git</connection>
-    <developerConnection>scm:git:git@github.com:ammarahm-ed/loom.git</developerConnection>
+    <url>https://github.com/ammarahm-ed/Loom</url>
+    <connection>scm:git:https://github.com/ammarahm-ed/Loom.git</connection>
+    <developerConnection>scm:git:git@github.com:ammarahm-ed/Loom.git</developerConnection>
   </scm>
 </project>
 POM

@@ -14,7 +14,9 @@ def loomVersion = System.getenv("LOOM_PUBLISH_VERSION")
 if (!loomRepo) throw new GradleException("LOOM_MAVEN_REPO=<dir> is required")
 
 gradle.allprojects { p ->
-  if (p.path == ":packages:react-native:ReactAndroid" || p.path == ":packages:react-native:ReactAndroid:external-artifacts") {
+  // Only react-android. RN's :external-artifacts (react-native-artifacts) is published by the iOS side
+  // (ios-publish.sh); retargeting it here would let every Android job publish those coordinates too.
+  if (p.path == ":packages:react-native:ReactAndroid") {
     p.afterEvaluate {
       p.group = loomGroup
       if (loomVersion) p.version = loomVersion
@@ -26,7 +28,7 @@ gradle.allprojects { p ->
           pom {
             name = "Loom"
             description = "Loom: a faster renderer for React Native. Prebuilt React Native core with the Loom renderer."
-            url = "https://github.com/ammarahm-ed/loom"
+            url = "https://github.com/ammarahm-ed/Loom"
             // RN already declared its own developers and license; these lists are additive in the DSL,
             // so replace them in the generated XML.
             withXml { xml ->
@@ -35,7 +37,7 @@ gradle.allprojects { p ->
                   .each { root.remove(it) }
               root.appendNode("licenses").appendNode("license").with {
                 appendNode("name", "MIT License")
-                appendNode("url", "https://github.com/ammarahm-ed/loom/blob/main/LICENSE")
+                appendNode("url", "https://github.com/ammarahm-ed/Loom/blob/main/LICENSE")
               }
               root.appendNode("developers").appendNode("developer").with {
                 appendNode("id", "ammarahm-ed")
@@ -43,9 +45,9 @@ gradle.allprojects { p ->
               }
             }
             scm {
-              url = "https://github.com/ammarahm-ed/loom"
-              connection = "scm:git:https://github.com/ammarahm-ed/loom.git"
-              developerConnection = "scm:git:git@github.com:ammarahm-ed/loom.git"
+              url = "https://github.com/ammarahm-ed/Loom"
+              connection = "scm:git:https://github.com/ammarahm-ed/Loom.git"
+              developerConnection = "scm:git:git@github.com:ammarahm-ed/Loom.git"
             }
           }
           // loom.js=main is published next to the default (background) build under its own artifactId.

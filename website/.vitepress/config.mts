@@ -1,6 +1,6 @@
 import {defineConfig} from 'vitepress';
 
-// Served from https://ammarahm-ed.github.io/loom/ on GitHub Pages; `/` for local dev and preview.
+// Served from https://ammarahm-ed.github.io/<repository>/ on GitHub Pages (docs.yml sets the base from the repository name); `/` for local dev and preview.
 const base = process.env.LOOM_DOCS_BASE ?? '/';
 
 export default defineConfig({

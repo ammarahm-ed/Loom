@@ -5,7 +5,7 @@
   "description": "Workspace root for Loom (npm: react-native-loom), a faster renderer for React Native.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ammarahm-ed/loom.git"
+    "url": "git+https://github.com/ammarahm-ed/Loom.git"
   },
   "license": "MIT",
   "workspaces": [

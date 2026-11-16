@@ -3,7 +3,7 @@
 # (.github/actions/build-android: publishAllToMavenTempLocal with stable Hermes) and publish
 # io.github.ammarahm-ed:react-android (LOOM_JS=background, default) or react-android-jsmain (LOOM_JS=main)
 # to the LOCAL Maven repo. LOOM_PROFILING=1 builds and publishes the release-profiling variant instead
-# (react-android[-jsmain]-profiling; release only). Published config: loom.renderer=true, loom.worker=true.
+# (react-android[-jsmain]-profiling; release only). Published config: loom.renderer=true,.
 # Nothing is uploaded anywhere.
 #
 # Every flavor compiles Fabric's renderer out and keeps every export of React Native's library of the same
@@ -18,7 +18,12 @@ SRC="$WORK/rn-src"
 REPO="${LOOM_MAVEN_LOCAL:-$ROOT/.local/maven-local}"
 export LOOM_MAVEN_REPO="$REPO"
 export LOOM_JS="${LOOM_JS:-background}"
-export ANDROID_NDK="$ANDROID_HOME/ndk/28.2.13676358"   # libs.versions.toml ndkVersion; must match exactly
+# The NDK React Native pins (libs.versions.toml ndkVersion), never a copy of the number: a React Native
+# upgrade that moves it must not silently build with the old one.
+NDK_VERSION="$(sed -n 's/^ndkVersion = "\(.*\)"/\1/p' "$SRC/packages/react-native/gradle/libs.versions.toml")"
+[ -n "$NDK_VERSION" ] || { echo "no ndkVersion in $SRC/packages/react-native/gradle/libs.versions.toml" >&2; exit 1; }
+export ANDROID_NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+[ -d "$ANDROID_NDK" ] || { echo "NDK $NDK_VERSION is not installed ($ANDROID_NDK)" >&2; exit 1; }
 BASE="${LOOM_BASELINE_DIR:-$ROOT/.local/rn-baseline/android}"
 VER="$(node -p "require('$ROOT/packages/react-native-loom/overrides.json').upstream.version")"
 cd "$SRC"
