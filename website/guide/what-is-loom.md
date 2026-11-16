@@ -10,7 +10,7 @@ run on the main thread or on its own thread. React code, components and librarie
 unchanged.
 
 Loom is not a fork. It is a package of overrides applied to the unmodified `react-native` from
-npm (0.89.0-rc.0), so it tracks React Native releases closely.
+npm (0.87.1), so it tracks React Native releases closely.
 
 ## Where Loom sits
 

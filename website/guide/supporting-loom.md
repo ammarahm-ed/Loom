@@ -239,7 +239,7 @@ and loads. The fallback keeps it working; the Loom API is how you get Loom's beh
 ## 8. Versioning
 
 `LOOM_API_VERSION` versions Loom's own API, never React Native's. Each Loom release supports exactly
-one React Native minor (Loom 0.89.x runs only on React Native 0.89.x; packaging enforces it), so the
+one React Native minor (Loom 0.87.x runs only on React Native 0.87.x; packaging enforces it), so the
 API version does not move with React Native.
 
 - Additions keep the version. The `Runtime` handle holds only a pointer to its instance, so adding

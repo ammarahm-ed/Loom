@@ -10,14 +10,14 @@ coming.
 ## Requirements
 
 - Node.js 20 or newer.
-- Your app's `react-native` must be the React Native minor of your Loom release: Loom 0.89.x runs on
-  React Native 0.89.x only (the peer dependency is `>=0.89.0-rc.0 <0.90.0`). Support for a new
+- Your app's `react-native` must be the React Native minor of your Loom release: Loom 0.87.x runs on
+  React Native 0.87.x only (the peer dependency is `>=0.87.1 <0.88.0`). Support for a new
   React Native minor comes as a new Loom minor.
   - A React Native patch release that Loom has not verified yet still works, with a warning, as
     long as it did not change any file Loom replaces. If it did, `loom materialize` stops and asks
     you to update Loom.
-  - Loom's own patch numbers are independent of React Native's: Loom 0.89.4 can run on React Native
-    0.89.1.
+  - Loom's own patch numbers are independent of React Native's: Loom 0.87.4 can run on React Native
+    0.87.1.
 - npm, Yarn (with `nodeLinker: node-modules`) or pnpm. Yarn Plug'n'Play is not supported, because
   React Native's native builds need a `node_modules` tree.
 - If you patch `react-native` (patch-package, `pnpm patch`), patches to files Loom replaces have no
