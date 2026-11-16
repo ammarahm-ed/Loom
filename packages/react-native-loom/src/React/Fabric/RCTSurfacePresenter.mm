@@ -1248,7 +1248,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
               }
             } else if constexpr (std::is_same_v<Operation, DirectUpdatePropsOperation>) {
               auto view = shadowView(operation.tag, names.count(operation.tag) ? names[operation.tag] : nullptr);
-              mutations.push_back(ShadowViewMutation::UpdateMutation(view, view, kNoTag));
+              mutations.push_back(ShadowViewMutation::UpdateMutation(view, view, /*parentTag=*/ -1));
             } else if constexpr (std::is_same_v<Operation, DirectInsertOperation>) {
               mutations.push_back(ShadowViewMutation::InsertMutation(
                   operation.parentTag, shadowView(operation.tag, nullptr), static_cast<int>(operation.index)));

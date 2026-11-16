@@ -98,13 +98,6 @@
     },
     {
       "type": "patch",
-      "file": "React/Base/RCTBridgeModule.h",
-      "area": "fabric-compat",
-      "layer": "ios",
-      "baseHash": "3a90c7dd3455659f87fef880561a1f31ca662759da8ff3bf7ca1d423337d2318"
-    },
-    {
-      "type": "patch",
       "file": "React/CxxBridge/RCTMessageThread.h",
       "area": "threading",
       "layer": "ios",
