@@ -13,6 +13,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT/tools/prebuild/casefs.sh"
 WORK="${LOOM_PREBUILD_DIR:-$ROOT/.local/cs}"; loom_require_case_sensitive "$WORK"
+. "$ROOT/tools/prebuild/ccache.sh"; loom_ccache_setup "$WORK"
+trap 'command -v ccache >/dev/null && [ "${LOOM_CCACHE:-1}" = 1 ] && ccache --show-stats || true' EXIT
 SRC="$WORK/rn-src/packages/react-native"
 JS="${LOOM_JS:-background}"
 OUT="${LOOM_IOS_OUT:-$WORK/ios-out}/$JS"

@@ -135,6 +135,8 @@ jobs:
       LOOM_PREBUILD_DIR: /mnt/loom/work
       LOOM_BASELINE_DIR: /mnt/loom/baseline
       LOOM_MAVEN_LOCAL: /mnt/loom/maven
+      CCACHE_DIR: /mnt/loom/ccache
+      CCACHE_MAXSIZE: 1800M
       # 4 vCPU / 16 GB: a clang job per core next to the Gradle daemon is what gets OOM-killed. Two
       # workers and two compile jobs keep the peak well under the limit.
       GRADLE_OPTS: -Dorg.gradle.workers.max=2 -Dorg.gradle.jvmargs=-Xmx4g
@@ -154,8 +156,19 @@ jobs:
         with:
           distribution: zulu
           java-version: '17'
-      - name: Install yarn
-        run: npm install -g yarn@1.22.22
+          cache: gradle
+      - name: Install yarn and ccache
+        run: |
+          npm install -g yarn@1.22.22
+          sudo apt-get install -y -qq ccache >/dev/null && ccache --version | head -1
+      # Compiler cache. Shared by both JS modes of a flavor (they differ in one define); only the
+      # background job saves it, and each cache is capped, so the five flavors stay within GitHub's 10 GB.
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /mnt/loom/ccache
+          key: ccache-android-${{ matrix.profiling }}-${{ github.run_id }}
+          restore-keys: ccache-android-${{ matrix.profiling }}-
       - name: React Native baseline AARs
         env:
           RN_VERSION: ${{ needs.meta.outputs.rn_version }}
@@ -185,6 +198,12 @@ jobs:
       - name: Disk after build
         if: always()
         run: df -h / /mnt
+      - name: Save the compiler cache
+        if: always() && matrix.js == 'background'
+        uses: actions/cache/save@v4
+        with:
+          path: /mnt/loom/ccache
+          key: ccache-android-${{ matrix.profiling }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         with:
           name: maven-android-${{ matrix.js }}-${{ matrix.profiling }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
@@ -207,6 +226,8 @@ jobs:
       LOOM_PREBUILD_DIR: ${{ github.workspace }}/../cs/work
       LOOM_IOS_OUT: ${{ github.workspace }}/../cs/ios-out
       LOOM_BASELINE_DIR: ${{ github.workspace }}/../baseline
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -232,8 +253,16 @@ jobs:
           CS="$GITHUB_WORKSPACE/../cs"
           hdiutil create -size 60g -type SPARSE -fs "Case-sensitive APFS" -volname loomcs "$RUNNER_TEMP/loomcs.sparseimage"
           mkdir -p "$CS" && hdiutil attach "$RUNNER_TEMP/loomcs.sparseimage" -mountpoint "$CS" -nobrowse
-      - name: Install yarn
-        run: npm install -g yarn@1.22.22
+      - name: Install yarn and ccache
+        run: |
+          npm install -g yarn@1.22.22
+          brew install ccache >/dev/null && ccache --version | head -1
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/../ccache
+          key: ccache-ios-${{ matrix.flavor }}-${{ github.run_id }}
+          restore-keys: ccache-ios-${{ matrix.flavor }}-
       - name: React Native baseline tarballs
         env:
           RN_VERSION: ${{ needs.meta.outputs.rn_version }}
@@ -253,6 +282,12 @@ jobs:
       - name: Disk after build
         if: always()
         run: df -h / "$GITHUB_WORKSPACE/../cs"
+      - name: Save the compiler cache
+        if: always() && matrix.js == 'background'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/../ccache
+          key: ccache-ios-${{ matrix.flavor }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         with:
           name: ios-${{ matrix.js }}-${{ matrix.flavor }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
