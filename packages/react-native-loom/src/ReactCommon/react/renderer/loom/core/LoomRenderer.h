@@ -954,6 +954,15 @@ class LoomRenderer final {
     bool preparedOnce{false};
     bool lastInsideText{false};
     Tag lastParentViewTag{0};
+    /**
+     * `experimental_LayoutConformance`: whether the nearest LayoutConformance
+     * ancestor asked for strict layout (`inheritedStrictLayout`, part of the
+     * prepare context like `lastInsideText`), and what this node resolved to
+     * (its own mode when it is a LayoutConformance node).
+     */
+    bool inheritedStrictLayout{false};
+    bool layoutConformance{false};
+    bool strictLayout{false};
     /** Reached by the post-layout walk in the commit with this stamp. */
     uint64_t layoutVisitStamp{0};
     /** Cached `calculateOverflow` result for the stamping commit. */
@@ -1133,6 +1142,7 @@ class LoomRenderer final {
   void prepare(
       Node& node,
       bool insideText,
+      bool strictLayout,
       LayoutParent parentView,
       std::vector<Tag>& traversal,
       std::vector<LayoutParent>& layoutParents,
@@ -1210,6 +1220,8 @@ class LoomRenderer final {
   /** The host name of `ScrollView`, resolved once. */
   const std::string scrollViewName_;
   YGConfigRef yogaConfig_{nullptr};
+  /** Strict `experimental_LayoutConformance` subtrees (Fabric's resolveErrata). */
+  YGConfigRef strictYogaConfig_{nullptr};
   float pointScaleFactor_{1.0f};
   std::unordered_map<Tag, std::unique_ptr<Node>, LoomTagHash> nodes_;
   /**

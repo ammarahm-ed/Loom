@@ -54,6 +54,7 @@ bool samePreparedTextContent(
 void LoomRenderer::prepare(
     Node& node,
     bool insideText,
+    bool strictLayout,
     LayoutParent parentView,
     std::vector<Tag>& traversal,
     std::vector<LayoutParent>& layoutParents,
@@ -69,6 +70,12 @@ void LoomRenderer::prepare(
   node.preparedOnce = true;
   node.lastInsideText = insideText;
   node.lastParentViewTag = parentView.tag;
+  node.inheritedStrictLayout = strictLayout;
+  // A LayoutConformance node sets the errata of itself and its subtree
+  // (YogaLayoutableShadowNode::resolveErrata); strict is its default mode.
+  node.strictLayout = node.layoutConformance
+      ? stringProp(node.props, "mode") != "compatibility"
+      : strictLayout;
 
   if (!node.roleFlagsValid) {
     refreshRoleFlags(node);
@@ -109,6 +116,13 @@ void LoomRenderer::prepare(
 
   const bool childrenInsideText = insideText || node.textRoot;
   syncYogaNode(node);
+  if (node.yogaNode != nullptr) {
+    const auto config = node.strictLayout ? strictYogaConfig_ : yogaConfig_;
+    if (YGNodeGetConfig(node.yogaNode) != config) {
+      // Yoga dirties the node itself when the errata differ.
+      YGNodeSetConfig(node.yogaNode, config);
+    }
+  }
   // Children first: attaching them requires their Yoga nodes to exist.
   auto childParentView = parentView;
   if (!node.virtualNode && !node.layoutOnlyNode) {
@@ -125,12 +139,14 @@ void LoomRenderer::prepare(
       if (!fullPrepare_ && !child->prepareSelf && !child->prepareDescendant &&
           child->preparedOnce &&
           child->lastInsideText == childrenInsideText &&
+          child->inheritedStrictLayout == node.strictLayout &&
           child->lastParentViewTag == childParentView.tag) {
         continue;
       }
       prepare(
           *child,
           childrenInsideText,
+          node.strictLayout,
           childParentView,
           traversal,
           layoutParents,
@@ -508,6 +524,7 @@ bool LoomRenderer::beginCommitLayout() {
     commitLayoutParents_.clear();
     prepare(
         *root,
+        false,
         false,
         LayoutParent{root->tag, 0, 0},
         commitTraversal_,
@@ -1250,6 +1267,7 @@ bool LoomRenderer::setPointScaleFactor(float pointScaleFactor) {
   }
   pointScaleFactor_ = pointScaleFactor;
   YGConfigSetPointScaleFactor(yogaConfig_, pointScaleFactor_);
+  YGConfigSetPointScaleFactor(strictYogaConfig_, pointScaleFactor_);
   laidOutMinWidth_ = -1;
   laidOutMinHeight_ = -1;
   laidOutMaxWidth_ = -1;

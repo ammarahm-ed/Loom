@@ -489,6 +489,48 @@ TEST(
   EXPECT_TRUE(layoutOperations(batch).empty());
 }
 
+// An absolutely positioned child without insets: classic React Native layout
+// (every Yoga erratum) places it at the parent's border box, strict
+// conformance at its content box, inside the padding. `mode` selects the
+// errata for the subtree as Fabric's resolveErrata does.
+static float absoluteChildLeft(const char* mode) {
+  auto operations = testOperations();
+  float left = -1;
+  operations.applyBatch = [&left](SurfaceId, LoomMountBatch next) {
+    for (const auto& operation : next.operations) {
+      if (const auto* layout = std::get_if<DirectLayoutOperation>(&operation);
+          layout != nullptr && layout->tag == 4) {
+        left = layout->x;
+      }
+    }
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer, 400, 400);
+  renderer.createNode(
+      2,
+      "LayoutConformance",
+      folly::dynamic::object("mode", mode)("display", "contents"));
+  renderer.createNode(
+      3,
+      "RCTView",
+      folly::dynamic::object("width", 200.0)("height", 200.0)("padding", 10.0)(
+          "collapsable", false));
+  renderer.createNode(
+      4,
+      "RCTView",
+      folly::dynamic::object("position", "absolute")("width", 20.0)(
+          "height", 20.0)("collapsable", false));
+  renderer.setChildren(3, {4});
+  renderer.setChildren(2, {3});
+  renderer.completeRoot(1, {2});
+  return left;
+}
+
+TEST(LoomRendererTest, LayoutConformanceModeSelectsTheYogaErrata) {
+  EXPECT_EQ(absoluteChildLeft("compatibility"), 0);
+  EXPECT_EQ(absoluteChildLeft("strict"), 10);
+}
+
 TEST(LoomRendererTest, LayoutConformanceUsesAndroidViewHostName) {
   LoomMountBatch batch;
   auto operations = testOperations();
