@@ -420,7 +420,6 @@ CommitStatus ShadowTree::tryCommit(
     return CommitStatus::Cancelled;
   }
 
-  RootShadowNode::Shared committedRoot;
   {
     UniqueLock lock = uniqueRevisionLock();
     if (currentRevision_.number != oldRevision.number) {
@@ -430,10 +429,8 @@ CommitStatus ShadowTree::tryCommit(
         .rootShadowNode = std::move(newRootShadowNode),
         .number = currentRevision_.number + 1,
         .telemetry = TransactionTelemetry{}};
-    committedRoot = currentRevision_.rootShadowNode;
   }
 
-  delegate_.shadowTreeDidCommit(*this, committedRoot, {});
   return CommitStatus::Succeeded;
 }
 #else

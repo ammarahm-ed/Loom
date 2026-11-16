@@ -200,7 +200,7 @@ void LoomEventManager::dispatch(
     return;
   }
   if (kLoomJavaScriptOnUIThread) {
-    eventDispatcher_->experimental_flushSync(tag);
+    eventDispatcher_->experimental_flushSync();
     return;
   }
   // A synchronous event blocks the calling (UI) thread until JavaScript has
