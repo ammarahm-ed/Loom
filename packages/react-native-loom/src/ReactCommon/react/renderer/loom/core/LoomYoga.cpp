@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <glog/logging.h>
+#include <yoga/node/Node.h>
 
 #if LOOM_RENDERER
 namespace facebook::react {
@@ -29,6 +30,18 @@ void LoomRenderer::syncYogaNode(Node& node) {
     // the copy actually differs.
     YGNodeCopyStyle(node.yogaNode, compatYoga);
     node.styleDirty = false;
+    // Fabric dirties a measurable node's Yoga node when a new revision (props,
+    // state, or `adopt` calling `dirtyLayout`) invalidates its measurement,
+    // so Yoga asks `measureContent` again; a style copy alone keeps Yoga's
+    // cached measurement. The component's Yoga node is never laid out, so its
+    // dirty flag is only that signal: forward it, then consume it.
+    if (YGNodeIsDirty(compatYoga)) {
+      if (YGNodeHasMeasureFunc(node.yogaNode)) {
+        YGNodeMarkDirty(node.yogaNode);
+      }
+      const_cast<yoga::Node*>(static_cast<const yoga::Node*>(compatYoga))
+          ->setDirty(false);
+    }
   } else if (node.styleDirty) {
     if (shapeValid(node) && !node.hostOwned) {
       // [LoomPerf item 2] Copy the style of a configured template instead of
