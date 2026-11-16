@@ -232,10 +232,10 @@ jobs:
         flavor: [Debug, Release, ReleaseProfiling]
     env:
       LOOM_JS: ${{ matrix.js }}
-      LOOM_PREBUILD_DIR: ${{ runner.workspace }}/cs/work
-      LOOM_IOS_OUT: ${{ runner.workspace }}/cs/ios-out
-      LOOM_BASELINE_DIR: ${{ runner.workspace }}/baseline
-      CCACHE_DIR: ${{ runner.workspace }}/ccache
+      LOOM_PREBUILD_DIR: ${{ github.workspace }}/../cs/work
+      LOOM_IOS_OUT: ${{ github.workspace }}/../cs/ios-out
+      LOOM_BASELINE_DIR: ${{ github.workspace }}/../baseline
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
       CCACHE_MAXSIZE: 30G
       CCACHE_SAVE_SIZE: 2G
     steps:
