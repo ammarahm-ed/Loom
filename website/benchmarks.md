@@ -1,6 +1,6 @@
 # Benchmarks
 
-All numbers are from Release builds on real devices. "Stock" is React Native 0.89.0-rc.0 without
+All numbers are from Release builds on real devices. "Stock" is React Native 0.88.1 without
 Loom. Each scenario runs once per build; startup is the median of several cold starts with the
 builds alternated. Differences of a millisecond or two, or a few percent of CPU, are within
 noise. The harness lives in `apps/loom-test-app/bench` (`run.js` for Android, `run-ios.js` for

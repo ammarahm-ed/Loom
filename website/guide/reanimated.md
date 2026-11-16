@@ -124,16 +124,6 @@ own and does not affect touch handling or layout.
 
 Without the flag, none of the shared transition code is compiled in.
 
-## Android build note for React Native 0.89
-
-Reanimated 4.7.x supports React Native 0.86 to 0.88. On 0.89, its Android build compiles
-against React Native's generic graphics headers instead of the Android ones React Native itself
-is built with, and the two define colors with different sizes. The view props Reanimated reads
-then disagree with the ones React Native wrote for every field after the first color: layout
-animations only read `opacity` and are unaffected, but shared element transitions read box
-shadows and border radii from the wrong place. Loom's integration compiles Reanimated against
-the Android headers. This goes away when Reanimated builds against React Native 0.89.
-
 ## What would make the adapter unnecessary
 
 One public extension point in Reanimated: a way for the renderer to supply the per-surface

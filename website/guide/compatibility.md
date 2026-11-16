@@ -27,7 +27,7 @@ Each library below has a self-checking screen in Loom's compatibility app
 (`apps/loom-compat-app`) that exercises its native side (mounting, layout, measuring, commands,
 state from native code, events) and compares the results with what the library should
 produce. The screens run on iOS and Android devices, with JavaScript on the main thread and on
-its own thread, on React Native 0.89.
+its own thread, on React Native 0.88.
 
 | Library | Version | Notes |
 |---|---|---|
@@ -63,9 +63,8 @@ is what most libraries do. If one does not, a minimal reproduction in the compat
 the fastest way to get it fixed: Loom treats it as a Loom bug, since the goal is that libraries
 work unchanged.
 
-## React Native 0.89 and library releases
+## React Native 0.88 and library releases
 
-Loom targets React Native 0.89. Some library releases predate it and declare support only up
-to 0.88 (Reanimated 4.7.x, for example). Where an older release fails to build or misbehaves on
-0.89 itself, independently of Loom, Loom's integration applies the smallest build-level fix
+Loom targets React Native 0.88. Where a library release fails to build or misbehaves on 0.88
+itself, independently of Loom, Loom's integration applies the smallest build-level fix
 that makes it work, without modifying `node_modules`.

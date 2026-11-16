@@ -40,7 +40,7 @@ npm install react-native-loom
 
 See [Getting started](website/guide/getting-started.md) for the Android, iOS, Metro and Jest setup.
 
-Loom targets React Native **0.89.0-rc.0**, the exact version it pins as a peer dependency.
+Loom targets React Native **0.88.1**, the exact version it pins as a peer dependency.
 
 ## Status
 

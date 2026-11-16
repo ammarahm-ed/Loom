@@ -39,7 +39,7 @@ directory (see its README).
 ```sh
 node packages/react-native-loom/bin/loom.js overlay --monorepo ~/Work/react-native
 # ...hack in rn-tester...
-node packages/react-native-loom/bin/loom.js import-fork --fork ~/Work/react-native --base v0.89.0-rc.0
+node packages/react-native-loom/bin/loom.js import-fork --fork ~/Work/react-native --base v0.88.1
 node packages/react-native-loom/bin/loom.js validate
 ```
 
