@@ -135,13 +135,10 @@
 .loom-tl-legend { fill: var(--vp-c-text-2); font-size: 11.5px; }
 
 /* Home hero on desktop: the title block and the logo span the same width as the feature grid below
-   (both are VitePress's 1152px container), with the logo flush with the grid's right edge and centred
-   vertically on the title block. VitePress centres the logo in its column and then nudges it 32px up
-   and left, which left the pair off-centre against the grid. Narrow screens keep the stacked layout. */
+   (both are VitePress's 1152px container), with the logo flush with the grid's right edge. VitePress
+   centres the logo in its column and then nudges it 32px up and left, which left the pair off-centre
+   against the grid. Narrow screens keep the stacked layout. */
 @media (min-width: 960px) {
-  .VPHome .VPHero.has-image .container {
-    align-items: center;
-  }
   .VPHome .VPHero.has-image .image-container {
     justify-content: flex-end;
     transform: none;
