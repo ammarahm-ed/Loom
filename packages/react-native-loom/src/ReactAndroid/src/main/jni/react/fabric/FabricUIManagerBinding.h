@@ -202,6 +202,8 @@ class FabricUIManagerBinding : public jni::HybridClass<FabricUIManagerBinding>,
 
   void reportMount(SurfaceId surfaceId);
 
+  void pullAndExecuteTransaction(SurfaceId surfaceId);
+
   jint findNextFocusableElement(jint parentTag, jint focusedTag, jint direction);
 
   jintArray getRelativeAncestorList(jint rootTag, jint childTag);

@@ -1,10 +1,10 @@
 {
   "upstream": {
     "package": "react-native",
-    "minor": "0.87",
-    "version": "0.87.1",
+    "minor": "0.88",
+    "version": "0.88.1",
     "supported": [
-      "0.87.1"
+      "0.88.1"
     ]
   },
   "overrides": [
@@ -13,7 +13,7 @@
       "file": "index.js",
       "area": "js-renderer",
       "layer": "core",
-      "baseHash": "5e03e5233650531810ef3129db116e1e534bbf30d85fccf6a10248ef9a088538"
+      "baseHash": "5334aaacd835aa6e30a2fc18a6fb258af4e84b107d59aa91a10db1fa58439248"
     },
     {
       "type": "patch",
@@ -80,7 +80,7 @@
       "file": "Libraries/Renderer/implementations/ReactFabric-prod.js",
       "area": "js-renderer",
       "layer": "core",
-      "baseHash": "6f53e433d921c0090d0610c5a0091d0b3acb53d13f5d48c32d1e40bfac4bdfda"
+      "baseHash": "c58d269588bac258318b23b1fcbd5e77afb83b9702d2a11349cdc90610489dbc"
     },
     {
       "type": "patch",
@@ -94,7 +94,7 @@
       "file": "Libraries/Text/Text.js",
       "area": "js-renderer",
       "layer": "core",
-      "baseHash": "953284065228869852d6c16cebc5cd69fa810f81ed1ce57e4b7d9c746eda154a"
+      "baseHash": "45b34e7d4f4eab9c697a6d0b2ec90c25e80e25951f4a39e4296d0e20bb946527"
     },
     {
       "type": "patch",
@@ -115,14 +115,14 @@
       "file": "React/Fabric/Mounting/ComponentViews/Text/RCTParagraphComponentView.mm",
       "area": "text",
       "layer": "ios",
-      "baseHash": "a4c38e424bc7b205d4f59f30224cd50959beca07d4b495a854d2f636bff1390b"
+      "baseHash": "d0bf78cdd5947fc353abb52e4f88f57e8a7f15c010cf8d4d48b41cf0396f1f84"
     },
     {
       "type": "patch",
       "file": "React/Fabric/Mounting/ComponentViews/View/RCTViewComponentView.mm",
       "area": "views",
       "layer": "ios",
-      "baseHash": "e3e72be3a2626957b2090a8d5ee826895bac319f28e51d41db1445121758f827"
+      "baseHash": "f59e0d96a534f5a377612c51c52f87470f9429b11c6728d2bdbec434946e3fba"
     },
     {
       "type": "patch",
@@ -171,21 +171,14 @@
       "file": "React/React-RCTFabric.podspec",
       "area": "build",
       "layer": "ios",
-      "baseHash": "73bab056e5da6ce2ff9e226cd36c97d1ba4e3b580704d7ced50b392d1cd185ae"
+      "baseHash": "56e4df2904e136549809fd7efcdb59936162a1db012a9c5f69393eb18a4ebf78"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/build.gradle.kts",
       "area": "build",
       "layer": "android",
-      "baseHash": "759613344207b401a50506a6d6831d6c6280393c6bdd9628c6e8e2ee472869e4"
-    },
-    {
-      "type": "patch",
-      "file": "ReactAndroid/hermes-engine/build.gradle.kts",
-      "area": "build",
-      "layer": "android",
-      "baseHash": "031fb598468cf9c001adc9539651d932552d1073cfbdca85ebef449c7207341c"
+      "baseHash": "22bafae482e537acd5ec55701f31ec85cf06268af1152f8b25fc427ab9510b92"
     },
     {
       "type": "patch",
@@ -193,6 +186,13 @@
       "area": "build",
       "layer": "android",
       "baseHash": "54b756a8ae204c4ce3ebedf13abab5a0624358fbd4b9dc1d40bca01cc2b285fc"
+    },
+    {
+      "type": "patch",
+      "file": "ReactAndroid/hermes-engine/build.gradle.kts",
+      "area": "build",
+      "layer": "android",
+      "baseHash": "b75f516f9a716c97d1d34423c51dcf9b3b1bd97ea692dc80cad861953af0e698"
     },
     {
       "type": "platform",
@@ -218,14 +218,14 @@
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java",
       "area": "mounting",
       "layer": "android",
-      "baseHash": "c82c4ba0f4ff7fed1998aae013941632f923854da5bd378197129acc1732a46e"
+      "baseHash": "e813136b094d6855d097181e4a8da4a9a5a240c6729688b857dbbb84a97dd968"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManagerBinding.kt",
       "area": "delegate-plumbing",
       "layer": "android",
-      "baseHash": "c1ec4ff07ed21b8595ff86682c680253895ce6a7b4cb623df7976ac2be26062a"
+      "baseHash": "9b626d7be90f7a08e0313763d753cc7b2df75f58460cb739c1ccf34c9625dd78"
     },
     {
       "type": "platform",
@@ -244,21 +244,21 @@
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/MountingManager.kt",
       "area": "mounting",
       "layer": "android",
-      "baseHash": "d28f0786e5b89830a335ab23d045be5e0c95f76911c0e424877869da514a8c66"
+      "baseHash": "a5f4f7aa8cb48c5f337377fd2aebbfeb65a2ae38605e60d6dc13b0b3071454a4"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/mounting/SurfaceMountingManager.kt",
       "area": "mounting",
       "layer": "android",
-      "baseHash": "01da06daa1d77c521f3deb54d44c5f64152e6851d3745c527ee34e61d8effd20"
+      "baseHash": "9fe64c96f15ce00489339372b1ad71a9065613997e5efccfec4c9227a0786116"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/internal/featureflags/ReactNativeFeatureFlagsDefaults.kt",
       "area": "fabric-compat",
       "layer": "android",
-      "baseHash": "6043feab44c07c7c9417babef78ede8949fe1243db3ebb57ed9adf325c34e154"
+      "baseHash": "2040d2ad7d382266fe116ca3646cd56a050d8d417e657a0112ff637dace8ba07"
     },
     {
       "type": "patch",
@@ -278,21 +278,21 @@
       "file": "ReactAndroid/src/main/java/com/facebook/react/runtime/ReactInstance.kt",
       "area": "threading",
       "layer": "android",
-      "baseHash": "48b3a97bb1c41568d4eb953fcd18a03b3ac06f2fc64468ee9611d4fe8a122bbb"
+      "baseHash": "938b9f59eda88f444242b2ab8c79ab11ae1b07c2177552feb2752e226bc3d01d"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/shell/MainReactPackage.kt",
       "area": "mounting",
       "layer": "android",
-      "baseHash": "ed6352e5c8b08d13812b39dae39d05a3f2438b4c274b2bc567c45a6e368b72d4"
+      "baseHash": "78484e9e745a0f948e03ac5559353b0ef74bad67f25dbce6fa935c1725b20c37"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/uimanager/JSTouchDispatcher.kt",
       "area": "views",
       "layer": "android",
-      "baseHash": "df9ee8e5613d56b94b00629a1badf17d706b850a9e37fb027b58ba310691c6d2"
+      "baseHash": "e781e85b566d299d866ad5dfe0f265406ead73baf5ac98222a24a6615c9a4997"
     },
     {
       "type": "patch",
@@ -306,14 +306,14 @@
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt",
       "area": "views",
       "layer": "android",
-      "baseHash": "9970f0c7dcb46af971c038c601f29096d7ddd562004182c171c1277736ff720a"
+      "baseHash": "b09c833b41c0c06df9c6cc21aef8cd63b07f2319f28efa7b01ff69dad3443aee"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.kt",
       "area": "views",
       "layer": "android",
-      "baseHash": "aea406b8361847130596c2bf6e69e7aa12255ff9d2c0aa71dc1475be7a598a7d"
+      "baseHash": "54a9f86b263ef141b7c9e7af932a7cdfdbbdb125df18858c5633a1217bb9d655"
     },
     {
       "type": "patch",
@@ -327,28 +327,28 @@
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayoutTextView.kt",
       "area": "text",
       "layer": "android",
-      "baseHash": "2d2272d07384a64fbd0bb79e394018cba4728f69bd50f5f4dc4516119b08e2c6"
+      "baseHash": "b00e7d54c8229b8e346604648507999d2fa2c050fcacb56c378d03f055eb6ac4"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayoutTextViewManager.kt",
       "area": "text",
       "layer": "android",
-      "baseHash": "8ecb2f51c8a1868b243add6781fab116e00aa98cc82dfcbbea044b0ab37c36aa"
+      "baseHash": "d04626a0e3b7817bba1a8cb448252c72fc91ce1f41d29be6bf8e6be7dc0dcfd1"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextView.java",
       "area": "text",
       "layer": "android",
-      "baseHash": "051df32f024e5cdfc601bffdf949cb2d2ed22efeeb4429441afc5c35d144f59f"
+      "baseHash": "dcd4deaf727a9785187fb32177497437ec8ead08d07bfcba871a56599368f1ca"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManager.kt",
       "area": "text",
       "layer": "android",
-      "baseHash": "fd0e5a008d765e6d35128bd7f3cfdad4c4ae4854c41b2b2951429ca014a16ac6"
+      "baseHash": "c57dd12e4d173fd5faadb0370ad2246d10c3dd13bf388152bcd568ded8b9b2ad"
     },
     {
       "type": "patch",
@@ -369,21 +369,21 @@
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt",
       "area": "text",
       "layer": "android",
-      "baseHash": "0512f5bb95b8ac47464527edb72ebbe05fe31a885e6786fa7df79604a44a05c1"
+      "baseHash": "5f0e46a199d851ab3e23790678563650a72ed4dab7d52a2db96349a73abad8ce"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/views/view/ReactViewManager.kt",
       "area": "views",
       "layer": "android",
-      "baseHash": "22e05a1efad906a70a6946889a54658ac274deb5b5e6becc6a84d0372411c763"
+      "baseHash": "a321720d13d27e2998cfe7309e9903461f67bd7e5424dd4310366ee8e23c005c"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/CMakeLists.txt",
       "area": "build",
       "layer": "android",
-      "baseHash": "d49e5e3b9d6d5bd57694c7007b2ef4ac5d9eedaf06692fb0e0674ee05f31f31c"
+      "baseHash": "344cdea4e908331ab7c14c6758da9b4d93a2d5a5505ebe782083fd5397be7d79"
     },
     {
       "type": "patch",
@@ -397,28 +397,28 @@
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricMountingManager.cpp",
       "area": "mounting",
       "layer": "android",
-      "baseHash": "263fc8bb42b0d767c9a4cc32982a0331615f1dfe63c3fec5b1859d8656aeba4f"
+      "baseHash": "38fa551d4fdfe91b1c5e03f483740da7a8e57c4faa6f127bcda687d615f41fb6"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricMountingManager.h",
       "area": "mounting",
       "layer": "android",
-      "baseHash": "ca2ba2207ac36ce1e1674687037bffddec61779b04f232ffc45ba45a6fb83b22"
+      "baseHash": "e5331e31b58c591896f8b3b8872fafd9ffeb547e82a644c5fd15bf52150f5e19"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricUIManagerBinding.cpp",
       "area": "delegate-plumbing",
       "layer": "android",
-      "baseHash": "e53126373be416e8d228df4aaac1c3455cf834a1e6187d2b95fdfbae7a60b9e8"
+      "baseHash": "cb0559a6ebf78112bd1c48fca4a30897635049048bf11ec9b76a93e72c54d82d"
     },
     {
       "type": "patch",
       "file": "ReactAndroid/src/main/jni/react/fabric/FabricUIManagerBinding.h",
       "area": "delegate-plumbing",
       "layer": "android",
-      "baseHash": "1073cb48caf608e926d32a2f3a55da6fe4adbdbd3b7427986591dc10c41923f7"
+      "baseHash": "b1f7bd56829db7a6cf074638df14c31fb5dc20683863850db322199550182dd7"
     },
     {
       "type": "platform",
@@ -494,21 +494,21 @@
       "file": "ReactCommon/React-Fabric.podspec",
       "area": "build",
       "layer": "ios",
-      "baseHash": "48534883a2a941d81e5eb461f7fc633b72d9414e548ef5f28cb4226f4cf1df39"
+      "baseHash": "bc3cd969257470858cd8fcd9ed0e45e4655fe8d9d7c8898926ef9ea0766f4a43"
     },
     {
       "type": "patch",
       "file": "ReactCommon/React-FabricComponents.podspec",
       "area": "build",
       "layer": "ios",
-      "baseHash": "3ddcdf296c8ca5a0c8b939e42c430895820c7b1dd2b66e0eb08ad92069928d6b"
+      "baseHash": "8cb2da6c7f52fba6e8e0712455dce6e34ea9fcfb2eb48feff7e90ea1db0b5870"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/featureflags/ReactNativeFeatureFlagsDefaults.h",
       "area": "fabric-compat",
       "layer": "core",
-      "baseHash": "eb0b7191eb0c15dc66959b45649bdba25d68523f51aa27918045a75547f1df29"
+      "baseHash": "9e8e94a9830725af7ffe2760418586e3452f9ab2d87516fa97f1d76012c9903c"
     },
     {
       "type": "platform",
@@ -527,28 +527,28 @@
       "file": "ReactCommon/react/nativemodule/defaults/DefaultTurboModules.cpp",
       "area": "dom",
       "layer": "core",
-      "baseHash": "c1351baedb7816bb94ef5bb8a47b571ec6d5150783991a4465d6b03084ac6e3c"
+      "baseHash": "9faab71b34b7d8139bfdacbd3318bffd292094fb12ba47c1bd106de426e044be"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/dom/NativeDOM.cpp",
       "area": "dom",
       "layer": "core",
-      "baseHash": "8c7f21b1f0acf057a2115595066fbc27204bc6d75cecbd1ade02bb42861d3e3d"
+      "baseHash": "be44dfeed95bff483d3d6bf6c490d88dc6ca35c78522aea53c7b302f76dd6ad3"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/dom/NativeDOM.h",
       "area": "dom",
       "layer": "core",
-      "baseHash": "1ae32cd206be6d56674182689fb530a5369df642569eb8b617d1687d8bc145e9"
+      "baseHash": "ddf72768d8780b8acd0631b7f04c86837c26626823fed78b3a2aee6699b12e8b"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/nativemodule/dom/React-domnativemodule.podspec",
       "area": "dom",
       "layer": "ios",
-      "baseHash": "426124e19860ef05683e319b64b47afc35ff361ad92e8bb7298647a6789dfa38"
+      "baseHash": "d6480b09fa027c669587947d2a6f5364a1712ff311f8fa0b4a7f272be1d27b27"
     },
     {
       "type": "patch",
@@ -569,14 +569,14 @@
       "file": "ReactCommon/react/renderer/animations/LayoutAnimationKeyFrameManager.h",
       "area": "animation",
       "layer": "core",
-      "baseHash": "38034565b4e9ded9aa5b045c678492eb9d5138cff4454e1c05b5e6901d36a785"
+      "baseHash": "e7229e29f8bba6a4ba312a0d5505ec1f31594a952f703b67fc67c91b6bde3bcc"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/bridging/bridging.h",
       "area": "fabric-compat",
       "layer": "core",
-      "baseHash": "125747bda58037a7fb7ec61a3775df3e398a74d26a7a4126759d4706db8f3b58"
+      "baseHash": "86f623933e6fff0ff6efe8bb75898da9901fcdd80fac84c89eb900af4682ae5b"
     },
     {
       "type": "patch",
@@ -590,14 +590,14 @@
       "file": "ReactCommon/react/renderer/components/text/ParagraphEventEmitter.h",
       "area": "text",
       "layer": "core",
-      "baseHash": "6b00ce91e401748927cb55837afed127c7b9a478d343e6b3f1586eec87cec1c8"
+      "baseHash": "1d2a16b994d07fe3a3b80176bcb166352c0b5bdc44e6aea75c169b307e35515a"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.h",
       "area": "compat",
       "layer": "core",
-      "baseHash": "d7a0a6efcb7a9d4d1f53385fd4a8c01be394a9bb6855132c7548cf332a556c5a"
+      "baseHash": "351993db53081f4a6ca29b177cc29ceae328939d5f848544a0a3b13fd8c8e16b"
     },
     {
       "type": "patch",
@@ -901,14 +901,14 @@
       "file": "ReactCommon/react/renderer/mounting/ShadowTree.cpp",
       "area": "fabric-compat",
       "layer": "core",
-      "baseHash": "3eab5654687d9c7932b746170fd1c91464613c33e40bf9faf641a9b2c83c8029"
+      "baseHash": "55d59cf5a7aabc0161bd5ec319cf61404e4df482006c021f8742a1e1eae76453"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/observers/intersection/IntersectionObserverManager.h",
       "area": "dom",
       "layer": "core",
-      "baseHash": "61e371c29f9cae6adaf873fc42038a7d3ceff27442ab6aaf1aef449a53cf284b"
+      "baseHash": "dc6bedfa09057bc37edadfefcdb6870f773258e5277621ad65ce8d41a2430364"
     },
     {
       "type": "platform",
@@ -939,35 +939,35 @@
       "file": "ReactCommon/react/renderer/runtimescheduler/React-runtimescheduler.podspec",
       "area": "threading",
       "layer": "ios",
-      "baseHash": "2e6085906d2b00bfe76843342b4cf8cc5a7fb49d2e2438d78af7228e8b1eec13"
+      "baseHash": "106b654b87b356bba639f91e1dbe7bcad87082eb5ed509e710aa947862acd457"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.cpp",
       "area": "threading",
       "layer": "core",
-      "baseHash": "d758cdc07c674bb49df067c9bb0e29a364f4173e30cd291ef06c047cd6e72fce"
+      "baseHash": "c8e611d571a88028d54c02b630e0520a4317556f0b081d2ad4c51f4e6bcc05e4"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler_Modern.h",
       "area": "threading",
       "layer": "core",
-      "baseHash": "baed63268849beaa97e0f309762649c40edffb295c852137156a8e9051f00723"
+      "baseHash": "e93d38e97224d0da6333db86898f79d39f564ee4baa5e9cd22677c9ca887c21a"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler.cpp",
       "area": "threading",
       "layer": "core",
-      "baseHash": "42ad2d78314c8911f4e4857be48c59de44a1513514574aed5e27ddc2b76f25f3"
+      "baseHash": "36def35d1027f0ae502fdce119c6a124047777eeb89d8ef6eb8cfc4c762040b7"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/runtimescheduler/RuntimeScheduler.h",
       "area": "threading",
       "layer": "core",
-      "baseHash": "c5efcb87e01ce0e2c67a4e9847fc672f3fbf6dcc1310d0391f05624ab591a3ff"
+      "baseHash": "ac54cbd1193b1f0db6a538e7ead0756aa35f3e9ebbae56175f39704ed1aa734a"
     },
     {
       "type": "platform",
@@ -980,21 +980,21 @@
       "file": "ReactCommon/react/renderer/scheduler/Scheduler.cpp",
       "area": "delegate-plumbing",
       "layer": "core",
-      "baseHash": "eb809ca378728a558a63431bf9e886a3006ef0af5deabe5d12a6fa7d5db906e3"
+      "baseHash": "ffc0919fe74be3a9765dd9030e05ffbd9da6fa0da2aa5490374632df1fb8362b"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/scheduler/Scheduler.h",
       "area": "delegate-plumbing",
       "layer": "core",
-      "baseHash": "d62b19359bf1c99f583a7c600eac0e13c47cf7d9e76280602a05d1ae1f2bcd6d"
+      "baseHash": "aed28e9f70e5699bdc36385cfc44660e85c6ba1011b29907956b5f142cd85664"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/textlayoutmanager/platform/android/react/renderer/textlayoutmanager/TextLayoutManager.cpp",
       "area": "text",
       "layer": "android",
-      "baseHash": "f69f64de7077cd9d630ad18e2476a7cea400d0b899529a9ecfbc5ae8c6201797"
+      "baseHash": "3722c5fee6572863ae8234c4beec9bb643f48936b2814f5818be2b12bda7561d"
     },
     {
       "type": "patch",
@@ -1008,21 +1008,21 @@
       "file": "ReactCommon/react/renderer/textlayoutmanager/platform/ios/react/renderer/textlayoutmanager/RCTTextLayoutManager.mm",
       "area": "text",
       "layer": "ios",
-      "baseHash": "02c3d8c054e9483c1f02766e22d35a998940b9978d618d18ce0b90270668c595"
+      "baseHash": "44cdc0f1928699e607b702fdba61824c4c2d9420946f80cd2caafff2e913894f"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/uimanager/UIManager.cpp",
       "area": "fabric-compat",
       "layer": "core",
-      "baseHash": "1a2fc7e3e3a7ef9162388cb023664e73f0cc96bde99899140fb2e5f7644e1fcc"
+      "baseHash": "451485ba0789965862f2101280bde58ad842c414657357ac8307244a23cdebee"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp",
       "area": "delegate-plumbing",
       "layer": "core",
-      "baseHash": "c9b31e0dacfce08c985dd4ecefa0bde29ec8b1acc6041e1e28b4aebe79687e4b"
+      "baseHash": "1156db698677ef699c53300bc77c07e22b5682ef5f88e998fae963040ccb9450"
     },
     {
       "type": "patch",
@@ -1036,21 +1036,21 @@
       "file": "ReactCommon/react/runtime/platform/ios/React-RuntimeApple.podspec",
       "area": "build",
       "layer": "ios",
-      "baseHash": "ab6f228ad1c072b1ec9cb0b894a88b2165415ec1591c8eefe5abe2aaedd81db3"
+      "baseHash": "1da5214938ddf76db3261d23ea9414f36c792a4fe91a28a58773cd7038bf77bb"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTInstance.mm",
       "area": "misc",
       "layer": "ios",
-      "baseHash": "a9325cbf2e2575cab5f4cbca4e6d26f696993c0f437d7d89592f1ed7332461c0"
+      "baseHash": "9d88776be039c0635d1cb637486e6348ff2db516fdb0cdeb9991f4041e9e6753"
     },
     {
       "type": "patch",
       "file": "ReactCommon/react/runtime/platform/ios/ReactCommon/RCTJSThreadManager.h",
       "area": "threading",
       "layer": "ios",
-      "baseHash": "926502ef908ecc6a8b5e71452a1f3411b2947909dd9e8126f9544819b3d823c4"
+      "baseHash": "4f17d5577f7fbbc0150d91dc813238c194e46432d275c1bf34f91d44db009f0f"
     },
     {
       "type": "patch",
@@ -1071,20 +1071,20 @@
       "file": "ReactCommon/react/runtime/TimerManager.h",
       "area": "runtime",
       "layer": "core",
-      "baseHash": "92c2b4c16a4a51c301ea09341ce333ffab56985fd93a5736ba20d1289998faf9"
+      "baseHash": "b2b99a2fa6cc9b74ac06be444cb3c9f9f5a5b4129b140ccfd47548d757e50fad"
     },
     {
       "type": "patch",
       "file": "scripts/cocoapods/rncore.rb",
       "area": "build",
       "layer": "ios",
-      "baseHash": "44aebd5bee0868edf05f93c3ab0b1c8310cf912fb53c8e8588f20e37e7f1ffbf"
+      "baseHash": "1fdbf5adab2300af85e866591dbe02db955b191ab8e3040bf63ef42af4ab70c1"
     },
     {
       "type": "patch",
       "file": "scripts/cocoapods/utils.rb",
       "area": "build",
-      "baseHash": "db80c0de94e7fadd0b42a4b3dfc5ee28928992494027d08df6e4e0ce7c415670",
+      "baseHash": "d165cdb2ceb3742864060977403322c15b1ee01d18a1e0dc54f3f769e9e54635",
       "layer": "ios"
     },
     {
@@ -1100,14 +1100,14 @@
       "file": "scripts/react_native_pods.rb",
       "area": "build",
       "layer": "ios",
-      "baseHash": "c5f404ca00ce46e6d591859bfdb4ecf58772ad3e7d44118b52d7af162b73b531"
+      "baseHash": "be89b72edc5702652aef035c1cf86e608e1366ea4a7f28df53929e5b76eb8721"
     },
     {
       "type": "patch",
       "file": "src/private/setup/setUpDefaultReactNativeEnvironment.js",
       "area": "runtime",
       "layer": "core",
-      "baseHash": "ada7fdd487db30821082e115756be85e92cc1f095155355d06067422e2df0603"
+      "baseHash": "11bd14350351a5dba07d3965ba4b9680b0a4b004f953e8f927870d5aa20cbff0"
     }
   ]
 }

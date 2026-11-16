@@ -194,6 +194,7 @@ val preparePrefab by
                       Pair("../ReactCommon/cxxreact/", "cxxreact/"),
                       // react_featureflags
                       Pair("../ReactCommon/react/featureflags/", "react/featureflags/"),
+                      Pair("../ReactCommon/react/featureflags/React/", "React/"),
                       // react_devtoolsruntimesettings
                       Pair(
                           "../ReactCommon/react/devtoolsruntimesettings/",
@@ -222,6 +223,7 @@ val preparePrefab by
                       Pair("../ReactCommon/react/renderer/css/", "react/renderer/css/"),
                       // react_debug
                       Pair("../ReactCommon/react/debug/", "react/debug/"),
+                      Pair("../ReactCommon/react/debug/React/", "React/"),
                       // react_renderer_debug
                       Pair("../ReactCommon/react/renderer/debug/", "react/renderer/debug/"),
                       // react_renderer_graphics
@@ -256,6 +258,10 @@ val preparePrefab by
                           "../ReactCommon/react/renderer/components/view/",
                           "react/renderer/components/view/",
                       ),
+                      Pair(
+                          "../ReactCommon/react/renderer/components/view/React/",
+                          "React/",
+                      ),
                       Pair("../ReactCommon/react/renderer/components/view/platform/android/", ""),
                       // rrc_root
                       Pair(
@@ -275,6 +281,7 @@ val preparePrefab by
                           "../ReactCommon/react/renderer/components/text/",
                           "react/renderer/components/text/",
                       ),
+                      Pair("../ReactCommon/react/renderer/components/text/platform/android/", ""),
                       Pair(
                           "../ReactCommon/react/renderer/attributedstring",
                           "react/renderer/attributedstring",
@@ -298,7 +305,10 @@ val preparePrefab by
                       Pair(File(buildDir, "third-party-ndk/folly/").absolutePath, ""),
                       Pair(File(buildDir, "third-party-ndk/glog/exported/").absolutePath, ""),
                       Pair("../ReactCommon/callinvoker/", ""),
+                      Pair("../ReactCommon/callinvoker/React/", "React/"),
                       Pair("../ReactCommon/cxxreact/", "cxxreact/"),
+                      // Exported because the public cxxreact/ErrorUtils.h includes it
+                      Pair("../ReactCommon/jserrorhandler/", "jserrorhandler/"),
                       Pair("../ReactCommon/react/bridging/", "react/bridging/"),
                       Pair("../ReactCommon/react/nativemodule/core/", ""),
                       Pair("../ReactCommon/react/nativemodule/core/platform/android/", ""),
@@ -317,6 +327,7 @@ val preparePrefab by
                           "react/renderer/leakchecker/",
                       ),
                       Pair("../ReactCommon/react/renderer/mapbuffer/", "react/renderer/mapbuffer/"),
+                      Pair("../ReactCommon/react/renderer/mapbuffer/React/", "React/"),
                       Pair("../ReactCommon/react/renderer/mounting/", "react/renderer/mounting/"),
                       Pair(
                           "../ReactCommon/react/renderer/runtimescheduler/",
@@ -331,6 +342,7 @@ val preparePrefab by
                       Pair("../ReactCommon/react/loom/config/", "react/renderer/"),
                       Pair("../ReactCommon/react/loom/", "react/loom/"),
                       Pair("../ReactCommon/react/debug/", "react/debug/"),
+                      Pair("../ReactCommon/react/debug/React/", "React/"),
                       Pair("../ReactCommon/react/cxxstableapi/", "react/cxxstableapi/"),
                       Pair("../ReactCommon/react/utils/", "react/utils/"),
                       Pair("src/main/jni/react/jni", "react/jni/"),
@@ -353,6 +365,7 @@ val preparePrefab by
                       ),
                       // react_timing
                       Pair("../ReactCommon/react/timing/", "react/timing/"),
+                      Pair("../ReactCommon/react/timing/React/", "React/"),
                       // yoga
                       Pair("../ReactCommon/yoga/", ""),
                       Pair("src/main/jni/first-party/yogajni/jni", ""),
@@ -375,7 +388,7 @@ val preparePrefab by
                   // hermes_executor
                   Pair("../ReactCommon/hermes/inspector-modern/", "hermes/inspector-modern/"),
               ),
-          )
+          ),
       )
       outputDir.set(prefabHeadersDir)
       // Loom: libraries compile against these headers with their own CMake, so they never see this
@@ -403,7 +416,7 @@ val downloadBoost by
     tasks.registering(Download::class) {
       dependsOn(createNativeDepsDirectories)
       src(
-          "https://archives.boost.io/release/${BOOST_VERSION.replace("_", ".")}/source/boost_${BOOST_VERSION}.tar.gz"
+          "https://archives.boost.io/release/${BOOST_VERSION.replace("_", ".")}/source/boost_${BOOST_VERSION}.tar.gz",
       )
       onlyIfModified(true)
       overwrite(false)
@@ -427,7 +440,7 @@ val downloadDoubleConversion by
     tasks.registering(Download::class) {
       dependsOn(createNativeDepsDirectories)
       src(
-          "https://github.com/google/double-conversion/archive/v${DOUBLE_CONVERSION_VERSION}.tar.gz"
+          "https://github.com/google/double-conversion/archive/v${DOUBLE_CONVERSION_VERSION}.tar.gz",
       )
       onlyIfModified(true)
       overwrite(false)
@@ -565,7 +578,7 @@ val buildCodegenCLI by
           fileTree(codegenDir) {
             include("lib/**/*.js")
             include("lib/**/*.js.flow")
-          }
+          },
       )
       rootProjectName.set(rootProject.name)
     }
@@ -736,21 +749,24 @@ android {
   tasks.getByName("generateCodegenSchemaFromJavaScript").dependsOn(buildCodegenCLI)
   prepareKotlinBuildScriptModel.dependsOn("preBuild")
   prepareKotlinBuildScriptModel.dependsOn(
-      ":packages:react-native:ReactAndroid:hermes-engine:preBuild"
+      ":packages:react-native:ReactAndroid:hermes-engine:preBuild",
   )
 
   sourceSets {
     named("main") {
-      res.directories.addAll(
-          listOf(
-              "src/main/res/devsupport",
-              "src/main/res/shell",
-              "src/main/res/views/alert",
-              "src/main/res/views/modal",
-              "src/main/res/views/uimanager",
-              "src/main/res/views/view",
-          )
-      )
+      res.directories.apply {
+        clear()
+        addAll(
+            listOf(
+                "src/main/res/devsupport",
+                "src/main/res/shell",
+                "src/main/res/views/alert",
+                "src/main/res/views/modal",
+                "src/main/res/views/uimanager",
+                "src/main/res/views/view",
+            ),
+        )
+      }
     }
   }
 

@@ -160,7 +160,7 @@ internal constructor(
               ReactSoftExceptionLogger.logSoftException(
                   TAG,
                   IllegalViewOperationException(
-                      "Race condition in addRootView detected. Trying to set an id of [$surfaceId] on the RootView, but that id has already been set. "
+                      "Race condition in addRootView detected. Trying to set an id of [$surfaceId] on the RootView, but that id has already been set. ",
                   ),
               )
             } else if (rootView.id != View.NO_ID) {
@@ -176,7 +176,7 @@ internal constructor(
               ReactSoftExceptionLogger.logSoftException(
                   TAG,
                   IllegalViewOperationException(
-                      "Trying to add a root view with an explicit id already set. React Native uses the id field to track react tags and will overwrite this field. If that is fine, explicitly overwrite the id field to View.NO_ID before calling addRootView."
+                      "Trying to add a root view with an explicit id already set. React Native uses the id field to track react tags and will overwrite this field. If that is fine, explicitly overwrite the id field to View.NO_ID before calling addRootView.",
                   ),
               )
             }
@@ -374,7 +374,7 @@ internal constructor(
       ReactSoftExceptionLogger.logSoftException(
           TAG,
           IllegalStateException(
-              "addViewAt: cannot insert view [$tag] into parent [$parentTag]: View already has a parent: [$actualParentId] Parent: ${currParentView.javaClass.simpleName} View: ${view.javaClass.simpleName}"
+              "addViewAt: cannot insert view [$tag] into parent [$parentTag]: View already has a parent: [$actualParentId] Parent: ${currParentView.javaClass.simpleName} View: ${view.javaClass.simpleName}",
           ),
       )
 
@@ -440,7 +440,7 @@ internal constructor(
       ReactSoftExceptionLogger.logSoftException(
           TAG,
           IllegalViewOperationException(
-              "removeViewAt tried to remove a React View that was actually reused. This indicates a bug in the Differ (specifically instruction ordering). [$tag]"
+              "removeViewAt tried to remove a React View that was actually reused. This indicates a bug in the Differ (specifically instruction ordering). [$tag]",
           ),
       )
       return
@@ -451,7 +451,7 @@ internal constructor(
       ReactSoftExceptionLogger.logSoftException(
           ReactSoftExceptionLogger.Categories.SURFACE_MOUNTING_MANAGER_MISSING_VIEWSTATE,
           ReactNoCrashSoftException(
-              "Unable to find viewState for tag: [$parentTag] for removeViewAt"
+              "Unable to find viewState for tag: [$parentTag] for removeViewAt",
           ),
       )
       return
@@ -460,10 +460,13 @@ internal constructor(
     val parentView = parentViewState.view
     checkNotNull(parentView) { "Unable to find parentView for tag $parentTag" }
     if (parentView !is ViewGroup) {
-      val message =
-          "Unable to remove a view from a a non-ViewGroup ${parentView.javaClass.simpleName} when removing [$tag] from parent [$parentTag]"
-      FLog.e(TAG, message)
-      throw IllegalStateException(message)
+      ReactSoftExceptionLogger.logSoftException(
+          TAG,
+          ReactNoCrashSoftException(
+              "Unable to remove a view from a non-ViewGroup ${parentView.javaClass.simpleName} when removing [$tag] from parent [$parentTag]",
+          ),
+      )
+      return
     }
 
     if (SHOW_CHANGED_VIEW_HIERARCHIES) {
@@ -516,7 +519,7 @@ internal constructor(
       ReactSoftExceptionLogger.logSoftException(
           TAG,
           ReactNoCrashSoftException(
-              "Tried to remove view [$tag] of parent [$parentTag] at index $index, but got view tag $actualTag - actual index of view: $tagActualIndex"
+              "Tried to remove view [$tag] of parent [$parentTag] at index $index, but got view tag $actualTag - actual index of view: $tagActualIndex",
           ),
       )
       actualIndex = tagActualIndex
@@ -879,7 +882,7 @@ internal constructor(
     val viewState =
         getNullableViewState(reactTag)
             ?: throw RetryableMountingLayerException(
-                "Unable to find viewState for tag $reactTag for commandId $commandId"
+                "Unable to find viewState for tag $reactTag for commandId $commandId",
             )
 
     // It's not uncommon for JS to send events as/after a component is being removed from the
@@ -908,7 +911,7 @@ internal constructor(
     val viewState =
         getNullableViewState(reactTag)
             ?: throw RetryableMountingLayerException(
-                "Unable to find viewState for tag $reactTag for commandId $commandId"
+                "Unable to find viewState for tag $reactTag for commandId $commandId",
             )
 
     // It's not uncommon for JS to send events as/after a component is being removed from the
@@ -940,7 +943,7 @@ internal constructor(
       ReactSoftExceptionLogger.logSoftException(
           ReactSoftExceptionLogger.Categories.SURFACE_MOUNTING_MANAGER_MISSING_VIEWSTATE,
           ReactNoCrashSoftException(
-              "Unable to find viewState for tag $reactTag for sendAccessibilityEvent"
+              "Unable to find viewState for tag $reactTag for sendAccessibilityEvent",
           ),
       )
       return
@@ -1082,7 +1085,7 @@ internal constructor(
       ReactSoftExceptionLogger.logSoftException(
           ReactSoftExceptionLogger.Categories.SURFACE_MOUNTING_MANAGER_MISSING_VIEWSTATE,
           ReactNoCrashSoftException(
-              "Unable to find viewState for tag $reactTag for updateOverflowInset"
+              "Unable to find viewState for tag $reactTag for updateOverflowInset",
           ),
       )
       return
@@ -1192,7 +1195,7 @@ internal constructor(
       ReactSoftExceptionLogger.logSoftException(
           ReactSoftExceptionLogger.Categories.SURFACE_MOUNTING_MANAGER_MISSING_VIEWSTATE,
           ReactNoCrashSoftException(
-              "Unable to find viewState for tag $reactTag for setJSResponder"
+              "Unable to find viewState for tag $reactTag for setJSResponder",
           ),
       )
       return
@@ -1207,7 +1210,7 @@ internal constructor(
 
     if (viewState.isRoot) {
       SoftAssertions.assertUnreachable(
-          "Cannot block native responder on [$reactTag] that is a root view"
+          "Cannot block native responder on [$reactTag] that is a root view",
       )
     }
     jsResponderHandler.setJSResponder(initialReactTag, view.parent)
@@ -1307,7 +1310,7 @@ internal constructor(
     val state = getNullableViewState(reactTag)
     return state?.view
         ?: throw IllegalViewOperationException(
-            "Unable to find view for tag $reactTag. Surface $surfaceId stopped: $isStopped, rootViewAttached: $isRootViewAttached"
+            "Unable to find view for tag $reactTag. Surface $surfaceId stopped: $isStopped, rootViewAttached: $isRootViewAttached",
         )
   }
 
@@ -1416,7 +1419,7 @@ internal constructor(
               viewState.pendingEventQueue
                   ?: LinkedList<PendingViewEvent>().also { viewState.pendingEventQueue = it }
           queue.add(
-              PendingViewEvent(eventName, params, eventCategory, canCoalesceEvent, eventTimestamp)
+              PendingViewEvent(eventName, params, eventCategory, canCoalesceEvent, eventTimestamp),
           )
           return
         }
@@ -1492,7 +1495,7 @@ internal constructor(
     private val LOOM_CAMERA_DISTANCE_NORMALIZATION: Float = Math.sqrt(5.0).toFloat()
 
     /**
-     * BaseViewManager.sanitizeFloatPropertyValue (private there in React Native 0.87): View
+     * BaseViewManager.sanitizeFloatPropertyValue (private there in React Native 0.88): View
      * setters throw on NaN and infinities, so NaN becomes 0 and the rest is clamped.
      */
     private fun loomSanitizeFloat(value: Float): Float =
@@ -1537,7 +1540,7 @@ internal constructor(
             val outputType = outputReadableMap.getType(propKey)
             assert(
                 (outputType == ReadableType.Array || outputType == ReadableType.Null) &&
-                    propValue is List<*>
+                    propValue is List<*>,
             )
             val array = WritableNativeArray()
             for (item in propValue as List<*>) {
@@ -1559,7 +1562,7 @@ internal constructor(
             val outputType = outputReadableMap.getType(propKey)
             assert(
                 (outputType == ReadableType.Number || outputType == ReadableType.Null) &&
-                    propValue is Number
+                    propValue is Number,
             )
             outputReadableMap.putDouble(propKey, (propValue as Number).toDouble())
           }

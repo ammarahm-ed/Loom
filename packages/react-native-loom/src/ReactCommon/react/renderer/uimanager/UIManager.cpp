@@ -238,8 +238,8 @@ void UIManager::setIsJSResponder(
 
 void UIManager::startSurface(
     ShadowTree::Unique&& shadowTree,
-    const std::string& moduleName,
-    const folly::dynamic& props,
+    std::string moduleName,
+    folly::dynamic props,
     DisplayMode displayMode) const noexcept {
   TraceSection s("UIManager::startSurface");
 
@@ -253,7 +253,10 @@ void UIManager::startSurface(
         }
       });
 
-  runtimeExecutor_([=](jsi::Runtime& runtime) {
+  runtimeExecutor_([surfaceId,
+                    moduleName = std::move(moduleName),
+                    props = std::move(props),
+                    displayMode](jsi::Runtime& runtime) {
     TraceSection s("UIManager::startSurface::onRuntime");
     AppRegistryBinding::startSurface(
         runtime, surfaceId, moduleName, props, displayMode);
@@ -268,12 +271,15 @@ void UIManager::startEmptySurface(
 
 void UIManager::setSurfaceProps(
     SurfaceId surfaceId,
-    const std::string& moduleName,
-    const folly::dynamic& props,
+    std::string moduleName,
+    folly::dynamic props,
     DisplayMode displayMode) const noexcept {
   TraceSection s("UIManager::setSurfaceProps");
 
-  runtimeExecutor_([=](jsi::Runtime& runtime) {
+  runtimeExecutor_([surfaceId,
+                    moduleName = std::move(moduleName),
+                    props = std::move(props),
+                    displayMode](jsi::Runtime& runtime) {
     AppRegistryBinding::setSurfaceProps(
         runtime, surfaceId, moduleName, props, displayMode);
   });
@@ -684,6 +690,21 @@ void UIManager::shadowTreeDidPromoteReactRevision(
     const ShadowTree& shadowTree) const {
   if (delegate_ != nullptr) {
     delegate_->uiManagerDidPromoteReactRevision(shadowTree);
+  }
+}
+
+void UIManager::shadowTreeDidCommit(
+    const ShadowTree& shadowTree,
+    const RootShadowNode::Shared& rootShadowNode,
+    const std::vector<const LayoutableShadowNode*>& affectedLayoutableNodes)
+    const noexcept {
+  TraceSection s("UIManager::shadowTreeDidCommit");
+
+  std::shared_lock lock(commitHookMutex_);
+
+  for (auto* commitHook : commitHooks_) {
+    commitHook->shadowTreeDidCommit(
+        shadowTree, rootShadowNode, affectedLayoutableNodes);
   }
 }
 

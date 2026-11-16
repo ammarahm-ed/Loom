@@ -109,7 +109,7 @@ void AnimationBackend::applySurfaceUpdates(
   // batched call for the whole frame (typed values, no per-view round trip),
   // and Loom's animation lane only records it. A view with layout props goes
   // to the lane, which lays it out and writes its paint keys to the view.
-  // React Native 0.87 tracks layout updates per surface, not per view, so a
+  // React Native 0.88 tracks layout updates per surface, not per view, so a
   // surface with any layout update sends all of its views to the lane.
   // Loom skips the props registry: it only feeds the commit hook, which
   // re-applies animated props to React's shadow-tree commits, and Loom's

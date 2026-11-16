@@ -21,6 +21,7 @@
 
 #include <cxxreact/TraceSection.h>
 #include <react/featureflags/ReactNativeFeatureFlags.h>
+#include <react/jni/ReadableNativeArray.h>
 #include <react/jni/ReadableNativeMap.h>
 #include <react/jni/ReadableNativeArray.h>
 #include <react/common/mapbuffer/JReadableMapBuffer.h>
@@ -675,6 +676,13 @@ void FabricMountingManager::onSurfaceStop(SurfaceId surfaceId) {
 #endif
 }
 
+void FabricMountingManager::onTransactionAvailable(SurfaceId surfaceId) {
+  static auto onTransactionAvailable =
+      JFabricUIManager::javaClassStatic()->getMethod<void(jint)>(
+          "onTransactionAvailable");
+  onTransactionAvailable(javaUIManager_, surfaceId);
+}
+
 bool FabricMountingManager::isViewAllocated(SurfaceId surfaceId, Tag tag) {
   std::lock_guard lock(allocatedViewsMutex_);
   auto it = allocatedViewRegistry_.find(surfaceId);
@@ -1199,10 +1207,12 @@ inline void writeUpdateOverflowInsetMountItem(
 #if LOOM_RENDERER
 // Loom mounts through its renderer (directApplyBatch); no shadow-tree transaction ever reaches here.
 void FabricMountingManager::executeMount(
-    const MountingTransaction& /*transaction*/) {}
+    const MountingTransaction& /*transaction*/,
+    bool /*synchronous*/) {}
 #else
 void FabricMountingManager::executeMount(
-    const MountingTransaction& transaction) {
+    const MountingTransaction& transaction,
+    bool synchronous) {
   TraceSection section("FabricMountingManager::executeMount");
 
   std::scoped_lock lock(commitMutex_);
@@ -1464,7 +1474,8 @@ void FabricMountingManager::executeMount(
                                           jlong,
                                           jlong,
                                           jlong,
-                                          jint)>("scheduleMountItem");
+                                          jint,
+                                          jboolean)>("scheduleMountItem");
 
   if (batchMountItemIntsSize == 0) {
     auto finishTransactionEndTime = telemetryTimePointNow();
@@ -1479,7 +1490,8 @@ void FabricMountingManager::executeMount(
         telemetryTimePointToMilliseconds(telemetry.getLayoutEndTime()),
         telemetryTimePointToMilliseconds(finishTransactionStartTime),
         telemetryTimePointToMilliseconds(finishTransactionEndTime),
-        telemetry.getAffectedLayoutNodesCount());
+        telemetry.getAffectedLayoutNodesCount(),
+        static_cast<jboolean>(synchronous));
     return;
   }
 
@@ -1646,7 +1658,8 @@ void FabricMountingManager::executeMount(
       telemetryTimePointToMilliseconds(telemetry.getLayoutEndTime()),
       telemetryTimePointToMilliseconds(finishTransactionStartTime),
       telemetryTimePointToMilliseconds(finishTransactionEndTime),
-      telemetry.getAffectedLayoutNodesCount());
+      telemetry.getAffectedLayoutNodesCount(),
+      static_cast<jboolean>(synchronous));
 
   env->DeleteLocalRef(buffer.ints);
 }

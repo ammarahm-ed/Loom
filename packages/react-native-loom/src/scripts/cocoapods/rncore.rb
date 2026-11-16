@@ -404,9 +404,9 @@ class ReactNativeCoreUtils
         group = "io/github/ammarahm-ed"
         flavor = (ENV["RCT_LOOM_JS_IOS"] || "background") == "background" ? "" : "jsmain-"
         repo = ENV["LOOM_MAVEN_REPOSITORY"]
-        repos = (repo != nil && repo != "") ? [repo.sub(/\/+$/, "")] : ["https://repo1.maven.org/maven2"]
+        repos = (repo != nil && repo != "") ? [repo.sub(/\/+$/, "")] : [ReactNativePodsUtils::MAVEN_CENTRAL_REPOSITORY]
         return repos.map { |maven_repo_url|
-            # https://repo1.maven.org/maven2/io/github/ammarahm-ed/react-native-artifacts/0.89.0-rc.0/react-native-artifacts-0.89.0-rc.0-reactnative-core-debug.tar.gz
+            # https://repo1.maven.org/maven2/io/github/ammarahm-ed/react-native-artifacts/0.88.0/react-native-artifacts-0.88.0-reactnative-core-debug.tar.gz
             "#{maven_repo_url}/#{group}/react-native-artifacts/#{version}/react-native-artifacts-#{version}-reactnative-core-#{flavor}#{dsyms ? "dSYM-" : ""}#{build_type.to_s}.tar.gz"
         }
     end
@@ -416,7 +416,7 @@ class ReactNativeCoreUtils
         artefact_name = "reactnative-core-#{dsyms ? "dSYM-" : ""}#{configuration ? configuration : "debug"}.tar.gz"
         xml_url = "https://central.sonatype.com/repository/maven-snapshots/com/facebook/react/#{artefact_coordinate}/#{version}-SNAPSHOT/maven-metadata.xml"
 
-        response = Net::HTTP.get_response(URI(xml_url))
+        response = ReactNativePodsUtils.memoized_get_response(xml_url)
         if response.is_a?(Net::HTTPSuccess)
           xml = REXML::Document.new(response.body)
           timestamp = xml.elements['metadata/versioning/snapshot/timestamp'].text
@@ -530,7 +530,7 @@ class ReactNativeCoreUtils
     end
 
     def self.release_artifact_exists(version)
-        return artifact_exists(stable_tarball_url(version, :debug))
+        return stable_tarball_urls(version, :debug).any? { |url| artifact_exists(url) }
     end
 
     def self.nightly_artifact_exists(version)
@@ -546,13 +546,13 @@ class ReactNativeCoreUtils
         return File.join(Pod::Config.instance.project_pods_root, "ReactNativeCore-artifacts")
     end
 
-    # This function checks that ReactNativeCore artifact exists on the maven repo
+    # This function checks that ReactNativeCore artifact exists on the maven repo.
+    # The probe is memoized, so repeated podspec evaluations in one `pod install`
+    # don't re-request the same URL.
     def self.artifact_exists(tarball_url)
         # Loom: LOOM_MAVEN_REPOSITORY may be a local directory (file://); the HTTP probe cannot see it.
         return File.exist?(URI.decode_www_form_component(tarball_url.sub(/\Afile:\/\//, ""))) if tarball_url.start_with?("file://")
-        # -L is used to follow redirects, useful for the nightlies
-        # I also needed to wrap the url in quotes to avoid escaping & and ?.
-        return (`curl -o /dev/null --silent -Iw '%{http_code}' -L "#{tarball_url}"` == "200")
+        return ReactNativePodsUtils.artifact_exists?(tarball_url)
     end
 
     def self.rncore_log(message, level = :info)

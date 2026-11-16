@@ -187,7 +187,7 @@ internal class ReactInstance(
 
     val reactPackages: MutableList<ReactPackage> = ArrayList<ReactPackage>()
     reactPackages.add(
-        CoreReactPackage(context.devSupportManager, context.defaultHardwareBackBtnHandler)
+        CoreReactPackage(context.devSupportManager, context.defaultHardwareBackBtnHandler),
     )
     if (useDevSupport) {
       reactPackages.add(DebugCorePackage())
@@ -305,16 +305,15 @@ internal class ReactInstance(
   }
 
   private inner class ReactJsExceptionHandlerImpl(
-      private val queueThreadExceptionHandler: QueueThreadExceptionHandler
+      private val queueThreadExceptionHandler: QueueThreadExceptionHandler,
   ) : ReactJsExceptionHandler {
 
     override fun reportJsException(errorMap: ProcessedError) {
       val data = StackTraceHelper.convertProcessedError(errorMap)
       try {
-        val exceptionsManager =
-            checkNotNull(
-                getNativeModule<NativeExceptionsManagerSpec>(NativeExceptionsManagerSpec.NAME)
-            )
+        val exceptionsManager = checkNotNull(
+            getNativeModule<NativeExceptionsManagerSpec>(NativeExceptionsManagerSpec.NAME),
+        )
         exceptionsManager.reportException(data)
       } catch (e: Exception) {
         // Sometimes (e.g: always with the default exception manager) the native module exceptions
@@ -354,7 +353,7 @@ internal class ReactInstance(
           override fun setSourceURLs(deviceURL: String, remoteURL: String) {
             context.sourceURL = deviceURL
           }
-        }
+        },
     )
     Systrace.endSection(Systrace.TRACE_TAG_REACT)
   }
@@ -415,7 +414,7 @@ internal class ReactInstance(
       ReactSoftExceptionLogger.logSoftException(
           TAG,
           IllegalViewOperationException(
-              "surfaceView's is NOT equal to View.NO_ID before calling startSurface."
+              "surfaceView's is NOT equal to View.NO_ID before calling startSurface.",
           ),
       )
       view.id = View.NO_ID
@@ -492,7 +491,7 @@ internal class ReactInstance(
       ReactSoftExceptionLogger.logSoftException(
           TAG,
           ReactNoCrashSoftException(
-              "Native method handleMemoryPressureJs is called earlier than librninstance.so got ready."
+              "Native method handleMemoryPressureJs is called earlier than librninstance.so got ready.",
           ),
       )
     }

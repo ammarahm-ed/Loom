@@ -158,4 +158,10 @@ void RuntimeScheduler::setIntersectionObserverDelegate(
       intersectionObserverDelegate);
 }
 
+void RuntimeScheduler::setResizeObserverDelegate(
+    RuntimeSchedulerResizeObserverDelegate* resizeObserverDelegate) {
+  return runtimeSchedulerImpl_->setResizeObserverDelegate(
+      resizeObserverDelegate);
+}
+
 } // namespace facebook::react
