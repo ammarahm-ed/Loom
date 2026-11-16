@@ -479,6 +479,8 @@ class LoomRenderer final {
   /** `propsPatch` is an attribute-payload diff, exactly as React produced it.
    */
   void cloneNodeWithNewProps(Tag tag, const folly::dynamic& propsPatch);
+  /** Sets whether an offscreen boundary hides the node (see `offscreenHidden`). */
+  void setOffscreenHidden(Tag tag, bool hidden);
   /**
    * Records the props a compat component's descriptor parsed for the props
    * this node holds now (call after the node's props are applied).
@@ -917,6 +919,13 @@ class LoomRenderer final {
     float mountedHeight{0};
     Tag mountedParentTag{0};
     bool displayNone{false};
+    /**
+     * Hidden by an offscreen boundary (Activity, Suspense, react-freeze): React
+     * commits a hidden clone of the version rather than new props, and shows
+     * the node again by committing the version itself. It is version state,
+     * not a prop, so showing again needs no props to be undone.
+     */
+    bool offscreenHidden{false};
     /** Last values handed to the host, so only real changes are re-emitted. */
     int mountedDisplayType{1};
     int mountedDirection{1};

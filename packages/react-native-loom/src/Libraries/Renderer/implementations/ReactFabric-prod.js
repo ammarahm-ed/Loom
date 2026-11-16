@@ -10439,6 +10439,11 @@ var _nativeFabricUIManage = nativeFabricUIManager,
     true === nativeFabricUIManager.loomJsOnMain
       ? 79
       : 127,
+  // Hides a version without a props patch, so committing the version again
+  // shows it with its own props (a display: none patch would outlive it).
+  loomCloneNodeHidden = loomRendererActive
+    ? nativeFabricUIManager.cloneNodeHidden || null
+    : null,
   loomCloneNodeReplacingChildren = loomRendererActive
     ? nativeFabricUIManager.cloneNodeReplacingChildren
     : null,
@@ -10548,6 +10553,11 @@ function resolveUpdatePriority() {
 var scheduleTimeout = setTimeout,
   cancelTimeout = clearTimeout;
 function cloneHiddenInstance(instance) {
+  if (null !== loomCloneNodeHidden)
+    return {
+      node: loomCloneNodeHidden(instance.node),
+      canonical: instance.canonical
+    };
   var node = instance.node,
     updatePayload = loomCreateAttributePayload(
       { style: { display: "none" } },

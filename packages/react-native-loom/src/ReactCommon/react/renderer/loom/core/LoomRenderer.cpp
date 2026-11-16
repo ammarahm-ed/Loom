@@ -432,6 +432,17 @@ void LoomRenderer::cloneNodeWithNewProps(
 }
 
 
+void LoomRenderer::setOffscreenHidden(Tag tag, bool hidden) {
+  auto* node = find(tag);
+  if (node == nullptr || node->offscreenHidden == hidden) {
+    return;
+  }
+  node->offscreenHidden = hidden;
+  node->displayNone =
+      hidden || stringProp(node->props, "display") == "none";
+  node->styleDirty = true;
+  markNeedsPrepare(*node);
+}
 
 void LoomRenderer::patchProps(
     Node& node,
