@@ -136,7 +136,10 @@ jobs:
       LOOM_BASELINE_DIR: /mnt/loom/baseline
       LOOM_MAVEN_LOCAL: /mnt/loom/maven
       CCACHE_DIR: /mnt/loom/ccache
-      CCACHE_MAXSIZE: 1800M
+      # Large while building: both passes of every variant must fit, or pass 1's objects are evicted before
+      # pass 2 can reuse them. Trimmed to CCACHE_SAVE_SIZE before the cache is uploaded.
+      CCACHE_MAXSIZE: 30G
+      CCACHE_SAVE_SIZE: 1800M
       # 4 vCPU / 16 GB: a clang job per core next to the Gradle daemon is what gets OOM-killed. Two
       # workers and two compile jobs keep the peak well under the limit.
       GRADLE_OPTS: -Dorg.gradle.workers.max=2 -Dorg.gradle.jvmargs=-Xmx4g
@@ -198,6 +201,12 @@ jobs:
       - name: Disk after build
         if: always()
         run: df -h / /mnt
+      - name: Trim the compiler cache for upload
+        if: always() && matrix.js == 'background'
+        run: |
+          ccache --show-stats | grep -E "Hits|Cache size" || true
+          ccache --max-size="$CCACHE_SAVE_SIZE" >/dev/null && ccache --cleanup >/dev/null
+          ccache --show-stats | grep "Cache size" || true
       - name: Save the compiler cache
         if: always() && matrix.js == 'background'
         uses: actions/cache/save@v4
@@ -227,7 +236,8 @@ jobs:
       LOOM_IOS_OUT: ${{ github.workspace }}/../cs/ios-out
       LOOM_BASELINE_DIR: ${{ github.workspace }}/../baseline
       CCACHE_DIR: ${{ github.workspace }}/../ccache
-      CCACHE_MAXSIZE: 2G
+      CCACHE_MAXSIZE: 30G
+      CCACHE_SAVE_SIZE: 2G
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -282,6 +292,12 @@ jobs:
       - name: Disk after build
         if: always()
         run: df -h / "$GITHUB_WORKSPACE/../cs"
+      - name: Trim the compiler cache for upload
+        if: always() && matrix.js == 'background'
+        run: |
+          ccache --show-stats | grep -E "Hits|Cache size" || true
+          ccache --max-size="$CCACHE_SAVE_SIZE" >/dev/null && ccache --cleanup >/dev/null
+          ccache --show-stats | grep "Cache size" || true
       - name: Save the compiler cache
         if: always() && matrix.js == 'background'
         uses: actions/cache/save@v4

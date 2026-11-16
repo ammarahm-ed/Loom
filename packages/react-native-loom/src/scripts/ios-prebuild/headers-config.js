@@ -252,11 +252,42 @@ const PodspecExceptions /*: {[key: string]: PodSpecConfiguration} */ = {
         headerDir: 'react/renderer/uimanager',
       },
 
-      // Loom: the renderer module (react/renderer/loom/{binding,core,mounting,worker,text,host,compat}).
+      // Loom: the renderer module. One entry per folder: each entry copies its headers flat into
+      // headerDir, and the headers include each other by folder (react/renderer/loom/<folder>/X.h).
       {
-        name: 'loomRenderer',
-        headerPatterns: ['react/renderer/loom/{binding,core,mounting,worker,text,host,compat}/**/*.h'],
-        headerDir: 'react/renderer/loom',
+        name: 'loomBinding',
+        headerPatterns: ['react/renderer/loom/binding/*.h'],
+        headerDir: 'react/renderer/loom/binding',
+      },
+      {
+        name: 'loomCore',
+        headerPatterns: ['react/renderer/loom/core/*.h'],
+        headerDir: 'react/renderer/loom/core',
+      },
+      {
+        name: 'loomMounting',
+        headerPatterns: ['react/renderer/loom/mounting/*.h'],
+        headerDir: 'react/renderer/loom/mounting',
+      },
+      {
+        name: 'loomWorker',
+        headerPatterns: ['react/renderer/loom/worker/*.h'],
+        headerDir: 'react/renderer/loom/worker',
+      },
+      {
+        name: 'loomText',
+        headerPatterns: ['react/renderer/loom/text/*.h'],
+        headerDir: 'react/renderer/loom/text',
+      },
+      {
+        name: 'loomHost',
+        headerPatterns: ['react/renderer/loom/host/*.h'],
+        headerDir: 'react/renderer/loom/host',
+      },
+      {
+        name: 'loomCompat',
+        headerPatterns: ['react/renderer/loom/compat/*.h'],
+        headerDir: 'react/renderer/loom/compat',
       },
 
       // Loom: the library API (<react/loom/Loom.h>) and the build configuration header
