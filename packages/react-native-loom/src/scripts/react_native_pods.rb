@@ -631,6 +631,15 @@ def react_native_post_install(
     ReactNativePodsUtils.remove_compiler_flag_from_project(installer, "-DRCT_REMOVE_LEGACY_ARCH=1")
   end
 
+  # Loom: libraries read <react/renderer/LoomConfig.h> to pick their Loom or Fabric branch, and that
+  # header defaults LOOM_RENDERER to 1. A loom.renderer=false build compiled from source still has the
+  # header, so every pod (third-party ones included) is told the renderer is off.
+  if ENV["RCT_LOOM_RENDERER_IOS"] == "1"
+    ReactNativePodsUtils.remove_compiler_flag_from_project(installer, "-DLOOM_RENDERER=0")
+  else
+    ReactNativePodsUtils.add_compiler_flag_to_project(installer, "-DLOOM_RENDERER=0")
+  end
+
   ReactNativePodsUtils.set_legacy_interop_removal_flags(
     installer,
     build_rncore_from_source: ReactNativeCoreUtils.build_rncore_from_source()

@@ -152,7 +152,7 @@ void AnimationBackend::applySurfaceUpdates(
       uiManager->synchronouslyUpdateAnimatedProps(paintOnly);
     }
   }
-#if LOOM_WORKER
+#if LOOM_RENDERER
   loomFlushAnimationFrames();
 #endif
   (void)asyncFlushSurfaces;

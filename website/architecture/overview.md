@@ -7,7 +7,7 @@
    `UIManagerBinding`.
 2. **LoomRenderer** keeps a mutable node tree. A commit reconciles the changed nodes, runs Yoga
    layout and text measurement, and produces one batch of view operations.
-3. **The worker** (`loom.worker=true`) does step 2 on its own thread. Small commits skip the
+3. **The worker** (always part of the Loom renderer) does step 2 on its own thread. Small commits skip the
    worker and run inline, where handing off would cost more than the work.
 4. **The view applier** applies the batch on the main thread in one call: create, update props,
    insert, remove, layout. On Android, props cross from C++ to Java packed into an int array,

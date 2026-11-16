@@ -54,7 +54,7 @@ void UIManagerBinding::createAndInstallIfNeeded(
     ShadowNode::setUseRuntimeShadowNodeReferenceUpdateOnThread(true);
   }
 
-#if LOOM_WORKER
+#if LOOM_RENDERER
   // Loom animation fast lane: the flush has to run at the end of every JS task
   //, so hook it onto the
   // scheduler this runtime already uses. It is installed here, and not next to

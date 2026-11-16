@@ -14,8 +14,8 @@ APP="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$APP"
 
 case "$VARIANT" in
-  main)  export LOOM_BENCH_STOCK=0; RCT_JS=main;       LOOM_PROPS="-Ploom.renderer=true -Ploom.js=main -Ploom.worker=true -Ploom.compileFromSource=true" ;;
-  bg)    export LOOM_BENCH_STOCK=0; RCT_JS=background; LOOM_PROPS="-Ploom.renderer=true -Ploom.js=background -Ploom.worker=true -Ploom.compileFromSource=true" ;;
+  main)  export LOOM_BENCH_STOCK=0; RCT_JS=main;       LOOM_PROPS="-Ploom.renderer=true -Ploom.js=main -Ploom.compileFromSource=true" ;;
+  bg)    export LOOM_BENCH_STOCK=0; RCT_JS=background; LOOM_PROPS="-Ploom.renderer=true -Ploom.js=background -Ploom.compileFromSource=true" ;;
   stock) export LOOM_BENCH_STOCK=1; RCT_JS=none;       LOOM_PROPS="" ;;
   *) echo "unknown variant $VARIANT" >&2; exit 1 ;;
 esac
@@ -27,7 +27,7 @@ if [ "$PLATFORM" = ios ]; then
     if [ "$VARIANT" = stock ]; then
       bundle exec pod install
     else
-      env loom.renderer=true loom.worker=true loom.js=$RCT_JS loom.compileFromSource=true bundle exec pod install
+      env loom.renderer=true loom.js=$RCT_JS loom.compileFromSource=true bundle exec pod install
     fi
     echo "$WANT" > .variant
   fi

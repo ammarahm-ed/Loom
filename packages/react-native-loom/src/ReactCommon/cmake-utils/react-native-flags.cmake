@@ -9,7 +9,10 @@ set(CMAKE_VERBOSE_MAKEFILE on)
 if(NOT DEFINED LOOM_PROFILE)
     set(LOOM_PROFILE OFF)
 endif()
-if(NOT DEFINED LOOM_WORKER)
+# The worker is part of the Loom renderer: on exactly when the renderer is.
+if(DEFINED LOOM_RENDERER AND LOOM_RENDERER)
+    set(LOOM_WORKER ON)
+else()
     set(LOOM_WORKER OFF)
 endif()
 
@@ -38,8 +41,8 @@ SET(reactnative_FLAGS
 #                      Android UI thread instead of on the background queues upstream uses.
 #   LOOM_RENDERER Selects the independent direct JS-host-to-Yoga-to-Android-view renderer.
 #                      Legacy Fabric remains on its normal path and synchronization model.
-#   LOOM_WORKER Selects worker-owned Loom renderer commit preparation; UI mounting
-#                      remains on the platform UI thread.
+#   LOOM_WORKER Loom's worker thread (commit preparation off the JS thread; mounting stays on
+#                      the UI thread). Derived: always equal to LOOM_RENDERER.
 #
 # All default to 0: without any of them the build is upstream React Native.
 function(loom_compile_switch target_name scope name)

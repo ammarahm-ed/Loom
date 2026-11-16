@@ -250,7 +250,7 @@ class RCTAnimationChoreographer : public AnimationChoreographer {
 
 - (void)dealloc
 {
-#if LOOM_WORKER
+#if LOOM_RENDERER
   LoomBinding::shutdownWorkerForUIManager(*_scheduler->getUIManager());
 #endif
 #if !LOOM_RENDERER

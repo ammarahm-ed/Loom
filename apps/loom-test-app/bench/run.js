@@ -7,8 +7,8 @@
  *
  *   cd android
  *   LOOM_BENCH_STOCK=1 ./gradlew :app:assembleRelease -PbenchVariant=stock
- *   ./gradlew :app:assembleRelease -PbenchVariant=off -Ploom.js=background -Ploom.renderer=false -Ploom.worker=false -Ploom.compileFromSource=true
- *   ./gradlew :app:assembleRelease -PbenchVariant=on  -Ploom.js=main  -Ploom.renderer=true  -Ploom.worker=true -Ploom.compileFromSource=true
+ *   ./gradlew :app:assembleRelease -PbenchVariant=off -Ploom.js=background -Ploom.renderer=false -Ploom.compileFromSource=true
+ *   ./gradlew :app:assembleRelease -PbenchVariant=on  -Ploom.js=main  -Ploom.renderer=true  -Ploom.compileFromSource=true
  *
  * (copying android/app/build/outputs/apk/release/app-release.apk aside after each), then:
  *

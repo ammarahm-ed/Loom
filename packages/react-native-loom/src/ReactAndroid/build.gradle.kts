@@ -57,9 +57,6 @@ extra["cmake_version"] = cmakeVersion
  *   loom.renderer = true | false    which renderer draws the app: Loom, or React Native's Fabric (default: true)
  *   loom.js       = background | main  where JavaScript runs: React Native's own JS thread, or the
  *                                      Android main thread like a native app (default: background)
- *   loom.worker   = true | false     run Loom's commit preparation (layout, text, diff) on a worker
- *                                    thread; required by loom.js=background
- *                                    (default: true with loom.renderer=true, otherwise false)
  *   loom.profile  = true | false     diagnostic C++ and mount timers (default: false)
  *   loom.cppTests = true | false     build the C++ Loom renderer tests (default: false)
  *   loom.leanRelease = true | false  release builds without inspector, DevTools and tracing code; every
@@ -97,8 +94,12 @@ fun loomFlag(name: String, default: Boolean = false): Boolean {
 
 val loomRenderer = loomFlag("loom.renderer", default = true)
 val loomJsOnMain = loomChoice("loom.js", "background", listOf("background", "main")) == "main"
-// The worker is on by default with the Loom renderer (and meaningless without it).
-val loomWorker = loomFlag("loom.worker", default = loomRenderer)
+// Loom's worker thread is part of the renderer: always on with it, absent without it. (A
+// worker-less build was once a switch; it was dropped rather than kept compiling.)
+val loomWorker = loomRenderer
+if (loomProperty("loom.worker") != null) {
+  logger.warn("loom.worker is no longer a switch: the worker is always part of the Loom renderer. Remove it.")
+}
 val loomBuildCppTests = loomFlag("loom.cppTests")
 val loomProfile = loomFlag("loom.profile")
 val loomLeanRelease = loomFlag("loom.leanRelease")
@@ -111,18 +112,6 @@ if (loomLeanRelease && loomExportStubsDir.isEmpty()) {
   throw GradleException("loom.leanRelease=true requires loom.exportStubsDir (see tools/prebuild/gen-export-stubs.py).")
 }
 
-// Loom calls Android view operations synchronously from its JS host methods when JavaScript runs
-// on the main thread. With JavaScript on its own thread, host methods cannot touch views, so every
-// view effect has to go through Loom's worker, whose results the main thread applies.
-if (loomRenderer && !loomJsOnMain && !loomWorker) {
-  throw GradleException(
-      "loom.renderer=true with loom.js=background requires loom.worker=true: view operations " +
-          "must run on the Android main thread, so JavaScript on another thread can only hand " +
-          "work to the worker.")
-}
-if (loomWorker && !loomRenderer) {
-  throw GradleException("loom.worker=true requires loom.renderer=true.")
-}
 
 /** CMake's spelling of a boolean switch. */
 fun loomCmakeSwitch(value: Boolean): String = if (value) "ON" else "OFF"
@@ -418,6 +407,19 @@ val preparePrefab by
           ),
       )
       outputDir.set(prefabHeadersDir)
+      // Loom: libraries compile against these headers with their own CMake, so they never see this
+      // build's -DLOOM_RENDERER. The published <react/renderer/LoomConfig.h> carries the value instead:
+      // a loom.renderer=false build must send libraries down their Fabric branch.
+      val rendererValue = if (loomRenderer) "1" else "0"
+      inputs.property("loomRenderer", rendererValue)
+      doLast {
+        val config = File(prefabHeadersDir, "reactnative/react/renderer/LoomConfig.h")
+        val real = File(prefabHeadersDir, "reactnative/react/renderer/config/LoomConfig.h")
+        listOf(config, real).filter { it.exists() }.forEach { header ->
+          header.writeText(
+              header.readText().replace("#define LOOM_RENDERER 1", "#define LOOM_RENDERER $rendererValue"))
+        }
+      }
     }
 
 val createNativeDepsDirectories by

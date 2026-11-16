@@ -8,11 +8,11 @@ index ac1611c..d60a1b3 100644
  
 +// Loom: compile-time switches of the published configuration, same names and meaning as the
 +// Loom podspecs (RCT_LOOM_*_IOS). The renderer is off unless RCT_LOOM_RENDERER_IOS=1; the worker
-+// defaults to on with the renderer; JavaScript runs on `background` unless RCT_LOOM_JS_IOS=main.
++// is part of the renderer; JavaScript runs on `background` unless RCT_LOOM_JS_IOS=main.
 +let LOOM_RENDERER = ProcessInfo.processInfo.environment["RCT_LOOM_RENDERER_IOS"] == "1"
 +let LOOM_WORKER =
++  // Loom's worker thread is part of the renderer: on exactly when the renderer is.
 +  LOOM_RENDERER
-+  && (ProcessInfo.processInfo.environment["RCT_LOOM_WORKER_IOS"].map { $0 == "1" } ?? true)
 +let LOOM_JS_ON_MAIN = (ProcessInfo.processInfo.environment["RCT_LOOM_JS_IOS"] ?? "background") == "main"
 +// Prebuild (tools/prebuild/ios.sh), every flavor: Fabric's renderer internals are not compiled under the Loom
 +// renderer, every export of React Native's own binary of the same flavor is still exported by a generated stub

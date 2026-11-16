@@ -72,7 +72,7 @@ std::shared_ptr<Scheduler> FabricUIManagerBinding::getScheduler() {
 }
 
 void FabricUIManagerBinding::setPixelDensity(float pointScaleFactor) {
-#if LOOM_WORKER
+#if LOOM_RENDERER
   if (pointScaleFactor != pointScaleFactor_.load()) {
     auto scheduler = getScheduler();
     if (scheduler) LoomBinding::synchronizeWorkerForUIManager(*scheduler->getUIManager());
@@ -782,7 +782,7 @@ void FabricUIManagerBinding::uninstallFabricUIManager() {
         << this << ").";
   }
 
-#if LOOM_WORKER
+#if LOOM_RENDERER
   // Join before taking installMutex_: text computation takes its shared side.
   auto scheduler = getScheduler();
   if (scheduler) LoomBinding::shutdownWorkerForUIManager(*scheduler->getUIManager());
@@ -1411,7 +1411,7 @@ void FabricUIManagerBinding::onAllAnimationsComplete() {
 }
 
 void FabricUIManagerBinding::recordDirectNativeProps(jint tag, NativeMap* props) {
-#if LOOM_WORKER
+#if LOOM_RENDERER
   LoomBinding::recordNativeProps(tag, props->consume());
 #else
   (void)tag;
@@ -1419,8 +1419,9 @@ void FabricUIManagerBinding::recordDirectNativeProps(jint tag, NativeMap* props)
 #endif
 }
 
+#if LOOM_RENDERER
 namespace {
-// Must match FabricUIManager.encodeAnimatedPaint.
+// Must match FabricUIManager.encodeAnimatedPaint. Only the Loom renderer decodes these.
 constexpr const char* kPaintDoubleKeys[] = {
     "opacity", "elevation", "shadowOpacity", "shadowRadius"};
 constexpr const char* kPaintIntKeys[] = {
@@ -1433,11 +1434,12 @@ constexpr const char* kTransformOps[] = {
 constexpr int kTransformKey = 100;
 constexpr int kIntKeyBase = 10;
 } // namespace
+#endif
 
 void FabricUIManagerBinding::recordDirectPaintBatch(
     jni::alias_ref<jni::JArrayDouble> data,
     jint length) {
-#if LOOM_WORKER
+#if LOOM_RENDERER
   if (length <= 0) {
     return;
   }
@@ -1487,7 +1489,7 @@ void FabricUIManagerBinding::recordDirectPaintBatch(
 }
 
 void FabricUIManagerBinding::flushDirectAnimationFrame() {
-#if LOOM_WORKER
+#if LOOM_RENDERER
   LoomBinding::flushAnimationFrames();
 #endif
 }

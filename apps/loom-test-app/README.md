@@ -79,7 +79,7 @@ cd android
 ./gradlew :app:assembleDebug -Ploom.js=main -Ploom.renderer=loom
 
 # + worker-owned commit preparation
-./gradlew :app:assembleDebug -Ploom.js=main -Ploom.renderer=loom -Ploom.worker=true
+./gradlew :app:assembleDebug -Ploom.js=main -Ploom.renderer=loom
 ```
 
 Notes:
@@ -101,7 +101,7 @@ Notes:
   ./gradlew :app:assembleDebug \
     -PreactNativeArchitectures=arm64-v8a \
     -Ploom.js=main -Ploom.renderer=loom \
-    -Ploom.worker=true -Ploom.cppTests=true
+    -Ploom.cppTests=true
 
   RA=node_modules/.loom/react-native/ReactAndroid
   exe=$(find "$RA/build/intermediates/cxx" -type f -name ui_thread_renderer_tests | head -1)
@@ -139,11 +139,10 @@ xcodebuild -workspace LoomTestApp.xcworkspace -scheme LoomTestApp \
 RCT_LOOM_RENDERER_IOS=1 xcodebuild ... build
 
 # + worker-owned commit preparation
-RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_WORKER_IOS=1 xcodebuild ... build
+RCT_LOOM_RENDERER_IOS=1 xcodebuild ... build
 ```
 
-`RCT_LOOM_WORKER_IOS=1` without `RCT_LOOM_RENDERER_IOS=1`
-aborts during `pod install`.
+The worker is always part of the Loom renderer; there is no separate switch.
 
 ## Smoke test
 
@@ -165,7 +164,7 @@ the compiled-in values describe the binary that is actually installed.
 # build one combo, install it, and let the banner say which one it is
 cd android
 ./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a \
-  -Ploom.js=main -Ploom.renderer=loom -Ploom.worker=true
+  -Ploom.js=main -Ploom.renderer=loom
 adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 ```
 

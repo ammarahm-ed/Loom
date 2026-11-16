@@ -21,15 +21,13 @@ header_search_paths = [
 ]
 
 direct_renderer_enabled = ENV["RCT_LOOM_RENDERER_IOS"] == "1"
-# The worker is on by default with the Loom renderer; RCT_LOOM_WORKER_IOS=0 turns it off.
-direct_renderer_worker_enabled = ENV["RCT_LOOM_WORKER_IOS"] ? ENV["RCT_LOOM_WORKER_IOS"] == "1" : ENV["RCT_LOOM_RENDERER_IOS"] == "1"
-abort 'RCT_LOOM_WORKER_IOS requires RCT_LOOM_RENDERER_IOS=1' if direct_renderer_worker_enabled && !direct_renderer_enabled
+# Loom's worker thread is part of the renderer: on exactly when the renderer is.
+direct_renderer_worker_enabled = direct_renderer_enabled
 direct_renderer_definitions = ["$(inherited)"]
 direct_renderer_definitions << "LOOM_RENDERER=1" if direct_renderer_enabled
 direct_renderer_definitions << "LOOM_WORKER=1" if direct_renderer_worker_enabled
 loom_js = ENV["RCT_LOOM_JS_IOS"] || "background"
 abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
-abort 'RCT_LOOM_JS_IOS=background requires RCT_LOOM_WORKER_IOS=1' if direct_renderer_enabled && loom_js == "background" && !direct_renderer_worker_enabled
 direct_renderer_definitions << "LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if direct_renderer_enabled
 
 if ENV['USE_FRAMEWORKS']

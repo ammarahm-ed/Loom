@@ -525,6 +525,10 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 
   std::mutex _schedulerAccessMutex;
   std::mutex _schedulerLifeCycleMutex;
+  // Serializes suspend/resume. Never taken by the main-thread accessors (`contextContainer`,
+  // `setRuntimeExecutor`): suspend waits on the main queue while holding it, so it must not be a lock
+  // the main thread can be blocked on.
+  std::mutex _schedulerTransitionMutex;
   RCTScheduler *_Nullable _scheduler; // Thread-safe. Pointer is protected by `_schedulerAccessMutex`.
   std::shared_ptr<const ContextContainer> _contextContainer; // Protected by `_schedulerLifeCycleMutex`.
   RuntimeExecutor _runtimeExecutor; // Protected by `_schedulerLifeCycleMutex`.
@@ -770,7 +774,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 
 - (void)schedulerDidSynchronouslyUpdateViewOnUIThread:(ReactTag)tag props:(folly::dynamic)props
 {
-#if LOOM_WORKER
+#if LOOM_RENDERER
   LoomBinding::recordNativeProps(tag, props);
 #endif
   RCTScheduler *scheduler = [self scheduler];
@@ -1395,7 +1399,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   RCTAssertMainQueue();
   const auto scale = RCTScreenScale();
   const auto multiplier = RCTFontSizeMultiplier();
-#if LOOM_WORKER
+#if LOOM_RENDERER
   if (_directTextScale.load() != scale || _directFontSizeMultiplier.load() != multiplier) {
     // Do not mutate settings observed by an already published text packet.
     if (RCTScheduler *scheduler = [self scheduler]) {
@@ -1410,7 +1414,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 
 - (float)loomFontSizeMultiplier
 {
-#if LOOM_WORKER
+#if LOOM_RENDERER
   return _directFontSizeMultiplier.load();
 #else
   return RCTFontSizeMultiplier();
@@ -1429,7 +1433,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   }
   TextLayoutContext layoutContext;
   layoutContext.surfaceId = surfaceId;
-#if LOOM_WORKER
+#if LOOM_RENDERER
   layoutContext.pointScaleFactor = _directTextScale.load();
 #else
   layoutContext.pointScaleFactor = RCTScreenScale();
@@ -1457,7 +1461,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
                                              maximumSize:maximumSize];
   result.minimumSize = minimumSize;
   result.maximumSize = maximumSize;
-#if LOOM_WORKER
+#if LOOM_RENDERER
   result.pointScaleFactor = _directTextScale.load();
 #else
   result.pointScaleFactor = RCTScreenScale();
@@ -1628,23 +1632,37 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 
 - (BOOL)suspend
 {
-  std::lock_guard<std::mutex> lock(_schedulerLifeCycleMutex);
-
-  RCTScheduler *scheduler;
-  {
-    std::lock_guard<std::mutex> accessLock(_schedulerAccessMutex);
-
-    if (!_scheduler) {
-      // Already suspended: a target can still have been registered since (the JS thread registers
-      // them asynchronously), and it must not outlive the runtime either.
-      [self _releaseDirectRendererRuntimeHandles];
+  // Suspend stops surfaces and releases runtime-bound handles, both of which wait on the main queue
+  // (dispatch_sync). That wait must not happen while `_schedulerLifeCycleMutex` is held, or a main
+  // thread inside `contextContainer`/`setRuntimeExecutor` deadlocks against it. The lifecycle lock now
+  // only guards the scheduler swap; `_schedulerTransitionMutex` orders whole suspend/resume transitions.
+  std::unique_lock<std::mutex> transition(_schedulerTransitionMutex, std::defer_lock);
+  if (RCTIsMainQueue()) {
+    // Another thread holding the transition lock may be waiting on the main queue right now; blocking
+    // here would deadlock. That thread is already suspending, so there is nothing left to do.
+    if (!transition.try_lock()) {
       return NO;
     }
+  } else {
+    transition.lock();
+  }
+
+  RCTScheduler *scheduler = nil;
+  {
+    std::lock_guard<std::mutex> lock(_schedulerLifeCycleMutex);
+    std::lock_guard<std::mutex> accessLock(_schedulerAccessMutex);
     scheduler = _scheduler;
     _scheduler = nil;
   }
 
-#if LOOM_WORKER
+  if (!scheduler) {
+    // Already suspended: a target can still have been registered since (the JS thread registers
+    // them asynchronously), and it must not outlive the runtime either.
+    [self _releaseDirectRendererRuntimeHandles];
+    return NO;
+  }
+
+#if LOOM_RENDERER
   LoomBinding::shutdownWorkerForUIManager(*scheduler.uiManager);
 #endif
   [self _stopAllSurfacesWithScheduler:scheduler];
@@ -1677,6 +1695,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 
 - (BOOL)resume
 {
+  std::lock_guard<std::mutex> transition(_schedulerTransitionMutex);
   std::lock_guard<std::mutex> lock(_schedulerLifeCycleMutex);
 
   RCTScheduler *scheduler;

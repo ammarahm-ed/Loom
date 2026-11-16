@@ -10,7 +10,6 @@
 # install`) or from ios/Podfile.properties.json; same names as android/gradle.properties:
 #   loom.renderer=true|false          Loom's renderer, or plain React Native (default: true)
 #   loom.js=background|main           JavaScript on React Native's own JS thread, or the main thread
-#   loom.worker=true|false            commit preparation on a worker thread (prebuilt: always true)
 #   loom.compileFromSource=true|false build Loom from source instead of the published prebuilt
 if ENV['LOOM_BENCH_STOCK'] == '1'
   RN_PATH = File.expand_path('../node_modules/react-native', __dir__)

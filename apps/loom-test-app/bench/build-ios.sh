@@ -28,9 +28,9 @@ mkdir -p "$DD_ROOT"
 case $CONFIG in
   stock) export LOOM_BENCH_STOCK=1; LOOM_ENV=(env)
          DEFS="LOOM_BENCH_RENDERER=0 LOOM_BENCH_WORKER=0 LOOM_BENCH_JS_ON_MAIN=1 LOOM_BENCH_STOCK=1" ;;
-  on)    unset LOOM_BENCH_STOCK; LOOM_ENV=(env loom.renderer=true loom.worker=true loom.js=main loom.compileFromSource=true)
+  on)    unset LOOM_BENCH_STOCK; LOOM_ENV=(env loom.renderer=true loom.js=main loom.compileFromSource=true)
          DEFS="LOOM_BENCH_RENDERER=1 LOOM_BENCH_WORKER=1 LOOM_BENCH_JS_ON_MAIN=1 LOOM_BENCH_STOCK=0" ;;
-  js)    unset LOOM_BENCH_STOCK; LOOM_ENV=(env loom.renderer=true loom.worker=true loom.js=background loom.compileFromSource=true)
+  js)    unset LOOM_BENCH_STOCK; LOOM_ENV=(env loom.renderer=true loom.js=background loom.compileFromSource=true)
          DEFS="LOOM_BENCH_RENDERER=1 LOOM_BENCH_WORKER=1 LOOM_BENCH_JS_ON_MAIN=0 LOOM_BENCH_STOCK=0" ;;
   *) echo "unknown config $CONFIG" >&2; exit 2 ;;
 esac

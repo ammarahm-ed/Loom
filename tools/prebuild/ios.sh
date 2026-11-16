@@ -18,7 +18,7 @@ JS="${LOOM_JS:-background}"
 OUT="${LOOM_IOS_OUT:-$WORK/ios-out}/$JS"
 export HERMES_VERSION="$(sed -n 's/^HERMES_VERSION_NAME=//p' "$SRC/sdks/hermes-engine/version.properties")"
 # Read by the patched Package.swift (tools/prebuild/package-swift-loom.patch).
-export RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_JS_IOS="$JS" RCT_LOOM_WORKER_IOS=1
+export RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_JS_IOS="$JS"
 mkdir -p "$OUT"
 cd "$SRC"
 if [ $# -gt 0 ]; then FLAVORS=("$@"); else FLAVORS=(Debug Release ReleaseProfiling); fi

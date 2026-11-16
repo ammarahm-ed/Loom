@@ -1,12 +1,11 @@
 # Configuration
 
-Loom has five public switches. They have the same names and meaning on Android and iOS.
+Loom has four public switches. They have the same names and meaning on Android and iOS.
 
 | Switch | Values | Effect |
 |---|---|---|
 | `loom.renderer` | `true` (default), `false` | Loom's renderer, or plain React Native (Fabric). With `false` the app uses React Native's own artifacts and no Loom code |
 | `loom.js` | `background` (default), `main` | JavaScript on its own thread, or on the main thread |
-| `loom.worker` | `true` (default), `false` | Layout, text and diffing on a worker thread. The prebuilt always has it; `false` only takes effect with `loom.compileFromSource=true` (and prints a warning otherwise). `loom.js=background` requires it |
 | `loom.compileFromSource` | `true`, `false` (default) | Build Loom from source instead of using the prebuilt |
 | `loom.releaseProfiling` | `true`, `false` (default) | Release builds that keep DevTools and tracing, so a release build can be profiled |
 
@@ -224,7 +223,7 @@ Print worker and commit timing. Most of the timing code is compiled in only with
 |---|---|---|
 | `renderer` | `'loom'` or `'fabric'` | The renderer the app runs (`loom.renderer`) |
 | `jsOnMainThread` | boolean | JavaScript runs on the thread that owns native views (`loom.js=main`) |
-| `worker` | boolean | Layout, text and diffing run on a worker thread (`loom.worker`) |
+| `worker` | boolean | Layout, text and diffing run on a worker thread (always `true` with the Loom renderer) |
 | `version` | string | The `react-native-loom` package version |
 
 ## Debug-only settings
