@@ -112,6 +112,7 @@ LoomBinding::cloneDraft(
   draft->workerCommitted = false;
   draft->frozenCommit = 0;
   draft->freezeFacts = {};
+  draft->offscreenHidden = false;
   if (replaceChildren) {
     draft->children =
         std::make_shared<std::vector<std::shared_ptr<DraftNode>>>();

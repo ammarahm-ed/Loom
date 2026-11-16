@@ -178,6 +178,55 @@ TEST_F(LoomHeadlessBindingTest, CommitReachesTheRegisteredHost) {
   EXPECT_TRUE(host_->takeFailures().empty());
 }
 
+/** The last display type the host was given for `tag`, or -1. */
+int lastDisplayType(LoomHeadlessHost& host, Tag tag) {
+  host.drainUIQueue();
+  int displayType = -1;
+  for (const auto& recorded : host.takeBatches()) {
+    for (const auto& operation : recorded.batch.operations) {
+      if (const auto* layout = std::get_if<DirectLayoutOperation>(&operation);
+          layout != nullptr && layout->tag == tag) {
+        displayType = layout->displayType;
+      }
+    }
+  }
+  return displayType;
+}
+
+// Activity, Suspense and react-freeze hide a subtree by committing a hidden
+// clone of each host node, and show it again by committing the node's own
+// version. Showing must restore that version's props: the hidden state is not
+// a props patch that outlives the clone.
+TEST_F(LoomHeadlessBindingTest, CommittingTheSourceVersionAgainShowsAHiddenClone) {
+  using Access = LoomBindingTestAccess;
+  LoomBinding::setSurfaceConstraints(1, 200, 200, 200, 200, false, 0, 0);
+  const auto token = Access::tokenFor(*binding_, 1);
+  auto visible = Access::draft(
+      1, token->generation, 11, 2, "View",
+      folly::dynamic::object("width", 100.0)("height", 50.0)(
+          "collapsable", false));
+  visible->children =
+      std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+  Access::publish(*binding_, 1, visible, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  EXPECT_EQ(lastDisplayType(*host_, 2), 1);
+
+  auto hidden = std::make_shared<Access::Draft>(*visible);
+  hidden->published = false;
+  hidden->workerCommitted = false;
+  hidden->frozenCommit = 0;
+  hidden->freezeFacts = {};
+  hidden->offscreenHidden = true;
+  Access::publish(*binding_, 1, hidden, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  EXPECT_EQ(lastDisplayType(*host_, 2), 0);
+
+  Access::publish(*binding_, 1, visible, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  EXPECT_EQ(lastDisplayType(*host_, 2), 1);
+  EXPECT_TRUE(host_->takeFailures().empty());
+}
+
 // Regression: the binding registry was a function-local static in a header's anonymous namespace,
 // so LoomBindingAnimation.cpp had its own, always empty, copy and dropped every native-props write.
 TEST_F(LoomHeadlessBindingTest, NativePropsFromThePlatformReachTheBinding) {
