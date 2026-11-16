@@ -19,6 +19,8 @@
 
 #include <gtest/gtest.h>
 #include <react/renderer/components/view/ViewComponentDescriptor.h>
+#include <react/renderer/components/view/ConcreteViewShadowNode.h>
+#include <react/renderer/core/ConcreteComponentDescriptor.h>
 #include <react/renderer/components/root/RootComponentDescriptor.h>
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
 #include <react/renderer/core/ComponentDescriptor.h>
@@ -375,7 +377,95 @@ std::vector<std::pair<Tag, std::array<float, 4>>> overflowOperations(
   return result;
 }
 
+
+// A host component that measures itself: its size is the one the platform
+// reported into its state, as a desktop or native view does.
+struct MeasuredSelfStateData {
+  float width{10};
+};
+inline constexpr char kMeasuredSelfName[] = "LoomTestMeasuredSelf";
+ShadowNodeFamily::Shared measuredSelfFamily;
+class MeasuredSelfShadowNode final
+    : public ConcreteViewShadowNode<
+          kMeasuredSelfName,
+          ViewProps,
+          ViewEventEmitter,
+          MeasuredSelfStateData> {
+ public:
+  using ConcreteViewShadowNode::ConcreteViewShadowNode;
+  static ShadowNodeTraits BaseTraits() {
+    auto traits = ConcreteViewShadowNode::BaseTraits();
+    traits.set(ShadowNodeTraits::Trait::LeafYogaNode);
+    traits.set(ShadowNodeTraits::Trait::MeasurableYogaNode);
+    return traits;
+  }
+  Size measureContent(const LayoutContext&, const LayoutConstraints&)
+      const override {
+    measuredSelfFamily = getFamilyShared();
+    return {getStateData().width, 20};
+  }
+};
+using MeasuredSelfDescriptor =
+    ConcreteComponentDescriptor<MeasuredSelfShadowNode>;
+
+float lastLayoutWidth(const LoomMountBatch& batch, Tag tag) {
+  float width = -1;
+  for (const auto& operation : batch.operations) {
+    if (const auto* layout = std::get_if<DirectLayoutOperation>(&operation);
+        layout != nullptr && layout->tag == tag) {
+      width = layout->width;
+    }
+  }
+  return width;
+}
+
 } // namespace
+
+// Fabric dirties a measurable node when a new revision (here, new state)
+// invalidates its measurement. Loom must ask the component again rather than
+// keep Yoga's cached measurement until the style changes.
+TEST(LoomRendererTest, StateUpdateRemeasuresAComponentThatMeasuresItself) {
+  auto contextContainer = std::make_shared<ContextContainer>();
+  ComponentDescriptorProviderRegistry providerRegistry{};
+  providerRegistry.add(
+      concreteComponentDescriptorProvider<MeasuredSelfDescriptor>());
+  std::shared_ptr<const ComponentDescriptorRegistry> registry =
+      providerRegistry.createComponentDescriptorRegistry(
+          ComponentDescriptorParameters{
+              .eventDispatcher = EventDispatcher::Shared{},
+              .contextContainer = contextContainer,
+              .flavor = nullptr});
+  contextContainer->insert(
+      "ComponentDescriptorRegistry_DO_NOT_USE_PRETTY_PLEASE",
+      std::weak_ptr<const ComponentDescriptorRegistry>(registry));
+
+  LoomMountBatch batch;
+  auto operations = testOperations();
+  operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
+    batch = std::move(next);
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  renderer.setCompat(std::make_shared<LoomCompat>(contextContainer));
+  makeRoot(renderer);
+  renderer.createNode(
+      2,
+      kMeasuredSelfName,
+      folly::dynamic::object("position", "absolute")("collapsable", false));
+  renderer.completeRoot(1, {2});
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 10);
+  ASSERT_NE(measuredSelfFamily, nullptr);
+
+  batch = {};
+  ASSERT_TRUE(renderer.applyComponentState(StateUpdate{
+      .family = measuredSelfFamily,
+      .callback = [](const StateData::Shared&) -> StateData::Shared {
+        auto data = std::make_shared<MeasuredSelfStateData>();
+        data->width = 40;
+        return data;
+      }}));
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 40);
+  measuredSelfFamily.reset();
+}
 
 TEST(
     LoomRendererTest,
