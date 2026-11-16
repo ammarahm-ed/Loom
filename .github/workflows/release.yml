@@ -232,10 +232,10 @@ jobs:
         flavor: [Debug, Release, ReleaseProfiling]
     env:
       LOOM_JS: ${{ matrix.js }}
-      LOOM_PREBUILD_DIR: ${{ github.workspace }}/../cs/work
-      LOOM_IOS_OUT: ${{ github.workspace }}/../cs/ios-out
-      LOOM_BASELINE_DIR: ${{ github.workspace }}/../baseline
-      CCACHE_DIR: ${{ github.workspace }}/../ccache
+      LOOM_PREBUILD_DIR: ${{ runner.workspace }}/cs/work
+      LOOM_IOS_OUT: ${{ runner.workspace }}/cs/ios-out
+      LOOM_BASELINE_DIR: ${{ runner.workspace }}/baseline
+      CCACHE_DIR: ${{ runner.workspace }}/ccache
       CCACHE_MAXSIZE: 30G
       CCACHE_SAVE_SIZE: 2G
     steps:
@@ -270,7 +270,7 @@ jobs:
       - name: Restore the compiler cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ github.workspace }}/../ccache
+          path: ${{ runner.workspace }}/ccache
           key: ccache-ios-${{ matrix.flavor }}-${{ github.run_id }}
           restore-keys: ccache-ios-${{ matrix.flavor }}-
       - name: React Native baseline tarballs
@@ -302,12 +302,12 @@ jobs:
         if: always() && matrix.js == 'background'
         uses: actions/cache/save@v4
         with:
-          path: ${{ github.workspace }}/../ccache
+          path: ${{ runner.workspace }}/ccache
           key: ccache-ios-${{ matrix.flavor }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         with:
           name: ios-${{ matrix.js }}-${{ matrix.flavor }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
-          path: ${{ github.workspace }}/../cs/ios-out/${{ matrix.js }}/
+          path: ${{ runner.workspace }}/cs/ios-out/${{ matrix.js }}/
           if-no-files-found: error
           retention-days: 7
 
