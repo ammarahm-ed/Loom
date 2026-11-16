@@ -394,4 +394,52 @@ TEST(LoomWorkerTest, ApplyReadyIgnoresNonUICallers) {
   EXPECT_EQ(applied.load(), 1);
 }
 
+TEST(LoomWorkerTest, LatestReadNeverWaitsForACompute) {
+  LoomWorker worker([] {});
+  std::promise<void> entered;
+  std::promise<void> release;
+  auto releaseFuture = release.get_future().share();
+  auto job = std::make_unique<LoomWorker::Job>();
+  job->compute = [&, releaseFuture] {
+    // Inside the compute, this thread's own reads answer at once.
+    EXPECT_TRUE(worker.readLatest([] {}));
+    entered.set_value();
+    releaseFuture.wait();
+  };
+  worker.submit(std::move(job));
+  entered.get_future().wait();
+  // The compute holds the gate: a latest read on this (UI) thread returns without running.
+  bool ran = false;
+  EXPECT_FALSE(worker.readLatest([&] { ran = true; }));
+  EXPECT_FALSE(ran);
+  // With JavaScript off the UI thread, a synced read never waits on the UI thread. (With JavaScript
+  // on it, the UI thread is the JS thread and would drain this blocked compute: not testable here.)
+  if (!LoomWorker::kJavaScriptOnUIThread) {
+    EXPECT_FALSE(worker.readSynced([&] { ran = true; }));
+    EXPECT_FALSE(ran);
+  }
+  release.set_value();
+  worker.synchronize();
+  EXPECT_TRUE(worker.readLatest([&] { ran = true; }));
+  EXPECT_TRUE(ran);
+}
+
+TEST(LoomWorkerTest, SyncedReadOffTheUIThreadSeesSubmittedWork) {
+  LoomWorker worker([] {});
+  std::atomic<int> value{0};
+  auto job = std::make_unique<LoomWorker::Job>();
+  job->compute = [&] { value = 1; };
+  worker.submit(std::move(job));
+  // Another thread waits for the UI to apply the job, then reads.
+  auto reader = std::async(std::launch::async, [&] {
+    int seen = -1;
+    EXPECT_TRUE(worker.readSynced([&] { seen = value.load(); }));
+    return seen;
+  });
+  while (reader.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) {
+    worker.synchronize();
+  }
+  EXPECT_EQ(reader.get(), 1);
+}
+
 } // namespace facebook::react

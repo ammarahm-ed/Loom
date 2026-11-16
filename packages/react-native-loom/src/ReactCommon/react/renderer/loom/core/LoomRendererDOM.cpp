@@ -38,7 +38,6 @@ jsi::Value LoomBinding::getDirectDOM(
     const std::string& method,
     const jsi::Value* arguments,
     size_t count) {
-#if LOOM_WORKER
   // The readers below (getBoundingClientRect, measureLayout, getChildNodes and
   // the rest) hand their result straight back to JavaScript, so they must
   // observe a renderer that includes every submitted commit. `synchronize()`
@@ -51,7 +50,6 @@ jsi::Value LoomBinding::getDirectDOM(
       method != "releasePointerCapture") {
     worker_->synchronize();
   }
-#endif
   auto documentSurface = [&]() -> SurfaceId {
     if (!arguments[0].isNumber()) {
       return 0;
@@ -392,15 +390,7 @@ jsi::Value LoomBinding::getDirectDOM(
   if (method == "setNativeProps") {
     requireArguments(rt, method, 2, count);
     if (auto ref = refAt(0)) {
-#if LOOM_WORKER
       setWorkerNativeProps(*ref, propsFromValue(rt, arguments[1]));
-#else
-      auto owner = renderers_.find(ref->surfaceId);
-      if (owner != renderers_.end() && isLiveNodeRef(*ref)) {
-        owner->second->setNativeProps(
-            ref->tag, propsFromValue(rt, arguments[1]));
-      }
-#endif
     }
     return jsi::Value::undefined();
   }

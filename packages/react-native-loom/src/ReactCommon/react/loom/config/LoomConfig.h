@@ -23,7 +23,17 @@
 #endif
 
 /**
- * Version of the public Loom API for libraries. It only grows, by additions.
- * A library that needs API n checks `LOOM_API_VERSION >= n`.
+ * Version of the public Loom API for libraries (<react/loom/Loom.h>). It changes only when Loom's own
+ * API changes, never because of the React Native version: each Loom release supports exactly one React
+ * Native minor, which packaging enforces. Additions keep it; an incompatible change bumps it. A library
+ * checks `LOOM_API_VERSION >= n` at compile time; `Runtime::from` also checks it at run time, so a
+ * library compiled against an API this Loom no longer provides gets nullopt (and a log) instead of
+ * undefined behaviour.
+ *
+ *   1: first API.
+ *   2: `Runtime` is per React instance; reads are explicit (`latest()` never blocks, `synced()` waits
+ *      for the caller's commits); `updateNativeProps` takes the SurfaceId; `surfaceOf(Tag)`.
  */
-#define LOOM_API_VERSION 1
+#define LOOM_API_VERSION 2
+/** The oldest library API version this Loom still serves through `Runtime::from`. */
+#define LOOM_API_MIN_SUPPORTED_VERSION 2

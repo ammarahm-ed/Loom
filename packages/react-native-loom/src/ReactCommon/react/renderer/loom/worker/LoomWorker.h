@@ -24,6 +24,8 @@
 #include <utility>
 #include <vector>
 #if __has_include(<pthread.h>)
+#include <shared_mutex>
+
 #include <pthread.h>
 #define LOOM_WORKER_HAS_PTHREAD 1
 #else
@@ -219,6 +221,102 @@ class LoomWorker final {
     return isUIThread_();
   }
 
+  /**
+   * Holds the compute gate for one job's compute: readers on other threads see the renderer
+   * between computes, never in the middle of one. Reentrant on the computing thread.
+   */
+  class ComputeScope {
+   public:
+    explicit ComputeScope(LoomWorker& worker)
+        : worker_(worker), previous_(computingWorker_), owns_(previous_ != &worker) {
+      if (owns_) {
+        worker_.computeGate_.lock();
+        computingWorker_ = &worker_;
+      }
+    }
+    ~ComputeScope() {
+      if (owns_) {
+        computingWorker_ = previous_;
+        worker_.computeGate_.unlock();
+      }
+    }
+    ComputeScope(const ComputeScope&) = delete;
+    ComputeScope& operator=(const ComputeScope&) = delete;
+
+   private:
+    LoomWorker& worker_;
+    LoomWorker* previous_;
+    bool owns_;
+  };
+
+  /** True while this thread computes a job of this worker (e.g. inside an `onLayoutCommitted` listener). */
+  bool onComputingThread() const {
+    return computingWorker_ == this;
+  }
+
+  /**
+   * Runs `read` against the renderer as of the latest computed commit, without waiting: false (and
+   * `read` not called) when a commit is being computed right now. On the computing thread itself it
+   * always reads. Any thread.
+   */
+  template <typename Read>
+  bool readLatest(Read&& read) {
+    if (onComputingThread()) {
+      read();
+      return true;
+    }
+    std::shared_lock lock(computeGate_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      return false;
+    }
+    read();
+    return true;
+  }
+
+  /**
+   * Runs `read` against the renderer between computes: waits only for a compute in progress (one
+   * commit's compute, not the UI's apply), never for queued jobs. For writes that must resolve a node
+   * now; reads use `readLatest`/`readSynced`. Any thread.
+   */
+  template <typename Read>
+  void readBetweenComputes(Read&& read) {
+    if (onComputingThread()) {
+      read();
+      return;
+    }
+    std::shared_lock lock(computeGate_);
+    read();
+  }
+
+  /**
+   * Runs `read` after every job submitted before the call has been applied. On the computing thread
+   * it reads at once: that thread is the one producing the state. On the UI thread it depends on where
+   * JavaScript runs: with JavaScript on the UI thread (loom.js=main) the caller IS the JS thread, so it
+   * applies the pending results itself (`synchronize`) and reads, which is what JS asking for its own
+   * writes means there; otherwise the UI thread must never wait for the worker, and nothing is read
+   * (false).
+   */
+  template <typename Read>
+  bool readSynced(Read&& read) {
+    if (onComputingThread()) {
+      read();
+      return true;
+    }
+    if (onUIThread()) {
+      if (!kJavaScriptOnUIThread) {
+        return false;
+      }
+      synchronize();
+      std::shared_lock lock(computeGate_);
+      read();
+      return true;
+    }
+    awaitApplied();
+    std::shared_lock lock(computeGate_);
+    read();
+    return true;
+  }
+
   void submit(std::unique_ptr<Job> job) {
     if (job->profileCommit && LoomWorkerProfile::enabled()) {
       job->submitted = LoomWorkerProfile::Clock::now();
@@ -313,6 +411,7 @@ class LoomWorker final {
     auto* const previousBuilding = building_;
     building_ = result.get();
     try {
+      ComputeScope scope(*this);
       if (!owned->active || owned->active())
         owned->compute();
     } catch (...) {
@@ -373,7 +472,10 @@ class LoomWorker final {
             result->computeStart = LoomWorkerProfile::Clock::now();
             result->computedOnMain = true;
           }
-          job->compute();
+          {
+            ComputeScope scope(*this);
+            job->compute();
+          }
           if (job->profileId) {
             result->computeEnd = LoomWorkerProfile::Clock::now();
             result->profile = LoomWorkerProfile::metrics();
@@ -720,6 +822,7 @@ class LoomWorker final {
       }
       building_ = result.get();
       try {
+        ComputeScope scope(*this);
         if (!job->synchronous && (!job->active || job->active()))
           job->compute();
       } catch (...) {
@@ -752,6 +855,9 @@ class LoomWorker final {
   std::vector<Effect> spareEffects_; // guarded by mutex_
   size_t effectPeak_{0}; // guarded by mutex_
   static inline thread_local Result* building_{nullptr};
+  // Exclusive while a job computes (the renderer is being written); shared by readers.
+  std::shared_mutex computeGate_;
+  static inline thread_local LoomWorker* computingWorker_{nullptr};
   bool running_{false};
   bool stopping_{false};
   bool applying_{false}; // UI only: every access is behind `onUIThread()`.

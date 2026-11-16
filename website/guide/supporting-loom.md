@@ -31,7 +31,7 @@ Stock React Native has no Loom header, so test for it first:
 
 #if defined(LOOM_RENDERER) && LOOM_RENDERER
 #include <react/loom/Loom.h>
-static_assert(LOOM_API_VERSION >= 1, "needs Loom API 1");
+static_assert(LOOM_API_VERSION >= 2, "needs Loom API 2");
 #else
 // Fabric
 #endif
@@ -39,8 +39,8 @@ static_assert(LOOM_API_VERSION >= 1, "needs Loom API 1");
 
 - `LOOM_RENDERER` is `1` only in Loom builds. A Loom build with `loom.renderer=false` defines it as
   `0`; stock React Native defines nothing and has no `LoomConfig.h`, so the Fabric branch is taken.
-- `LOOM_API_VERSION` is an integer that only grows, by additions. A library compiles against the
-  version it needs and checks `LOOM_API_VERSION >= n`.
+- `LOOM_API_VERSION` is the version of Loom's own API (not of React Native). A library compiles
+  against the version it needs and checks `LOOM_API_VERSION >= n`. See [Versioning](#_8-versioning).
 - The header is the same in the prebuilt and in a source build. Android publishes it through the
   `ReactAndroid::reactnative` prefab module (`include/react/renderer/LoomConfig.h` and
   `include/react/loom/Loom.h`); iOS ships both in the headers xcframework and in the `React-Fabric`
@@ -93,7 +93,8 @@ class Backend {
   // the frame in the surface, from Loom's layout
   std::optional<Rect> measure(Tag tag) const {
     if (auto surfaceId = surfaceOf(tag)) {
-      if (auto metrics = runtime_.layoutRelativeTo(*surfaceId, tag, std::nullopt)) {
+      // called from JS: a synced read includes the commits this thread already made
+      if (auto metrics = runtime_.synced().layoutRelativeTo(*surfaceId, tag, std::nullopt)) {
         return metrics->frame;
       }
     }
@@ -168,24 +169,38 @@ Loom does not clone a tree to change a prop. A library holding a `Tag` writes th
 The API (all in `facebook::react::loom`, value types are React Native's own):
 
 - **Entry:** `Runtime::from(jsi::Runtime&)` on the JS thread, or `Runtime::from(const ContextContainer&)`
-  anywhere you have the container. Both return `std::nullopt` when the app does not run Loom.
-- **Surfaces and nodes:** `forEachSurface`, `surfaceSize`, `hasNode`, `props`, `layout`,
-  `layoutRelativeTo`, `componentName`, `children`, `parent`.
+  anywhere you have the container. Both return `std::nullopt` when the app does not run Loom. A
+  `Runtime` belongs to one React instance: tags are unique only within an instance, and every call
+  is answered by that instance alone (two React hosts in one app never see each other's nodes).
+- **Surfaces:** `forEachSurface`, `surfaceOf(tag)` (the surface the node is mounted on; `synced().surfaceOf(tag)` also finds a node JavaScript just created).
+- **Reads, two explicit modes:**
+  - `runtime.latest()` never blocks, on any thread. It answers from the latest computed commit and
+    returns `std::nullopt` while a commit is being computed at that instant (try again next frame).
+    Use it on the UI thread.
+  - `runtime.synced()` first waits until every commit submitted before the call has been applied,
+    so JavaScript reads its own writes. On the UI thread it returns `std::nullopt` (use
+    `latest()`), except with `loom.js=main`, where the UI thread is the JS thread and applies the
+    pending commits itself before reading.
+  - Both offer `surfaceSize`, `hasNode`, `props`, `layout`, `layoutRelativeTo`, `componentName`,
+    `children` and `parent`, each returning `std::optional`. Inside an `onLayoutCommitted` listener
+    both read the commit being reported, at once.
 - **Prop writes, three lanes:** `updateProps` (the JS lane, like a React commit),
   `updateAnimatedProps` (the animation lane, a typed `AnimatedPropBag`, coalesced per frame; a layout
-  prop makes Loom lay the node out), `updateNativeProps` (applied to the view and remembered so the
+  prop makes Loom lay the node out), `updateNativeProps(surfaceId, tag, props)` (applied to the view and remembered so the
   next commit does not undo it).
-- **Frames:** `onFrameApplied` (UI thread), `onLayoutCommitted` (commit thread), `beforeNextFrame`.
-  Subscriptions are RAII: destroying the handle unsubscribes.
+- **Frames:** `onFrameApplied` (UI thread), `onLayoutCommitted` (commit thread),
+  `beforeNextFrame(surfaceId, callback)` (runs on the UI thread right before that surface's next
+  batch). Subscriptions are RAII: destroying the handle unsubscribes.
 - **Native state:** `updateState` for components with their own descriptor and state.
 - **Settings:** `setting(LoomSettingId)`.
 
 ## 5. Threading rules
 
 - **JS thread:** `Runtime::from(jsi::Runtime&)`.
-- **Any thread:** reads, `updateProps`, `updateAnimatedProps`, `updateNativeProps`, subscriptions. A
-  read from the JS or commit thread first waits for the commits already submitted; a read on the UI
-  thread does not block.
+- **Any thread:** `latest()` reads, `updateProps`, `updateAnimatedProps`, `updateNativeProps`,
+  subscriptions.
+- **The JS thread, or any thread but the UI thread:** `synced()` reads (they wait for the worker;
+  the UI thread never waits for it, except with `loom.js=main`, where it is the JS thread).
 - **UI thread:** `onFrameApplied` and `beforeNextFrame` callbacks.
 - **Commit thread** (the JS thread, or the Loom worker when it runs): `onLayoutCommitted` callbacks.
   Do not touch views there; hop to the UI thread.
@@ -223,5 +238,15 @@ and loads. The fallback keeps it working; the Loom API is how you get Loom's beh
 
 ## 8. Versioning
 
-`LOOM_API_VERSION` starts at 1 and grows only by additions. Compile against what you need and
-check it with a `static_assert`; a removal would need a major process, and none is planned.
+`LOOM_API_VERSION` versions Loom's own API, never React Native's. Each Loom release supports exactly
+one React Native minor (Loom 0.89.x runs only on React Native 0.89.x; packaging enforces it), so the
+API version does not move with React Native.
+
+- Additions keep the version. The `Runtime` handle holds only a pointer to its instance, so adding
+  methods never changes its size or layout.
+- An incompatible change bumps it, and is listed in `react/renderer/LoomConfig.h`.
+  - **2:** `Runtime` is per React instance; reads became explicit (`latest()`, `synced()`);
+    `updateNativeProps` takes the `SurfaceId`; `surfaceOf(tag)` was added.
+- Check the version you compile against with a `static_assert`. `Runtime::from` also checks it at
+  run time: a library compiled against an API this Loom no longer provides gets `std::nullopt` (and
+  one log line), and takes its Fabric path instead of misbehaving.

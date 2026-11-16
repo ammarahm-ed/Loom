@@ -47,9 +47,22 @@ namespace facebook::react {
 #else
 #define LOOM_HOST_CALL_SCOPE(name, ...)
 #endif
-struct LoomBinding::Lifetime {
-  std::shared_mutex gate;
-  LoomBinding* binding{nullptr};
+
+/**
+ * Process-wide binding registry. These are `static inline` data members on purpose: function-local
+ * statics in this header's anonymous namespace gave every including .cpp file its own copy (only
+ * LoomBinding.cpp registered bindings, so the animation path always saw none). Never put state in an
+ * anonymous namespace in this header.
+ */
+struct LoomBindingRegistry {
+  static inline std::mutex mutex;
+  static inline std::unordered_map<SurfaceId, LoomBinding::SurfaceConstraints>
+      constraints;
+  static inline std::unordered_map<
+      LoomBinding*,
+      std::shared_ptr<LoomBinding::Lifetime>>
+      bindings;
+  static inline float pointScaleFactor = 1.0f;
 };
 
 namespace {
@@ -87,9 +100,9 @@ bool childrenDifferFrom(
  * while a renderer runs: a commit can call back into the host, which can call
  * back into this binding.
  */
-std::mutex& registryMutex() {
-  static std::mutex mutex;
-  return mutex;
+[[maybe_unused]]
+inline std::mutex& registryMutex() {
+  return LoomBindingRegistry::mutex;
 }
 
 /**
@@ -104,22 +117,16 @@ std::mutex& registryMutex() {
 [[maybe_unused]]
 std::unordered_map<SurfaceId, LoomBinding::SurfaceConstraints>&
 surfaceConstraints() {
-  static std::
-      unordered_map<SurfaceId, LoomBinding::SurfaceConstraints>
-          constraints;
-  return constraints;
+  return LoomBindingRegistry::constraints;
 }
 
 /** Bindings that currently own renderers, so a static call can reach them. */
+[[maybe_unused]]
 std::unordered_map<
     LoomBinding*,
     std::shared_ptr<LoomBinding::Lifetime>>&
 liveBindings() {
-  static std::unordered_map<
-      LoomBinding*,
-      std::shared_ptr<LoomBinding::Lifetime>>
-      bindings;
-  return bindings;
+  return LoomBindingRegistry::bindings;
 }
 
 [[maybe_unused]]
@@ -134,9 +141,9 @@ bindingSnapshot() {
   return snapshot;
 }
 
+[[maybe_unused]]
 float& directPointScaleFactorStorage() {
-  static float factor = 1.0f;
-  return factor;
+  return LoomBindingRegistry::pointScaleFactor;
 }
 
 [[maybe_unused]]

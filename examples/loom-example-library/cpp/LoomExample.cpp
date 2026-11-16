@@ -13,7 +13,7 @@
 
 #if defined(LOOM_RENDERER) && LOOM_RENDERER
 #include <react/loom/Loom.h>
-static_assert(LOOM_API_VERSION >= 1, "LoomExample needs Loom API 1");
+static_assert(LOOM_API_VERSION >= 2, "LoomExample needs Loom API 2");
 #else
 #include <react/renderer/core/LayoutableShadowNode.h>
 #include <react/renderer/core/PropsParserContext.h>
@@ -51,20 +51,17 @@ class Backend {
     return "loom";
   }
 
+  // Tags are unique within a React instance. Called from JS, right after JS created the node: a synced
+  // read finds it even before it is mounted.
   std::optional<SurfaceId> surfaceOf(Tag tag) const {
-    std::optional<SurfaceId> found;
-    runtime_.forEachSurface([&](SurfaceId surfaceId) {
-      if (!found && runtime_.hasNode(surfaceId, tag)) {
-        found = surfaceId;
-      }
-    });
-    return found;
+    return runtime_.synced().surfaceOf(tag);
   }
 
-  // The frame in the surface: relative to the root (no ancestor given).
+  // The frame in the surface: relative to the root (no ancestor given). Called from JS, so a synced
+  // read: it includes the commits this JS thread already made.
   std::optional<facebook::react::Rect> measure(Tag tag) const {
     if (auto surfaceId = surfaceOf(tag)) {
-      if (auto metrics = runtime_.layoutRelativeTo(*surfaceId, tag, std::nullopt)) {
+      if (auto metrics = runtime_.synced().layoutRelativeTo(*surfaceId, tag, std::nullopt)) {
         return metrics->frame;
       }
     }

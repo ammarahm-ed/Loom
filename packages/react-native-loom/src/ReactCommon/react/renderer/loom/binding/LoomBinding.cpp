@@ -37,6 +37,10 @@ LoomBinding::LoomBinding(
            "FabricUIManagerBinding::installFabricUIManager).";
   }
   host_ = hostOwner_.get();
+  // The library API's per-instance state lives in the same container, so `loom::Runtime::from` with
+  // the container (before JavaScript) and with the JS runtime (after) reach the same state.
+  apiInstance_ = loom::internal::Instance::in(*getUIManager().getContextContainer());
+  apiInstance_->attach(lifetime_);
   // registerIn installed the host's traits. If this side still sees the defaults, the
   // process holds two copies of the traits (a build that duplicated shared state per
   // module): every thread would count as the UI thread and view work would run off it.
@@ -49,7 +53,6 @@ LoomBinding::LoomBinding(
   // Power-of-two bucket counts keep these on mask indexing (see LoomTagHash).
   mountedIdentities_.reserve(1024);
   mountedTokens_.reserve(1024);
-#if LOOM_WORKER
   const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
   // The host's UI executor is resolved on first use, not here: it can need
   // platform state that exists only once the first surface runs. Every use of it
@@ -77,8 +80,7 @@ LoomBinding::LoomBinding(
     });
   });
   // The first commit resolves the executor (see publishWorkerCommit).
-#endif
-#if LOOM_WORKER && LOOM_JS_ON_MAIN
+#if LOOM_JS_ON_MAIN
   // Loom: when timers and requestAnimationFrame callbacks have run in
   // the frame's animation phase, apply whatever they committed now, so the
   // traversal that follows draws it instead of the next frame. A synchronous
@@ -98,7 +100,6 @@ LoomBinding::LoomBinding(
   liveBindings().emplace(this, lifetime_);
 }
 
-#if LOOM_WORKER
 std::function<void(std::function<void()>)> LoomBinding::platformUIExecutor() {
   std::lock_guard lock(uiExecutorMutex_);
   if (uiExecutor_) {
@@ -123,7 +124,6 @@ std::function<void(std::function<void()>)> LoomBinding::platformUIExecutor() {
   }
   return uiExecutor_;
 }
-#endif
 
 #if LOOM_PROFILE
 LoomBinding::HostCallScope::HostCallScope(
@@ -164,24 +164,24 @@ LoomBinding::HostCallScope::~HostCallScope() {
 #endif
 
 LoomBinding::~LoomBinding() {
-#if LOOM_WORKER
+  // Unreachable first: no static callback (registry) or library handle (API instance) can enter
+  // once these return, and the gate waits for the ones already inside. Only then stop the worker,
+  // so nothing can submit to a worker that is shutting down.
+  apiInstance_->detach(lifetime_.get());
+  {
+    std::lock_guard lock(registryMutex());
+    liveBindings().erase(this);
+  }
+  {
+    std::unique_lock lock(lifetime_->gate);
+    lifetime_->binding = nullptr;
+  }
   for (auto& [surface, token] : surfaceTokens_)
     token->active = false;
   worker_->shutdown();
 #if LOOM_JS_ON_MAIN
   FrameCallbackScope::afterFrameCallbacks() = {};
 #endif
-#endif
-  {
-    std::lock_guard lock(registryMutex());
-    liveBindings().erase(this);
-  }
-  // Wait for an in-flight static callback that already acquired the token.
-  // New callbacks observe a null binding under the same gate. This makes the
-  // raw pointer safe without requiring the binding itself to be heap-owned by
-  // the registry.
-  std::unique_lock lock(lifetime_->gate);
-  lifetime_->binding = nullptr;
 }
 
 #pragma mark - Surface lifecycle
@@ -247,7 +247,6 @@ void LoomBinding::setPointScaleFactor(float pointScaleFactor) {
 }
 
 void LoomBinding::applyPointScaleFactor(float pointScaleFactor) {
-#if LOOM_WORKER
   // Density and font scale changes can change what the platform text path
   // supports; this is the UI thread, where the answer may be asked.
   refreshCanMeasureTextOnWorker();
@@ -268,17 +267,11 @@ void LoomBinding::applyPointScaleFactor(float pointScaleFactor) {
           }
         });
   }
-#else
-  for (auto& entry : renderers_) {
-    entry.second->setPointScaleFactor(pointScaleFactor);
-  }
-#endif
 }
 
 void LoomBinding::submitOrderedUIEffect(
     SurfaceId surfaceId,
     std::function<void()> effect) {
-#if LOOM_WORKER
   auto job = std::make_unique<LoomWorker::Job>();
   // `run()` always invokes `compute`, so it cannot be left empty; the work
   // itself belongs on the UI thread, after the in-flight result has been
@@ -286,15 +279,10 @@ void LoomBinding::submitOrderedUIEffect(
   job->compute = [] {};
   job->applied = std::move(effect);
   submitWorkerJob(tokenFor(surfaceId), std::move(job));
-#else
-  (void)surfaceId;
-  effect();
-#endif
 }
 
 void LoomBinding::synchronizeWorkerForUIManager(
     UIManager& manager) {
-#if LOOM_WORKER
   for (const auto& lifetime : bindingSnapshot()) {
     std::shared_lock lock(lifetime->gate);
     if (auto* binding = lifetime->binding;
@@ -302,13 +290,9 @@ void LoomBinding::synchronizeWorkerForUIManager(
       binding->worker_->synchronize();
     }
   }
-#else
-  (void)manager;
-#endif
 }
 
 void LoomBinding::shutdownWorkerForUIManager(UIManager& manager) {
-#if LOOM_WORKER
   for (const auto& lifetime : bindingSnapshot()) {
     std::shared_lock lock(lifetime->gate);
     if (auto* binding = lifetime->binding;
@@ -318,9 +302,6 @@ void LoomBinding::shutdownWorkerForUIManager(UIManager& manager) {
       binding->worker_->shutdown();
     }
   }
-#else
-  (void)manager;
-#endif
 }
 
 bool LoomBinding::withSurfaceRenderer(
@@ -346,20 +327,26 @@ bool LoomBinding::withSurfaceRenderer(
 void LoomBinding::apiForEachSurface(
     const std::function<void(SurfaceId)>& visit) {
   std::vector<SurfaceId> surfaceIds;
-  for (const auto& lifetime : bindingSnapshot()) {
-    std::shared_lock lock(lifetime->gate);
-    auto* binding = lifetime->binding;
-    if (binding == nullptr) {
-      continue;
-    }
-    std::lock_guard state(binding->stateMutex_);
-    for (const auto& entry : binding->renderers_) {
+  {
+    std::lock_guard state(stateMutex_);
+    surfaceIds.reserve(renderers_.size());
+    for (const auto& entry : renderers_) {
       surfaceIds.push_back(entry.first);
     }
   }
   for (const auto surfaceId : surfaceIds) {
     visit(surfaceId);
   }
+}
+
+std::optional<SurfaceId> LoomBinding::apiSurfaceOf(Tag tag) {
+  std::lock_guard state(stateMutex_);
+  // The mounted map is the UI's view of the tree; a token names its surface.
+  if (auto token = mountedTokens_.find(tag);
+      token != mountedTokens_.end() && token->second->active) {
+    return token->second->surfaceId;
+  }
+  return std::nullopt;
 }
 
 bool LoomBinding::dispatchComponentState(const StateUpdate& stateUpdate) {
@@ -393,16 +380,12 @@ bool LoomBinding::submitComponentState(
   }
   auto token = tokenIt->second;
   state.unlock();
-#if LOOM_WORKER
   // Always queued, never run on the calling thread: `unstable_Immediate`
   // updates arrive from inside UIKit layout and from mounting, where applying
   // a batch synchronously would re-enter the batch applier.
   auto job = std::make_unique<LoomWorker::Job>();
   job->compute = [renderer, update] { renderer->applyComponentState(update); };
   submitWorkerJob(token, std::move(job));
-#else
-  renderer->applyComponentState(update);
-#endif
   return true;
 }
 
@@ -430,7 +413,6 @@ void LoomBinding::applyConstraints(
     // it creates the renderer, so there is nothing to reflow.
     return;
   }
-#if LOOM_WORKER
   auto owner = iterator->second;
   state.unlock();
   submitWorkerOperation(tokenFor(surfaceId), [owner, constraints] {
@@ -442,15 +424,6 @@ void LoomBinding::applyConstraints(
         constraints.isRTL);
   });
   return;
-#else
-  // `setConstraints` reflows on its own when the viewport actually changed.
-  iterator->second->setConstraints(
-      constraints.minWidth,
-      constraints.minHeight,
-      constraints.maxWidth,
-      constraints.maxHeight,
-      constraints.isRTL);
-#endif
 }
 
 void LoomBinding::releaseSurfaceInternal(SurfaceId surfaceId) {
@@ -464,38 +437,70 @@ void LoomBinding::releaseSurfaceInternal(SurfaceId surfaceId) {
     token->second->active = false;
     surfaceTokens_.erase(token);
   }
-#if LOOM_WORKER
-  if (auto overlays = nativePropsOverlays_.find(surfaceId);
-      overlays != nativePropsOverlays_.end()) {
-    for (const auto& entry : overlays->second) {
+  // Only this surface's own tags: O(its nodes), not O(every mounted node).
+  if (auto mounted = mountedTagsBySurface_.find(surfaceId);
+      mounted != mountedTagsBySurface_.end()) {
+    for (const auto& entry : mounted->second) {
       mountedIdentities_.erase(entry.first);
+      mountedTokens_.erase(entry.first);
     }
-    nativePropsOverlays_.erase(overlays);
+    mountedTagsBySurface_.erase(mounted);
   }
-#endif
-#if LOOM_WORKER
-  for (auto it = mountedTokens_.begin(); it != mountedTokens_.end();) {
-    if (it->second->surfaceId == surfaceId) {
-      mountedIdentities_.erase(it->first);
-      it = mountedTokens_.erase(it);
-    } else
-      ++it;
-  }
-#endif
-#if LOOM_WORKER
+  nativePropsOverlays_.erase(surfaceId);
   submittedIdentities_.erase(surfaceId);
   // Animation fast lane state is per surface: a frame still being collected, the
   // single queued animation job and its adaptive cost history all die with it.
   animationFrameBuffer_.erase(surfaceId);
   pendingAnimationFrames_.erase(surfaceId);
   animationLaneStats_.erase(surfaceId);
-#endif
+  // `surfaceGenerations_` is kept on purpose: a restarted surface must not reuse a
+  // generation an in-flight job of the old one still carries.
   ++surfaceGenerations_[surfaceId];
+#if LOOM_PROFILE
+  profileCommitGeneration_.erase(surfaceId);
+  profileHostCalls_.erase(surfaceId);
+#endif
   renderers_.erase(surfaceId);
   pendingRootCommits_.erase(surfaceId);
   pendingDocumentInstanceHandles_.erase(surfaceId);
   documentInstanceHandles_.erase(surfaceId);
   LoomEventManager::clearSurface(surfaceId);
+  loom::internal::releaseSurface(*apiInstance_, surfaceId);
+}
+
+void LoomBinding::setMountedLocked(
+    Tag tag,
+    uint64_t identity,
+    const std::shared_ptr<SurfaceToken>& token) {
+  auto& mountedToken = mountedTokens_[tag];
+  if (mountedToken != nullptr && mountedToken->surfaceId != token->surfaceId) {
+    // The tag moved to another surface (a surface restarted under a new id).
+    if (auto previous = mountedTagsBySurface_.find(mountedToken->surfaceId);
+        previous != mountedTagsBySurface_.end()) {
+      previous->second.erase(tag);
+    }
+  }
+  mountedToken = token;
+  mountedIdentities_[tag] = identity;
+  mountedTagsBySurface_[token->surfaceId][tag] = true;
+}
+
+void LoomBinding::eraseMountedLocked(Tag tag) {
+  auto mountedToken = mountedTokens_.find(tag);
+  if (mountedToken == mountedTokens_.end()) {
+    return;
+  }
+  const auto surfaceId = mountedToken->second->surfaceId;
+  if (auto mounted = mountedTagsBySurface_.find(surfaceId);
+      mounted != mountedTagsBySurface_.end()) {
+    mounted->second.erase(tag);
+  }
+  if (auto overlays = nativePropsOverlays_.find(surfaceId);
+      overlays != nativePropsOverlays_.end()) {
+    overlays->second.erase(tag);
+  }
+  mountedTokens_.erase(mountedToken);
+  mountedIdentities_.erase(tag);
 }
 
 LoomBinding::SurfaceConstraints
@@ -547,26 +552,36 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
         driver->processBatch(surface, batch, geometry);
       }
     }
-    host_->applyBatch(surface, std::move(batch));
-    loom::internal::notifyFrameApplied(surface);
-#if LOOM_WORKER
-    // Only this surface's overlays can be replayed onto this surface, so the
-    // scan is bounded by them rather than by every overlay on every surface.
-    std::vector<Tag> overlayTags;
+    // `beforeNextFrame` callbacks of this surface, and only this surface, run right before its batch.
+    loom::internal::runBeforeFrame(*apiInstance_, surface);
+    // Native-props overlays are replayed only onto views this batch touched: a
+    // create or a props/layout update can reset what a native write set, any
+    // other view still shows it. So the replay costs O(touched), not O(overlays),
+    // and a batch for a surface without overlays collects nothing.
+    std::vector<Tag> touched;
+    bool hasOverlays = false;
     {
       std::lock_guard state(stateMutex_);
       auto surfaceOverlays = nativePropsOverlays_.find(surface);
-      if (surfaceOverlays != nativePropsOverlays_.end()) {
-        overlayTags.reserve(surfaceOverlays->second.size());
-        for (const auto& [tag, overlay] : surfaceOverlays->second) {
-          if (overlay.surfaceId == surface)
-            overlayTags.push_back(tag);
+      hasOverlays = surfaceOverlays != nativePropsOverlays_.end() &&
+          !surfaceOverlays->second.empty();
+    }
+    if (hasOverlays) {
+      for (const auto& operation : batch.operations) {
+        if (const auto* create = std::get_if<DirectCreateOperation>(&operation)) {
+          touched.push_back(create->tag);
+        } else if (const auto* update = std::get_if<DirectUpdatePropsOperation>(&operation)) {
+          touched.push_back(update->tag);
+        } else if (const auto* layout = std::get_if<DirectLayoutOperation>(&operation)) {
+          touched.push_back(layout->tag);
         }
       }
     }
-    for (const auto tag : overlayTags) {
-      // Re-looked up rather than stored: applying native props can emit events
-      // and reenter this map, which may stage a distinct nested delta.
+    host_->applyBatch(surface, std::move(batch));
+    loom::internal::notifyFrameApplied(*apiInstance_, surface);
+    for (const auto tag : touched) {
+      // Looked up per tag rather than collected up front: applying native props
+      // can emit events and reenter this map, which may stage a nested delta.
       folly::dynamic props;
       {
         std::lock_guard state(stateMutex_);
@@ -574,11 +589,15 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
         if (surfaceOverlays == nativePropsOverlays_.end())
           break;
         auto it = surfaceOverlays->second.find(tag);
-        if (it == surfaceOverlays->second.end() ||
-            mountedIdentities_[tag] != it->second.identity)
+        if (it == surfaceOverlays->second.end()) {
           continue;
-        // Native prop application can emit events and reenter this map. Keep
-        // this replay stable while allowing a distinct nested delta to stage.
+        }
+        // `find`, not `operator[]`: a lookup must never insert an entry.
+        auto mounted = mountedIdentities_.find(tag);
+        if (mounted == mountedIdentities_.end() ||
+            mounted->second != it->second.identity) {
+          continue;
+        }
         props = it->second.props;
       }
       const auto previousTag = replayingNativePropsTag_;
@@ -586,8 +605,7 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
       replayingNativePropsTag_ = tag;
       replayingNativeProps_ = &props;
       try {
-        host_->updateViewProps(
-            tag, props);
+        host_->updateViewProps(tag, props);
       } catch (...) {
         replayingNativePropsTag_ = previousTag;
         replayingNativeProps_ = previousProps;
@@ -596,7 +614,6 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
       replayingNativePropsTag_ = previousTag;
       replayingNativeProps_ = previousProps;
     }
-#endif
   };
   operations.registerEventTarget =
       [this](SurfaceId surface, Tag tag, InstanceHandle::Shared handle) {
@@ -707,7 +724,6 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
             minimumSize,
             maximumSize);
       };
-#if LOOM_WORKER
   operations.getScrollOffset = [this](SurfaceId surface, Tag tag) {
     // Live view state belongs to the UI thread; a JS-thread reader asks it.
     return readOnUIThread(
@@ -727,15 +743,6 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
         },
         std::nullopt);
   };
-#else
-  operations.getScrollOffset = [this](SurfaceId surface, Tag tag) {
-    return host_->getScrollOffset(surface, tag);
-  };
-  operations.getViewLocationInSurface = [this](SurfaceId surface, Tag tag)
-      -> std::optional<std::pair<float, float>> {
-    return host_->getViewLocationInSurface(surface, tag);
-  };
-#endif
   operations.reportUnsupportedInlineAttachment = [this](
                                                      SurfaceId surface,
                                                      Tag tag) {
@@ -805,7 +812,6 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
     }
   };
 
-#if LOOM_WORKER
   // Only pure text preparation callbacks remain executable during computation.
   // All native state/event/view effects are built into the owning UI result.
   operations.failSurface = worker_->defer(std::move(operations.failSurface));
@@ -829,7 +835,6 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   operations.updateScrollContentBounds =
       worker_->defer(std::move(operations.updateScrollContentBounds));
   operations.commitFinished = {};
-#endif
   auto created =
       std::make_shared<LoomRenderer>(surfaceId, std::move(operations));
   created->setPointScaleFactor(directPointScaleFactorValue());
@@ -864,7 +869,6 @@ std::shared_ptr<LoomRenderer> LoomBinding::findRenderer(
   return iterator == renderers_.end() ? nullptr : iterator->second;
 }
 
-#if LOOM_WORKER
 bool LoomBinding::canMeasureTextOnWorker() {
   if (LoomWorker::kJavaScriptOnUIThread) {
     // Asked only when the answer can change the decision, and not cached:
@@ -934,7 +938,6 @@ std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
   }
   return reply->value;
 }
-#endif
 
 } // namespace facebook::react
 #endif // LOOM_RENDERER

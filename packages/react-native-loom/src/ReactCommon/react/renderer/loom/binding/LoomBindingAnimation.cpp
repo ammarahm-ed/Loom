@@ -30,8 +30,9 @@ bool LoomBinding::layoutAnimationFrame(SurfaceId surfaceId) {
         if (batch.operations.empty()) {
           return;
         }
+        loom::internal::runBeforeFrame(*binding.apiInstance(), surfaceId);
         binding.host()->applyBatch(surfaceId, std::move(batch));
-        loom::internal::notifyFrameApplied(surfaceId);
+        loom::internal::notifyFrameApplied(*binding.apiInstance(), surfaceId);
       });
 }
 
@@ -55,67 +56,93 @@ void LoomBinding::recordNativePropsImpl(
     folly::dynamic props,
     bool knownPaint,
     bool viewApplied) {
-#if LOOM_WORKER
+  // The platform's tag-only entry points (`synchronouslyUpdateViewOnUIThread` and friends) carry no
+  // surface: the binding that has the tag mounted takes it.
   for (const auto& lifetime : bindingSnapshot()) {
     std::shared_lock lock(lifetime->gate);
     auto* binding = lifetime->binding;
-    if (!binding ||
-        (binding->replayingNativePropsTag_ == tag &&
-         binding->replayingNativeProps_ &&
-         props == *binding->replayingNativeProps_))
-      continue;
-    // The UI thread reaches this while JS may be writing the same maps.
-    std::lock_guard state(binding->stateMutex_);
-    auto tokenIt = binding->mountedTokens_.find(tag);
-    if (tokenIt == binding->mountedTokens_.end() || !tokenIt->second->active)
-      continue;
-    auto token = tokenIt->second;
-    auto owner = binding->renderers_.find(token->surfaceId);
-    if (owner == binding->renderers_.end())
-      continue;
-    // A non-throwing lookup on purpose. An overlay can outlive the identity it
-    // was staged for, and the previous `mountedIdentities_.at(tag)` threw
-    // `std::out_of_range` out of a JNI frame (`std::terminate`) when the two
-    // maps disagreed (design §2, candidate C1). A tag with no identity is
-    // simply dropped.
-    auto identityIt = binding->mountedIdentities_.find(tag);
-    if (identityIt == binding->mountedIdentities_.end())
-      continue;
-    ClassifiedAnimatedProps classified;
-    bool isText = owner->second->isTextNode(tag);
-    if (knownPaint) {
-      if (!isText)
-        classified.paint = std::move(props);
-    } else {
-      classified = classifyAnimatedProps(props);
-      isText = isText || classified.text;
-    }
-    if (isText) {
-      // Font and text keys drive measurement, and any key on a paragraph or raw
-      // text node can, which the synchronous lane must not do: the whole payload
-      // keeps the ordinary per-call path (design §3.2, "Text").
-      binding->stageNativeProps(tag, identityIt->second, token, std::move(props));
+    if (binding != nullptr &&
+        binding->recordNativePropsHere(
+            std::nullopt, tag, props, knownPaint, viewApplied)) {
       return;
     }
-    // The platform's synchronous update has already put these values on the
-    // view, or (`!viewApplied`) the lane writes them itself.
-    binding->writeAnimatedProps(
-        token->surfaceId,
-        tag,
-        identityIt->second,
-        std::move(classified),
-        /*applyPaintToView=*/!viewApplied,
-        /*viewAlreadyApplied=*/viewApplied);
-    return;
   }
-#else
-  (void)tag;
-  (void)props;
-  (void)knownPaint;
-#endif
 }
 
-#if LOOM_WORKER
+void LoomBinding::apiRecordNativeProps(
+    SurfaceId surfaceId,
+    Tag tag,
+    folly::dynamic props,
+    bool knownPaint,
+    bool viewApplied) {
+  recordNativePropsHere(surfaceId, tag, props, knownPaint, viewApplied);
+}
+
+bool LoomBinding::recordNativePropsHere(
+    std::optional<SurfaceId> surfaceId,
+    Tag tag,
+    folly::dynamic& props,
+    bool knownPaint,
+    bool viewApplied) {
+  if (replayingNativePropsTag_ == tag && replayingNativeProps_ &&
+      props == *replayingNativeProps_) {
+    // The replay of an overlay re-entering through the platform's view write.
+    return false;
+  }
+  // The UI thread reaches this while JS may be writing the same maps.
+  std::lock_guard state(stateMutex_);
+  auto tokenIt = mountedTokens_.find(tag);
+  if (tokenIt == mountedTokens_.end() || !tokenIt->second->active) {
+    return false;
+  }
+  auto token = tokenIt->second;
+  if (surfaceId.has_value() && token->surfaceId != *surfaceId) {
+    return false;
+  }
+  auto owner = renderers_.find(token->surfaceId);
+  if (owner == renderers_.end()) {
+    return false;
+  }
+  // A non-throwing lookup on purpose. An overlay can outlive the identity it
+  // was staged for, and the previous `mountedIdentities_.at(tag)` threw
+  // `std::out_of_range` out of a JNI frame (`std::terminate`) when the two
+  // maps disagreed (design §2, candidate C1). A tag with no identity is
+  // simply dropped.
+  auto identityIt = mountedIdentities_.find(tag);
+  if (identityIt == mountedIdentities_.end()) {
+    return false;
+  }
+  ClassifiedAnimatedProps classified;
+  bool isText = owner->second->isTextNode(tag);
+  if (knownPaint) {
+    if (!isText) {
+      classified.paint = std::move(props);
+    }
+  } else {
+    classified = classifyAnimatedProps(props);
+    isText = isText || classified.text;
+  }
+  if (isText) {
+    // Font and text keys drive measurement, and any key on a paragraph or raw
+    // text node can, which the synchronous lane must not do: the whole payload
+    // keeps the ordinary per-call path (design §3.2, "Text").
+    stageNativeProps(tag, identityIt->second, token, std::move(props));
+    return true;
+  }
+  // The platform's synchronous update has already put these values on the
+  // view, or (`!viewApplied`) the lane writes them itself.
+  // Views are written on the UI thread only: off it, a write the platform has not applied is kept
+  // for the frame, which writes it on the UI thread (`write.view`).
+  writeAnimatedProps(
+      token->surfaceId,
+      tag,
+      identityIt->second,
+      std::move(classified),
+      /*applyPaintToView=*/!viewApplied && worker_->onUIThread(),
+      /*viewAlreadyApplied=*/viewApplied);
+  return true;
+}
+
 std::shared_ptr<const folly::dynamic> LoomBinding::stageNativeProps(
     Tag tag,
     uint64_t identity,
@@ -273,6 +300,10 @@ void LoomBinding::writeAnimatedProps(
   }
   write.text = write.text || classified.text;
   if (classified.paint.empty()) {
+    // After the lock and the last use of `write`: a host may run the posted flush at once, and the
+    // flush takes this buffer entry.
+    state.unlock();
+    scheduleAnimationFlush();
     return;
   }
   // Paint keys are the part a later batch could revert, so they stay as the
@@ -311,6 +342,7 @@ void LoomBinding::writeAnimatedProps(
   if (applyPaintToView) {
     applyAnimatedPaintToView(tag, classified.paint);
   }
+  scheduleAnimationFlush();
 }
 
 void LoomBinding::applyAnimatedPaintToView(
@@ -415,25 +447,47 @@ void LoomBinding::traceAnimationLane(
 }
 
 void LoomBinding::flushAnimationFrames() {
-  loom::internal::runBeforeFrame();
   for (const auto& lifetime : bindingSnapshot()) {
     std::shared_lock lock(lifetime->gate);
-    auto* binding = lifetime->binding;
-    if (binding == nullptr) {
-      continue;
-    }
-    std::vector<SurfaceId> surfaceIds;
-    {
-      std::lock_guard state(binding->stateMutex_);
-      surfaceIds.reserve(binding->animationFrameBuffer_.size());
-      for (const auto& entry : binding->animationFrameBuffer_) {
-        surfaceIds.push_back(entry.first);
-      }
-    }
-    for (const auto surfaceId : surfaceIds) {
-      binding->flushAnimationFrame(surfaceId);
+    if (auto* binding = lifetime->binding) {
+      binding->flushOwnAnimationFrames();
     }
   }
+}
+
+void LoomBinding::flushOwnAnimationFrames() {
+  // A flush is happening: the next write posts a new one if nothing flushes it first.
+  animationFlushPosted_.store(false, std::memory_order_relaxed);
+  std::vector<SurfaceId> surfaceIds;
+  {
+    std::lock_guard state(stateMutex_);
+    surfaceIds.reserve(animationFrameBuffer_.size());
+    for (const auto& entry : animationFrameBuffer_) {
+      surfaceIds.push_back(entry.first);
+    }
+  }
+  for (const auto surfaceId : surfaceIds) {
+    flushAnimationFrame(surfaceId);
+  }
+}
+
+void LoomBinding::scheduleAnimationFlush() {
+  if (animationFlushPosted_.exchange(true, std::memory_order_relaxed)) {
+    return; // One flush is already on its way.
+  }
+  auto executor = platformUIExecutor();
+  if (!executor) {
+    animationFlushPosted_.store(false, std::memory_order_relaxed);
+    return;
+  }
+  executor([weakLifetime = std::weak_ptr<Lifetime>(lifetime_)] {
+    if (auto lifetime = weakLifetime.lock()) {
+      std::shared_lock gate(lifetime->gate);
+      if (auto* binding = lifetime->binding) {
+        binding->flushOwnAnimationFrames();
+      }
+    }
+  });
 }
 
 void LoomBinding::flushAnimationFrame(SurfaceId surfaceId) {
@@ -523,13 +577,18 @@ void LoomBinding::deferAnimationFrame(
       : std::make_shared<std::vector<std::pair<Tag, folly::dynamic>>>();
   auto job = std::make_unique<LoomWorker::Job>();
   job->synchronous = synchronous;
-  job->compute = [this, rendererOwner, frame, paintForView] {
+  // A paint-only frame reaches the views without a mount batch, so it reports the applied frame to
+  // library listeners itself (`onFrameApplied`); a frame with layout does through its batch. Set by
+  // compute, read by `applied` (after compute for async jobs).
+  auto paintOnlyFrame = std::make_shared<bool>(false);
+  job->compute = [this, surfaceId, rendererOwner, frame, paintForView, paintOnlyFrame] {
     std::vector<std::pair<Tag, folly::dynamic>> framePaint;
     std::vector<std::pair<Tag, folly::dynamic>> frameLayout;
     std::vector<std::pair<Tag, folly::dynamic>> frameView;
     if (!frame->take(framePaint, frameLayout, frameView)) {
       return;
     }
+    *paintOnlyFrame = frameLayout.empty();
     if (paintForView) {
       if (worker_->onUIThread()) {
         for (const auto& [tag, paint] : frameView) {
@@ -540,12 +599,21 @@ void LoomBinding::deferAnimationFrame(
       }
     }
     rendererOwner->applyAnimationFrame(framePaint, frameLayout);
+    if (*paintOnlyFrame && worker_->onUIThread()) {
+      // Computed on the UI thread (a synchronous job): the views were written just above.
+      loom::internal::notifyFrameApplied(*apiInstance_, surfaceId);
+    }
   };
-  job->applied = [this, surfaceId, frame, paintForView] {
+  job->applied = [this, surfaceId, frame, paintForView, paintOnlyFrame,
+                  synchronous] {
     if (paintForView) {
       for (const auto& [tag, paint] : *paintForView) {
         applyAnimatedPaintToView(tag, paint);
       }
+    }
+    if (!synchronous && *paintOnlyFrame) {
+      // Computed on the worker; the views were written just above, on the UI thread.
+      loom::internal::notifyFrameApplied(*apiInstance_, surfaceId);
     }
     std::vector<Tag> tags;
     {
@@ -642,7 +710,6 @@ void LoomBinding::setWorkerNativeProps(
   replayingNativePropsTag_ = previousTag;
   replayingNativeProps_ = previousProps;
 }
-#endif
 
 } // namespace facebook::react
 #endif // LOOM_RENDERER

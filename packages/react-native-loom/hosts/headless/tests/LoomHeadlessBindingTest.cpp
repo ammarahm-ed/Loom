@@ -7,10 +7,13 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
 #include <react/renderer/components/root/RootComponentDescriptor.h>
 #include <react/renderer/components/view/ViewComponentDescriptor.h>
 #include <react/renderer/core/EventDispatcher.h>
+#include <react/loom/Loom.h>
 #include <react/renderer/loom/binding/LoomBinding.h>
 #include <react/renderer/uimanager/UIManager.h>
 
@@ -42,6 +45,12 @@ struct LoomBindingTestAccess {
     node->roles = LoomPlatformTraits::current().components.classify(
         *node->componentName);
     return node;
+  }
+
+  /** The platform's tag-only native-props entry, with the lane writing the view itself. */
+  static void recordNativeProps(Tag tag, folly::dynamic props) {
+    LoomBinding::recordNativePropsImpl(
+        tag, std::move(props), /*knownPaint*/ false, /*viewApplied*/ false);
   }
 
   static auto tokenFor(LoomBinding& binding, SurfaceId surfaceId) {
@@ -99,6 +108,33 @@ class LoomHeadlessBindingTest : public ::testing::Test {
     binding_.reset();
   }
 
+  bool viewGotOpacity(Tag tag, double opacity) {
+    host_->drainUIQueue();
+    bool written = false;
+    for (const auto& update : host_->takeViewProps()) {
+      if (update.tag == tag && update.props.isObject() && update.props.count("opacity") != 0) {
+        written = written || update.props["opacity"].asDouble() == opacity;
+      }
+    }
+    return written;
+  }
+
+  /** Commits one View (tag 2) under surface 1's root and applies it on the (test) UI thread. */
+  void mountOneView() {
+    using Access = LoomBindingTestAccess;
+    LoomBinding::setSurfaceConstraints(1, 200, 200, 200, 200, false, 0, 0);
+    const auto token = Access::tokenFor(*binding_, 1);
+    auto child = Access::draft(
+        1, token->generation, 11, 2, "View",
+        folly::dynamic::object("width", 100.0)("height", 50.0)("opacity", 1.0));
+    child->children =
+        std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+    Access::publish(*binding_, 1, child, token->generation);
+    LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+    host_->drainUIQueue();
+    host_->takeBatches();
+  }
+
   std::shared_ptr<ContextContainer> contextContainer_;
   std::shared_ptr<LoomHeadlessHost> host_;
   std::shared_ptr<UIManager> uiManager_;
@@ -140,6 +176,113 @@ TEST_F(LoomHeadlessBindingTest, CommitReachesTheRegisteredHost) {
   }
   EXPECT_TRUE(created);
   EXPECT_TRUE(host_->takeFailures().empty());
+}
+
+// Regression: the binding registry was a function-local static in a header's anonymous namespace,
+// so LoomBindingAnimation.cpp had its own, always empty, copy and dropped every native-props write.
+TEST_F(LoomHeadlessBindingTest, NativePropsFromThePlatformReachTheBinding) {
+  mountOneView();
+  LoomBindingTestAccess::recordNativeProps(2, folly::dynamic::object("opacity", 0.5));
+  EXPECT_TRUE(viewGotOpacity(2, 0.5));
+}
+
+TEST_F(LoomHeadlessBindingTest, RuntimeIsPerInstanceAndReadsAreExplicit) {
+  mountOneView();
+  auto runtime = loom::Runtime::from(*contextContainer_);
+  ASSERT_TRUE(runtime.has_value());
+  EXPECT_EQ(runtime->surfaceOf(2), std::optional<SurfaceId>{1});
+  EXPECT_EQ(runtime->surfaceOf(999), std::nullopt);
+  // The test thread is the UI thread. latest() always answers; synced() answers only when JavaScript
+  // runs on the UI thread (then the UI thread is the JS thread), and never waits otherwise.
+  EXPECT_EQ(runtime->latest().hasNode(1, 2), std::optional<bool>{true});
+  EXPECT_EQ(
+      runtime->synced().hasNode(1, 2),
+      LoomWorker::kJavaScriptOnUIThread ? std::optional<bool>{true} : std::nullopt);
+  EXPECT_EQ(runtime->synced().surfaceOf(2), LoomWorker::kJavaScriptOnUIThread ? std::optional<SurfaceId>{1} : std::nullopt);
+  auto layout = runtime->latest().layout(1, 2);
+  ASSERT_TRUE(layout.has_value());
+  EXPECT_EQ(layout->frame.size.width, 100);
+  // The native lane needs the surface now; the wrong surface is ignored.
+  runtime->updateNativeProps(5, 2, folly::dynamic::object("opacity", 0.25));
+  EXPECT_FALSE(viewGotOpacity(2, 0.25));
+  runtime->updateNativeProps(1, 2, folly::dynamic::object("opacity", 0.25));
+  EXPECT_TRUE(viewGotOpacity(2, 0.25));
+
+  // A second React instance (its own container, host and binding) sees none of this one's nodes.
+  auto otherContainer = std::make_shared<ContextContainer>();
+  LoomHeadlessHost::registerIn(*otherContainer);
+  RuntimeExecutor runtimeExecutor = [](std::function<void(jsi::Runtime&)>&&) {};
+  auto otherManager = std::make_shared<UIManager>(runtimeExecutor, otherContainer);
+  auto otherBinding = std::make_shared<LoomBinding>(otherManager);
+  auto other = loom::Runtime::from(*otherContainer);
+  ASSERT_TRUE(other.has_value());
+  EXPECT_EQ(other->surfaceOf(2), std::nullopt);
+  EXPECT_EQ(other->latest().hasNode(1, 2), std::nullopt);
+}
+
+TEST_F(LoomHeadlessBindingTest, BeforeNextFrameRunsOnlyForItsSurface) {
+  auto runtime = loom::Runtime::from(*contextContainer_);
+  ASSERT_TRUE(runtime.has_value());
+  int ranForSurface1 = 0;
+  int ranForSurface7 = 0;
+  runtime->beforeNextFrame(1, [&] { ++ranForSurface1; });
+  runtime->beforeNextFrame(7, [&] { ++ranForSurface7; });
+  mountOneView();
+  EXPECT_EQ(ranForSurface1, 1);
+  EXPECT_EQ(ranForSurface7, 0);
+  // Released with its surface: nothing is left behind.
+  LoomBinding::releaseSurface(7);
+}
+
+TEST_F(LoomHeadlessBindingTest, HandlesOutliveTheirInstanceSafely) {
+  auto runtime = loom::Runtime::from(*contextContainer_);
+  ASSERT_TRUE(runtime.has_value());
+  auto subscription = runtime->onFrameApplied([](const loom::FrameInfo&) {});
+  binding_.reset();
+  EXPECT_EQ(runtime->surfaceOf(2), std::nullopt);
+  EXPECT_EQ(runtime->latest().hasNode(1, 2), std::nullopt);
+  subscription.cancel();
+}
+
+TEST_F(LoomHeadlessBindingTest, ReleasingASurfaceForgetsItsNodesAndOverlays) {
+  mountOneView();
+  auto runtime = loom::Runtime::from(*contextContainer_);
+  ASSERT_TRUE(runtime.has_value());
+  runtime->updateNativeProps(1, 2, folly::dynamic::object("opacity", 0.5));
+  ASSERT_TRUE(viewGotOpacity(2, 0.5));
+  LoomBinding::releaseSurface(1);
+  host_->drainUIQueue();
+  EXPECT_EQ(runtime->surfaceOf(2), std::nullopt);
+  // The overlay died with the surface: a platform write for the old tag reaches nobody.
+  LoomBindingTestAccess::recordNativeProps(2, folly::dynamic::object("opacity", 0.75));
+  EXPECT_FALSE(viewGotOpacity(2, 0.75));
+}
+
+// The library animation lane: nothing but Loom writes a library's bag to the view, and a paint-only
+// frame (no mount batch) still reports itself to onFrameApplied.
+TEST_F(LoomHeadlessBindingTest, LibraryAnimatedPaintReachesTheViewAndReportsAFrame) {
+  mountOneView();
+  auto runtime = loom::Runtime::from(*contextContainer_);
+  ASSERT_TRUE(runtime.has_value());
+  int frames = 0;
+  auto subscription = runtime->onFrameApplied([&](const loom::FrameInfo& info) {
+    if (info.surfaceId == 1) {
+      ++frames;
+    }
+  });
+  loom::AnimatedPropBag bag;
+  bag.props.push_back(std::make_unique<AnimatedProp<Float>>(OPACITY, Float{0.3}));
+  runtime->updateAnimatedProps(1, 2, std::move(bag));
+  LoomBinding::flushAnimationFrames();
+  host_->drainUIQueue();
+  bool written = false;
+  for (const auto& update : host_->takeViewProps()) {
+    if (update.tag == 2 && update.props.isObject() && update.props.count("opacity") != 0) {
+      written = written || std::abs(update.props["opacity"].asDouble() - 0.3) < 1e-6;
+    }
+  }
+  EXPECT_TRUE(written);
+  EXPECT_GE(frames, 1);
 }
 
 } // namespace

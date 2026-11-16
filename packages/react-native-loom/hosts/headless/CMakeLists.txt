@@ -132,6 +132,9 @@ endforeach()
 
 add_library(loom-core STATIC
     LoomHeadlessHost.cpp
+    # The library API's animation lane packs AnimatedProps (react/loom/Loom.h, LoomApi.cpp). Only the
+    # serializer: the rest of animationbackend needs the platform's codegen'd components.
+    "${REACT_COMMON_DIR}/react/renderer/animationbackend/AnimatedPropSerializer.cpp"
     ${LOOM_CORE_OBJECTS})
 target_include_directories(loom-core PUBLIC
     "${REACT_COMMON_DIR}"

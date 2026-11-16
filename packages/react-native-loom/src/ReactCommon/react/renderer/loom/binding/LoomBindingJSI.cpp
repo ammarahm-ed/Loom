@@ -35,11 +35,7 @@ jsi::Value LoomBinding::get(
   // `Loom` (react-native-loom): the runtime settings registry. The wrapper reads
   // it once and keeps the object.
   if (method == "loomSettings") {
-#if LOOM_WORKER
     constexpr bool kWorker = true;
-#else
-    constexpr bool kWorker = false;
-#endif
     return jsi::Object::createFromHostObject(
         runtime,
         std::make_shared<LoomSettingsHostObject>(
@@ -74,7 +70,6 @@ jsi::Value LoomBinding::get(
         });
   }
 
-#if LOOM_WORKER
   if (method == "unstable_forceNextCommitSync") {
     return jsi::Function::createFromHostFunction(
         runtime,
@@ -105,7 +100,6 @@ jsi::Value LoomBinding::get(
           return jsi::Value::undefined();
         });
   }
-#endif
 
   if (method == "createNode") {
     return jsi::Function::createFromHostFunction(
@@ -126,7 +120,7 @@ jsi::Value LoomBinding::get(
           auto draft = std::make_shared<DraftNode>();
           draft->surfaceId = surface;
           draft->surfaceGeneration = token->generation;
-          draft->identity = ++nextDraftIdentity_[surface];
+          draft->identity = ++nextDraftIdentity_;
           draft->tag = tag;
           const auto componentName = stringFromValue(rt, arguments[1]);
           // One shared name per component type instead of an allocation per
@@ -444,7 +438,6 @@ jsi::Value LoomBinding::get(
         });
   }
 
-#if LOOM_WORKER
   // In-place updates (see `pendingPatches_`).
   //   loomPatchNode(node, payload): payload is a props diff, or a string for
   //   a raw text node. Returns true when recorded.
@@ -493,7 +486,6 @@ jsi::Value LoomBinding::get(
           return jsi::Value::undefined();
         });
   }
-#endif
 
   if (method == "createChildSet") {
     return jsi::Function::createFromHostFunction(
@@ -587,15 +579,11 @@ jsi::Value LoomBinding::get(
                 *this,
                 parent->surfaceId,
                 ProfiledHostMethod::AppendChild);
-#if LOOM_WORKER
             if (parent->draft->published)
               parent->draft = cloneDraft(parent);
-#endif
             auto& draft = *parent->draft;
             if (!draft.childrenExplicit) {
-#if LOOM_WORKER
               worker_->synchronize();
-#endif
               std::vector<RetainedLiveChild> currentChildren;
               auto owner = renderers_.find(parent->surfaceId);
               if (owner != renderers_.end() &&
@@ -691,7 +679,6 @@ jsi::Value LoomBinding::get(
               static_cast<size_t>(ProfiledHostMethod::CompleteRoot);
           ++hostProfile.methods[completeRootProfileIndex].calls;
 #endif
-#if LOOM_WORKER
           // In-place patches recorded by this commit go first, so they are
           // never queued behind (or merged into) the structural commit.
           flushPendingPatches(surface);
@@ -699,9 +686,6 @@ jsi::Value LoomBinding::get(
               (count > 2 && arguments[2].isBool() && arguments[2].getBool());
           forceNextCommitSync_ = false;
           publishWorkerCommit(surface, selectedRoots, forceSync);
-#else
-          publishRootCommit(surface, selectedRoots, token, generation);
-#endif
 #if LOOM_PROFILE
           hostProfile.methods[completeRootProfileIndex].totalNanoseconds +=
               static_cast<uint64_t>(
@@ -773,9 +757,7 @@ jsi::Value LoomBinding::get(
             const jsi::Value&,
             const jsi::Value* arguments,
             size_t count) -> jsi::Value {
-#if LOOM_WORKER
           worker_->synchronize();
-#endif
           requireArguments(rt, "findShadowNodeByTag_DEPRECATED", 1, count);
           auto tag = tagFromValue(arguments[0]);
           auto* owner = rendererOwning(tag);
@@ -812,15 +794,7 @@ jsi::Value LoomBinding::get(
           requireArguments(rt, "setNativeProps", 2, count);
           auto ref = nodeRef(rt, arguments[0]);
           if (ref != nullptr) {
-#if LOOM_WORKER
             setWorkerNativeProps(*ref, propsFromValue(rt, arguments[1]));
-#else
-            auto owner = renderers_.find(ref->surfaceId);
-            if (owner != renderers_.end() && isLiveNodeRef(*ref)) {
-              owner->second->setNativeProps(
-                  ref->tag, propsFromValue(rt, arguments[1]));
-            }
-#endif
           }
           return jsi::Value::undefined();
         });
@@ -937,9 +911,7 @@ requireArguments(rt, "setIsJSResponder", 3, count);
             const jsi::Value&,
             const jsi::Value* arguments,
             size_t count) -> jsi::Value {
-#if LOOM_WORKER
           worker_->synchronize();
-#endif
           requireArguments(rt, "getRelativeLayoutMetrics", 2, count);
           auto ref = nodeRef(rt, arguments[0]);
           auto ancestorRef = nodeRef(rt, arguments[1]);
@@ -972,9 +944,7 @@ requireArguments(rt, "setIsJSResponder", 3, count);
             const jsi::Value&,
             const jsi::Value* arguments,
             size_t count) -> jsi::Value {
-#if LOOM_WORKER
           worker_->synchronize();
-#endif
           requireArguments(rt, "getBoundingClientRect", 2, count);
           auto ref = nodeRef(rt, arguments[0]);
           const bool includeTransform = arguments[1].getBool();
@@ -1004,9 +974,7 @@ requireArguments(rt, "setIsJSResponder", 3, count);
             const jsi::Value&,
             const jsi::Value* arguments,
             size_t count) -> jsi::Value {
-#if LOOM_WORKER
           worker_->synchronize();
-#endif
           requireArguments(rt, "measureInstance", 1, count);
           auto ref = nodeRef(rt, arguments[0]);
 
@@ -1034,9 +1002,7 @@ requireArguments(rt, "setIsJSResponder", 3, count);
             const jsi::Value&,
             const jsi::Value* arguments,
             size_t count) -> jsi::Value {
-#if LOOM_WORKER
           worker_->synchronize();
-#endif
           requireArguments(rt, "compareDocumentPosition", 2, count);
           auto ref = nodeRef(rt, arguments[0]);
           auto otherRef = nodeRef(rt, arguments[1]);
@@ -1064,9 +1030,7 @@ requireArguments(rt, "setIsJSResponder", 3, count);
             const jsi::Value&,
             const jsi::Value* arguments,
             size_t count) -> jsi::Value {
-#if LOOM_WORKER
           worker_->synchronize();
-#endif
           requireArguments(rt, "findNodeAtPoint", 4, count);
           auto ref = nodeRef(rt, arguments[0]);
           auto callback = arguments[3].getObject(rt).getFunction(rt);

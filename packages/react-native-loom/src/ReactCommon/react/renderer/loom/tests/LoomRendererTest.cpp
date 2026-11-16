@@ -25,6 +25,7 @@
 #include <react/renderer/core/EventDispatcher.h>
 #include <react/renderer/uimanager/UIManager.h>
 #include "LoomTestTraits.h"
+#include <react/renderer/loom/binding/LoomApiInternal.h>
 #include "TestUIManagerDelegate.h"
 
 #include <react/featureflags/ReactNativeFeatureFlags.h>
@@ -2596,7 +2597,9 @@ struct LoomBindingTestAccess {
       SurfaceId surfaceId,
       const Binding::CommitSelection& selection,
       bool compact) {
-    Binding::reconcileSelectedDrafts(renderer, surfaceId, selection, compact);
+    // No library listens in these tests: a private API instance receives the commit notifications.
+    static loom::internal::Instance api;
+    Binding::reconcileSelectedDrafts(renderer, surfaceId, selection, compact, api);
   }
 };
 

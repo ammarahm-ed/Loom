@@ -80,25 +80,15 @@ void installLoomFabricBridge() {
 }
 
 void loomRecordAnimationProps(Tag tag, folly::dynamic props, bool viewApplied) {
-#if LOOM_WORKER
   LoomBinding::recordAnimationProps(tag, std::move(props), viewApplied);
-#else
-  (void)tag;
-  (void)props;
-  (void)viewApplied;
-#endif
 }
 
 void loomFlushAnimationFrames() {
-#if LOOM_WORKER
   LoomBinding::flushAnimationFrames();
-#endif
 }
 
 void LoomBinding::synchronizeForFabricRead() {
-#if LOOM_WORKER
   worker_->synchronize();
-#endif
 }
 
 ShadowNodeFamily::Shared LoomBinding::fabricFamilyLocked(
@@ -110,13 +100,9 @@ ShadowNodeFamily::Shared LoomBinding::fabricFamilyLocked(
   hasFabricFamilies_.store(true, std::memory_order_relaxed);
   // Released families are destroyed here when this runs on the JS thread (see
   // header); Reanimated also calls in from the UI thread, which must not.
-#if LOOM_WORKER
   if (LoomWorker::kJavaScriptOnUIThread || !worker_->onUIThread()) {
     releasedFabricFamilies_.clear();
   }
-#else
-  releasedFabricFamilies_.clear();
-#endif
   auto& entry = fabricFamilies_[surfaceId][tag];
   if (entry.family != nullptr && entry.identity == identity &&
       &entry.family->getComponentDescriptor() == &descriptor) {
@@ -356,37 +342,38 @@ std::optional<LayoutMetrics> LoomBinding::relativeLayoutMetrics(
 
 bool LoomBinding::apiRead(
     SurfaceId surfaceId,
+    bool synced,
     const std::function<void(const LoomRenderer&, const SurfaceConstraints&)>&
         read) {
-  return withSurfaceRenderer(
-      surfaceId,
-      [&](LoomBinding& binding,
-          const std::shared_ptr<LoomRenderer>& liveRenderer) {
-        binding.synchronizeForFabricRead();
-        read(*liveRenderer, binding.constraintsFor(surfaceId));
-      });
+  auto liveRenderer = findRenderer(surfaceId);
+  if (liveRenderer == nullptr) {
+    return false;
+  }
+  const auto body = [&] {
+    read(*liveRenderer, constraintsFor(surfaceId));
+  };
+  return synced ? worker_->readSynced(body) : worker_->readLatest(body);
 }
 
 void LoomBinding::apiUpdateProps(
     SurfaceId surfaceId,
     Tag tag,
     folly::dynamic props) {
-  withSurfaceRenderer(
-      surfaceId,
-      [&](LoomBinding& binding,
-          const std::shared_ptr<LoomRenderer>& liveRenderer) {
-        binding.synchronizeForFabricRead();
-        if (!liveRenderer->exists(tag)) {
-          return;
-        }
-#if LOOM_WORKER
-        auto token = binding.tokenFor(surfaceId);
-        binding.stageNativeProps(
-            tag, liveRenderer->identityOf(tag), token, std::move(props));
-#else
-        liveRenderer->setNativeProps(tag, props);
-#endif
-      });
+  auto liveRenderer = findRenderer(surfaceId);
+  if (liveRenderer == nullptr) {
+    return;
+  }
+  // Staging needs the node's identity. Waits at most for a compute in progress, never for the UI.
+  std::optional<uint64_t> identity;
+  worker_->readBetweenComputes([&] {
+    if (liveRenderer->exists(tag)) {
+      identity = liveRenderer->identityOf(tag);
+    }
+  });
+  if (!identity.has_value()) {
+    return;
+  }
+  stageNativeProps(tag, *identity, tokenFor(surfaceId), std::move(props));
 }
 
 std::optional<ShadowTreeCommitStatus> LoomBinding::commitOnDemand(
@@ -533,16 +520,10 @@ std::optional<ShadowTreeCommitStatus> LoomBinding::commitOnDemandImpl(
     return std::nullopt;
   }
 
-#if LOOM_WORKER
   auto token = tokenFor(surfaceId);
   for (auto& [tag, props] : patches) {
     stageNativeProps(tag, liveRenderer.identityOf(tag), token, std::move(props));
   }
-#else
-  for (auto& [tag, props] : patches) {
-    liveRenderer.setNativeProps(tag, props);
-  }
-#endif
   return ShadowTreeCommitStatus::Succeeded;
 }
 

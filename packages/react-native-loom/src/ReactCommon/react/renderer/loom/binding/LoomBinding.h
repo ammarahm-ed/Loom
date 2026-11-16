@@ -30,6 +30,10 @@
 #include <react/renderer/loom/host/LoomHost.h>
 #include <react/renderer/loom/core/LoomRenderer.h>
 
+namespace facebook::react::loom::internal {
+struct Instance;
+} // namespace facebook::react::loom::internal
+
 namespace facebook::react {
 
 /**
@@ -183,17 +187,33 @@ class LoomBinding final : public UIManagerBinding {
       const ShadowTreeCommitTransaction& transaction);
 
   // ---- Support for the library API (react/loom/Loom.h, implemented in LoomApi.cpp) ----------------
-  /** Calls `visit` for the id of every running Loom surface. */
-  static void apiForEachSurface(const std::function<void(SurfaceId)>& visit);
+  // Members, not statics: a `loom::Runtime` addresses one React instance, whose binding this is.
+
+  /** This instance's library-API state (listeners, the handle `loom::Runtime` holds). Never null. */
+  const std::shared_ptr<loom::internal::Instance>& apiInstance() const {
+    return apiInstance_;
+  }
+  /** Calls `visit` for the id of every running surface of this binding. */
+  void apiForEachSurface(const std::function<void(SurfaceId)>& visit);
+  /** The surface of this binding with a mounted node `tag`. Never blocks. */
+  std::optional<SurfaceId> apiSurfaceOf(Tag tag);
   /**
-   * Runs `read` with `surfaceId`'s live renderer and constraints, after the commits already submitted
-   * were applied (no wait on the UI thread). False when no binding owns the surface.
+   * Runs `read` with `surfaceId`'s renderer and constraints. `synced`: after the commits already
+   * submitted were applied (`LoomWorker::readSynced`); otherwise as of the latest computed commit
+   * without waiting (`LoomWorker::readLatest`). False when `read` was not run.
    */
-  static bool apiRead(
+  bool apiRead(
       SurfaceId surfaceId,
+      bool synced,
       const std::function<void(const LoomRenderer&, const SurfaceConstraints&)>& read);
   /** A JS-lane props write of a node of the surface (any thread). */
-  static void apiUpdateProps(SurfaceId surfaceId, Tag tag, folly::dynamic props);
+  void apiUpdateProps(SurfaceId surfaceId, Tag tag, folly::dynamic props);
+  /** A native-lane (`viewApplied` false) or animation-lane write of a node of the surface. */
+  void apiRecordNativeProps(SurfaceId surfaceId, Tag tag, folly::dynamic props, bool knownPaint, bool viewApplied);
+  /** A native state update for a node of the surface. */
+  bool apiUpdateState(SurfaceId surfaceId, const StateUpdate& update) {
+    return submitComponentState(surfaceId, update);
+  }
 
   static void shutdownWorkerForUIManager(UIManager& manager);
   static void synchronizeWorkerForUIManager(UIManager& manager);
@@ -393,10 +413,11 @@ class LoomBinding final : public UIManagerBinding {
   };
 #endif
 
-#if LOOM_WORKER
   struct WorkerCommit {
     SurfaceId surfaceId;
     std::shared_ptr<SurfaceToken> token;
+    /** The instance's library-API state: commit listeners run from the worker's reconcile. */
+    std::shared_ptr<loom::internal::Instance> api;
     std::vector<std::shared_ptr<DraftNode>> roots;
     InstanceHandle::Shared documentHandle;
     /** Made by requestAnimationFrame work (AnimationFrameWork). */
@@ -471,7 +492,6 @@ class LoomBinding final : public UIManagerBinding {
   LoomTextServices* text_{nullptr};
   bool canMeasureTextOnWorker();
   void refreshCanMeasureTextOnWorker();
-#if LOOM_WORKER
   /**
    * In-place updates: a node whose children did not change but whose props (or
    * raw text) did keeps its React instance, so React clones none of its
@@ -487,8 +507,6 @@ class LoomBinding final : public UIManagerBinding {
   };
   std::unordered_map<SurfaceId, std::vector<PendingPatch>> pendingPatches_;
   void flushPendingPatches(SurfaceId surfaceId);
-#endif
-#if LOOM_WORKER
   /**
    * The platform's UI-thread executor, resolved on first use and cached. Null
    * until the UI manager's delegate is installed.
@@ -496,7 +514,6 @@ class LoomBinding final : public UIManagerBinding {
   std::function<void(std::function<void()>)> platformUIExecutor();
   std::mutex uiExecutorMutex_;
   std::function<void(std::function<void()>)> uiExecutor_;
-#endif
   /**
    * Runs `read` on the UI thread and returns its answer. On the UI thread it is
    * a direct call; elsewhere the caller waits for the UI thread (JS to UI only),
@@ -569,6 +586,21 @@ class LoomBinding final : public UIManagerBinding {
    */
   std::unordered_map<SurfaceId, TagMap<NativePropsOverlay>>
       nativePropsOverlays_;
+  /**
+   * The tags each surface has mounted: the per-surface index of `mountedTokens_`
+   * (which stays keyed by tag, for the platform's tag-only lookups). Commits and
+   * surface release walk only their own surface through it, never every mounted
+   * tag of every surface. Maintained only by `setMountedLocked` and
+   * `eraseMountedLocked`.
+   */
+  std::unordered_map<SurfaceId, TagMap<bool>> mountedTagsBySurface_;
+  /** Records `tag` as mounted with `identity` by `token`'s surface. `stateMutex_` held. */
+  void setMountedLocked(Tag tag, uint64_t identity, const std::shared_ptr<SurfaceToken>& token);
+  /**
+   * Forgets a mounted `tag` and everything kept for it (its native-props overlay).
+   * `stateMutex_` held.
+   */
+  void eraseMountedLocked(Tag tag);
 
   // ---------------------------------------------------------------------
   // Animation fast lane.
@@ -665,9 +697,28 @@ class LoomBinding final : public UIManagerBinding {
       folly::dynamic props,
       bool knownPaint,
       bool viewApplied = true);
+  /**
+   * One binding's part of `recordNativePropsImpl`: true when this binding owns a mounted node `tag`
+   * (of `surfaceId`, when given) and took the write.
+   */
+  bool recordNativePropsHere(
+      std::optional<SurfaceId> surfaceId,
+      Tag tag,
+      folly::dynamic& props,
+      bool knownPaint,
+      bool viewApplied);
 
   /** Flushes one surface's collected frame (design §5.2). */
   void flushAnimationFrame(SurfaceId surfaceId);
+  /** Flushes every surface's collected frame of this binding. */
+  void flushOwnAnimationFrames();
+  /**
+   * Makes sure collected animation writes reach the screen even when no platform frame hook flushes
+   * them (iOS has none; Android's choreographer flush makes this a no-op there): the first write
+   * after a flush posts one flush to the UI thread. `stateMutex_` may be held.
+   */
+  void scheduleAnimationFlush();
+  std::atomic<bool> animationFlushPosted_{false};
 
   /** Queues or runs the frame as the surface's single animation job. */
   void deferAnimationFrame(
@@ -695,7 +746,6 @@ class LoomBinding final : public UIManagerBinding {
       bool synchronous,
       double micros,
       size_t nodes);
-#endif
   /**
    * Fabric families handed to libraries, per surface and tag. Held for as long
    * as the node is mounted, as a shadow tree holds its nodes' families:
@@ -837,7 +887,8 @@ class LoomBinding final : public UIManagerBinding {
       LoomRenderer& liveRenderer,
       SurfaceId surfaceId,
       const CommitSelection& selection,
-      bool compact);
+      bool compact,
+      loom::internal::Instance& api);
   bool isRawTextRef(const NodeRef& ref) const;
   std::shared_ptr<SurfaceToken> tokenFor(SurfaceId surfaceId);
   SurfaceConstraints constraintsFor(SurfaceId surfaceId) const;
@@ -902,7 +953,9 @@ class LoomBinding final : public UIManagerBinding {
   std::shared_ptr<LoomRenderer> findRenderer(SurfaceId surfaceId) const;
   std::unordered_map<SurfaceId, std::shared_ptr<LoomRenderer>> renderers_;
   std::unordered_map<SurfaceId, std::shared_ptr<SurfaceToken>> surfaceTokens_;
-  std::unordered_map<SurfaceId, uint64_t> nextDraftIdentity_;
+  // One counter for the binding, not one per surface: identities stay unique across a surface
+  // restart and nothing per surface is left behind when it is released.
+  uint64_t nextDraftIdentity_{0};
   std::unordered_map<SurfaceId, uint64_t> surfaceGenerations_;
 #if LOOM_PROFILE
   std::unordered_map<SurfaceId, uint64_t> profileCommitGeneration_;
@@ -921,6 +974,16 @@ class LoomBinding final : public UIManagerBinding {
   std::unordered_map<SurfaceId, InstanceHandle::Shared>
       documentInstanceHandles_;
   std::shared_ptr<Lifetime> lifetime_;
+  std::shared_ptr<loom::internal::Instance> apiInstance_;
+};
+
+/**
+ * Lets static callbacks and library handles reach a binding safely: they hold the gate shared while
+ * they use `binding`; the destructor takes it exclusively and nulls `binding`.
+ */
+struct LoomBinding::Lifetime {
+  std::shared_mutex gate;
+  LoomBinding* binding{nullptr};
 };
 
 } // namespace facebook::react

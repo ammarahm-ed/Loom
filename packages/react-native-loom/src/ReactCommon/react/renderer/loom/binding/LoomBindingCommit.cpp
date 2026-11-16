@@ -13,7 +13,6 @@
 #if LOOM_RENDERER
 namespace facebook::react {
 
-#if LOOM_WORKER
 void LoomBinding::submitWorkerOperation(
     std::shared_ptr<SurfaceToken> token,
     LoomWorker::Task compute,
@@ -100,6 +99,7 @@ void LoomBinding::publishWorkerCommit(
   auto packet = std::make_unique<WorkerCommit>();
   packet->surfaceId = surfaceId;
   packet->token = tokenFor(surfaceId);
+  packet->api = apiInstance_;
   packet->animationFrame = AnimationFrameWork::active();
   // Draft data is built once by the host. Freeze each version; appendChild
   // thereafter creates a new version and copies only its changed child list.
@@ -330,8 +330,7 @@ void LoomBinding::applyPublishedIdentities(
       const auto mountedToken = mountedTokens_.find(tag);
       if (mountedToken != mountedTokens_.end() &&
           mountedToken->second->surfaceId == token->surfaceId) {
-        mountedTokens_.erase(mountedToken);
-        mountedIdentities_.erase(tag);
+        eraseMountedLocked(tag);
       }
     }
   }
@@ -341,14 +340,20 @@ void LoomBinding::applyPublishedIdentities(
   // Erase only what this commit no longer contains. This pass is what discovers
   // removals, and it stays correct because `identities` is the full live set
   // rather than the freeze walk's output.
-  for (auto it = mountedTokens_.begin();
-       removedTags == nullptr && it != mountedTokens_.end();) {
-    if (it->second->surfaceId == token->surfaceId &&
-        identities.find(it->first) == identities.end()) {
-      mountedIdentities_.erase(it->first);
-      it = mountedTokens_.erase(it);
-    } else {
-      ++it;
+  // Walks this surface's own mounted tags only (a full commit already walked its
+  // whole tree to build `identities`), never every mounted tag of every surface.
+  if (removedTags == nullptr) {
+    if (auto mounted = mountedTagsBySurface_.find(token->surfaceId);
+        mounted != mountedTagsBySurface_.end()) {
+      std::vector<Tag> gone;
+      for (const auto& entry : mounted->second) {
+        if (identities.find(entry.first) == identities.end()) {
+          gone.push_back(entry.first);
+        }
+      }
+      for (const auto tag : gone) {
+        eraseMountedLocked(tag);
+      }
     }
   }
   // [LoomMemory] These versions are mounted now (or gone), so they no longer
@@ -383,8 +388,7 @@ void LoomBinding::applyPublishedIdentities(
         continue;
       }
     }
-    mountedIdentities_[tag] = identity;
-    mountedTokens_[tag] = token;
+    setMountedLocked(tag, identity, token);
   }
   // The batch has been applied, so the live renderer now holds these versions and a
   // later reconcile may treat them as an untouched subtree. Marking has to happen
@@ -474,7 +478,8 @@ void LoomBinding::reconcileWorkerCommit(
 
     // The worker path leaves the drafts to the host, which still owns them while
     // this result is in flight, so it does not compact them.
-    reconcileSelectedDrafts(liveRenderer, surfaceId, commitSelection, false);
+    reconcileSelectedDrafts(
+        liveRenderer, surfaceId, commitSelection, false, *packet.api);
     if (packet.documentHandle)
       liveRenderer.setInstanceHandle(surfaceId, packet.documentHandle);
   } catch (const std::exception& error) {
@@ -485,7 +490,6 @@ void LoomBinding::reconcileWorkerCommit(
     liveRenderer.abortCommit("unknown exception in Loom renderer worker");
   }
 }
-#endif
 
 LoomBinding::CommitSelection
 LoomBinding::selectCommitDrafts(
@@ -690,7 +694,8 @@ void LoomBinding::reconcileSelectedDrafts(
     LoomRenderer& liveRenderer,
     SurfaceId surfaceId,
     const CommitSelection& selection,
-    bool compact) {
+    bool compact,
+    loom::internal::Instance& api) {
   static const auto emptyDraftChildren =
       std::make_shared<std::vector<std::shared_ptr<DraftNode>>>();
   const auto& selected = selection.selected;
@@ -790,13 +795,14 @@ void LoomBinding::reconcileSelectedDrafts(
   }
 
   liveRenderer.completeRoot(surfaceId, selection.rootChildren);
-  if (loom::internal::wantsLayoutCommitted()) {
+  if (loom::internal::wantsLayoutCommitted(api)) {
     std::vector<Tag> changed;
     changed.reserve(selected.size());
     for (const auto& entry : selected) {
       changed.push_back(entry.draft->tag);
     }
-    loom::internal::notifyLayoutCommitted(surfaceId, std::move(changed));
+    loom::internal::notifyLayoutCommitted(
+        api, surfaceId, std::move(changed));
   }
 }
 
@@ -950,7 +956,8 @@ void LoomBinding::publishRootCommit(
 
     // This path owns the renderer outright, so it compacts the drafts it
     // commits: the live node is now the source of truth for every applied patch.
-    reconcileSelectedDrafts(liveRenderer, surfaceId, commitSelection, true);
+    reconcileSelectedDrafts(
+        liveRenderer, surfaceId, commitSelection, true, *apiInstance_);
     // This path keeps no mounted-identity delta; drop the record.
     (void)liveRenderer.takeDroppedTags();
 #if LOOM_PROFILE
@@ -1042,7 +1049,6 @@ void LoomBinding::drainPendingRootCommits(SurfaceId surfaceId) {
   drainingRootCommits_.erase(surfaceId);
 }
 
-#if LOOM_WORKER
 void LoomBinding::flushPendingPatches(SurfaceId surfaceId) {
   auto pending = pendingPatches_.find(surfaceId);
   if (pending == pendingPatches_.end()) {
@@ -1098,7 +1104,6 @@ void LoomBinding::flushPendingPatches(SurfaceId surfaceId) {
   job->applied = [] {};
   submitWorkerJob(std::move(token), std::move(job));
 }
-#endif
 
 } // namespace facebook::react
 #endif // LOOM_RENDERER
