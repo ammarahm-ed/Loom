@@ -167,13 +167,18 @@ jobs:
           done
       - name: Prepare the React Native build tree
         run: tools/prebuild/prepare.sh
-      - name: Install the NDK React Native pins
-        # One source of truth: React Native's libs.versions.toml (android.sh reads the same file).
+      - name: Install the NDK and CMake React Native pins
+        # One source of truth each: the NDK from React Native's libs.versions.toml (android.sh reads the
+        # same file), CMake from ReactAndroid/build.gradle.kts (its CMAKE_VERSION default). The runner's
+        # SDK carries neither version.
         run: |
-          NDK=$(sed -n 's/^ndkVersion = "\(.*\)"/\1/p' "$LOOM_PREBUILD_DIR/rn-src/packages/react-native/gradle/libs.versions.toml")
+          RN="$LOOM_PREBUILD_DIR/rn-src/packages/react-native"
+          NDK=$(sed -n 's/^ndkVersion = "\(.*\)"/\1/p' "$RN/gradle/libs.versions.toml")
+          CMAKE=$(sed -n 's/.*getenv("CMAKE_VERSION") ?: "\([0-9.]*\)".*/\1/p' "$RN/ReactAndroid/build.gradle.kts")
           [ -n "$NDK" ] || { echo "::error::no ndkVersion in libs.versions.toml"; exit 1; }
-          echo "NDK $NDK"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" >/dev/null
+          [ -n "$CMAKE" ] || { echo "::error::no CMAKE_VERSION default in ReactAndroid/build.gradle.kts"; exit 1; }
+          echo "NDK $NDK, CMake $CMAKE"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" "cmake;$CMAKE" >/dev/null
           df -h / /mnt
       - name: Build, publish locally and verify
         run: tools/prebuild/android.sh
