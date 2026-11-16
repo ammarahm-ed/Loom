@@ -112,7 +112,9 @@ if (!loomFromSource && !loomRendererOn) {
 } else if (!loomFromSource) {
   // Loom's prebuilt react-android (debug, debugOptimized and release come with the one artifact).
   // Hermes and everything else keep React Native's coordinates: nothing but Loom's core is republished.
-  def loomVersion = new groovy.json.JsonSlurper().parse(new File(loomReactNativeDir, "package.json")).version
+  // Loom's prebuilts carry Loom's own version (package.json of react-native-loom, recorded by materialize),
+  // not React Native's: only 0.<minor> is shared.
+  def loomVersion = new groovy.json.JsonSlurper().parse(new File(loomReactNativeDir, ".loom-stamp.json")).loomVersion
   def loomArtifact = loomJs == "main" ? "react-android-jsmain" : "react-android"
   // loom.releaseProfiling: the release-profiling build (DevTools and tracing kept) replaces the release
   // variant; it is published as its own artifact with that one variant, so only release configurations use it.

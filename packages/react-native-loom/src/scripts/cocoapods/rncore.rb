@@ -90,7 +90,7 @@ class ReactNativeCoreUtils
             next false unless url.start_with?("file://")
             source = URI.decode_www_form_component(url.sub(/\Afile:\/\//, ""))
             next false unless File.exist?(source)
-            copy = File.join(artifacts_dir(), "reactnative-core-#{@@react_native_version}-#{local_configuration_name(configuration)}.tar.gz")
+            copy = File.join(artifacts_dir(), "reactnative-core-#{loom_version(@@react_native_version)}-#{local_configuration_name(configuration)}.tar.gz")
             !(File.exist?(copy) && FileUtils.compare_file(copy, source))
         end
         return unless changed
@@ -378,6 +378,14 @@ class ReactNativeCoreUtils
         PLIST
     end
 
+    # Loom: prebuilts are published under Loom's own version (react-native-loom's package.json, recorded
+    # by `loom materialize` in .loom-stamp.json), not React Native's: only 0.<minor> is shared.
+    def self.loom_version(fallback)
+        stamp = File.join(@@react_native_path.to_s, ".loom-stamp.json")
+        return fallback unless File.exist?(stamp)
+        JSON.parse(File.read(stamp))["loomVersion"] || fallback
+    end
+
     def self.stable_tarball_url(version, build_type, dsyms = false)
         candidates = stable_tarball_urls(version, build_type, dsyms)
         return candidates.find { |url| artifact_exists(url) } || candidates.first
@@ -392,6 +400,7 @@ class ReactNativeCoreUtils
     #   RCT_LOOM_JS_IOS=main        -> reactnative-core-jsmain-{debug,release}
     # LOOM_MAVEN_REPOSITORY overrides the repository (default: Maven Central), e.g. a local mirror.
     def self.stable_tarball_urls(version, build_type, dsyms = false)
+        version = loom_version(version)
         group = "io/github/ammarahm-ed"
         flavor = (ENV["RCT_LOOM_JS_IOS"] || "background") == "background" ? "" : "jsmain-"
         repo = ENV["LOOM_MAVEN_REPOSITORY"]
