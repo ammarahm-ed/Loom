@@ -17,7 +17,6 @@ import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.UiThreadUtil
 import com.facebook.react.bridge.ReadableNativeMap
 import com.facebook.react.bridge.WritableMap
-import com.facebook.react.common.annotations.UnstableReactNativeAPI
 import com.facebook.react.common.mapbuffer.ReadableMapBuffer
 import com.facebook.react.uimanager.StateWrapper
 import com.facebook.react.uimanager.ReferenceStateWrapper
@@ -112,9 +111,6 @@ internal class LoomViewApplier(
 
     override fun updateState(map: WritableMap) = Unit
 
-    @OptIn(UnstableReactNativeAPI::class)
-    override fun updateState(map: WritableMap, updateMode: StateWrapper.UpdateMode) = Unit
-
     override fun destroyState() = Unit
   }
 
@@ -124,8 +120,6 @@ internal class LoomViewApplier(
     override val stateDataMapBuffer: ReadableMapBuffer? = null
     override val stateData: ReadableNativeMap? = null
     override fun updateState(map: WritableMap) = Unit
-    @OptIn(UnstableReactNativeAPI::class)
-    override fun updateState(map: WritableMap, updateMode: StateWrapper.UpdateMode) = Unit
     override fun destroyState() = Unit
   }
 

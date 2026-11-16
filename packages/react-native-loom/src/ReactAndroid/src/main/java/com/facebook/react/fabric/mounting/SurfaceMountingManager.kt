@@ -736,12 +736,10 @@ internal constructor(
       // A pure translation decomposes to exactly these values (BaseViewManager.setTransformProperty).
       view.translationX =
           PixelUtil.toPixelFromDIP(
-              com.facebook.react.uimanager.internal.FloatPropertySanitizer
-                  .sanitizeFloatPropertyValue(translateX.toFloat()))
+              loomSanitizeFloat(translateX.toFloat()))
       view.translationY =
           PixelUtil.toPixelFromDIP(
-              com.facebook.react.uimanager.internal.FloatPropertySanitizer
-                  .sanitizeFloatPropertyValue(translateY.toFloat()))
+              loomSanitizeFloat(translateY.toFloat()))
       view.rotation = 0f
       view.rotationX = 0f
       view.rotationY = 0f
@@ -755,7 +753,7 @@ internal constructor(
           com.facebook.react.uimanager.DisplayMetricsHolder.getScreenDisplayMetrics().density
       val cameraDistance = -1f / 0.00078125f
       val targetCameraDistance =
-          com.facebook.react.uimanager.internal.FloatPropertySanitizer.sanitizeFloatPropertyValue(
+          loomSanitizeFloat(
               density * density * cameraDistance * LOOM_CAMERA_DISTANCE_NORMALIZATION)
       if (Math.abs(view.cameraDistance - targetCameraDistance) >
           Math.abs(targetCameraDistance) * 1e-4f) {
@@ -1492,6 +1490,13 @@ internal constructor(
   private companion object {
     /** BaseViewManager.CAMERA_DISTANCE_NORMALIZATION_MULTIPLIER. */
     private val LOOM_CAMERA_DISTANCE_NORMALIZATION: Float = Math.sqrt(5.0).toFloat()
+
+    /**
+     * BaseViewManager.sanitizeFloatPropertyValue (private there in React Native 0.87): View
+     * setters throw on NaN and infinities, so NaN becomes 0 and the rest is clamped.
+     */
+    private fun loomSanitizeFloat(value: Float): Float =
+        if (value.isNaN()) 0f else value.coerceIn(-Float.MAX_VALUE, Float.MAX_VALUE)
 
     private val TAG: String = SurfaceMountingManager::class.java.simpleName
 

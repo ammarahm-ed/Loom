@@ -189,6 +189,13 @@
     },
     {
       "type": "patch",
+      "file": "ReactAndroid/hermes-engine/build.gradle.kts",
+      "area": "build",
+      "layer": "android",
+      "baseHash": "031fb598468cf9c001adc9539651d932552d1073cfbdca85ebef449c7207341c"
+    },
+    {
+      "type": "patch",
       "file": "ReactAndroid/cmake-utils/ReactNative-application.cmake",
       "area": "build",
       "layer": "android",

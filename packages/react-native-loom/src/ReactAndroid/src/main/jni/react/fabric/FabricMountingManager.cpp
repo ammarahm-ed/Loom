@@ -547,7 +547,8 @@ void FabricMountingManager::directUpdateState(
     pendingDirectStates_[surfaceId].push_back(
         {tag, state->getMapBuffer(), nullptr, nullptr});
   } else {
-    auto javaStateWrapper = StateWrapperImpl::newObjectCxxArgs(state);
+    auto javaStateWrapper = StateWrapperImpl::newObjectJavaArgs();
+    cthis(javaStateWrapper)->setState(state);
     pendingDirectStates_[surfaceId].push_back(
         {tag, std::nullopt, jni::make_global(javaStateWrapper), nullptr});
   }
@@ -560,7 +561,8 @@ void FabricMountingManager::directUpdateComponentState(
   // The component's own state (made by its ComponentDescriptor, with a live
   // family): the view manager's StateWrapper.updateState reaches the Loom
   // renderer through the state pipe, as it reaches the shadow tree in Fabric.
-  auto javaStateWrapper = StateWrapperImpl::newObjectCxxArgs(state);
+  auto javaStateWrapper = StateWrapperImpl::newObjectJavaArgs();
+  cthis(javaStateWrapper)->setState(state);
   std::lock_guard lock(allocatedViewsMutex_);
   pendingDirectStates_[surfaceId].push_back(
       {tag, std::nullopt, jni::make_global(javaStateWrapper), nullptr});
@@ -1197,8 +1199,7 @@ inline void writeUpdateOverflowInsetMountItem(
 #if LOOM_RENDERER
 // Loom mounts through its renderer (directApplyBatch); no shadow-tree transaction ever reaches here.
 void FabricMountingManager::executeMount(
-    const MountingTransaction& /*transaction*/,
-    bool /*synchronous*/) {}
+    const MountingTransaction& /*transaction*/) {}
 #else
 void FabricMountingManager::executeMount(
     const MountingTransaction& transaction) {
