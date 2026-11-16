@@ -9,7 +9,7 @@ const {materialize} = require('../lib/materialize');
 const {validate} = require('../lib/validate');
 const {upgrade} = require('../lib/upgrade');
 const {importFork} = require('../lib/importFork');
-const {status, diff} = require('../lib/inspect');
+const {status, diff, divergence} = require('../lib/inspect');
 const {overlay} = require('../lib/overlay');
 const {findInstalledReactNative, fetchUpstream} = require('../lib/upstream');
 
@@ -20,11 +20,13 @@ App commands (run from the app root):
   validate                              check overrides against installed react-native
 
 Maintainer commands (run inside the react-native-loom repo):
-  status                                overrides by area, lines carried
+  status [--files]                      overrides by area, lines carried
+                                        (--files: per-file divergence from upstream)
   diff [path-substring...]              unified diff of patches vs upstream
   add <rn-relative-path> [--area a]     start overriding an upstream file
   add --platform <rn-relative-path>     register a new Loom-only file
-  upgrade --to <version>                3-way merge overrides onto a new RN
+  upgrade --to <version> [--dry-run]    3-way merge overrides onto a new RN
+                                        (--dry-run: report only, write nothing)
   overlay --monorepo <dir> [--no-rn-tester]
                                         write overrides (+ Android tests, rn-tester
                                         benchmarks) into a facebook/react-native checkout
@@ -83,7 +85,8 @@ function main() {
       break;
     }
     case 'status':
-      status({upstreamDir: upstreamFor(args)});
+      if (args.files) divergence({upstreamDir: upstreamFor(args)});
+      else status({upstreamDir: upstreamFor(args)});
       break;
     case 'diff':
       diff({upstreamDir: upstreamFor(args), files: args._});
@@ -111,7 +114,7 @@ function main() {
     }
     case 'upgrade':
       if (!args.to) throw new Error('upgrade: --to <version> required');
-      if (upgrade({to: args.to}).conflicts.length) process.exit(2);
+      if (upgrade({to: args.to, dryRun: !!args['dry-run']}).conflicts.length) process.exit(2);
       break;
     case 'overlay':
       if (!args.monorepo) throw new Error('overlay: --monorepo <dir> required');

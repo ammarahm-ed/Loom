@@ -21,14 +21,19 @@ module Loom
   #
   #   loom.renderer          true | false       Loom, or plain React Native (Fabric)            (default: true)
   #   loom.js                main | background  where JavaScript runs                          (default: background)
-  #   loom.worker            true | false       Loom's worker thread (prebuilt: always true)   (default: true)
   #   loom.compileFromSource true | false       build Loom from source instead of the prebuilt (default: false)
   #   loom.releaseProfiling  true | false       Release with DevTools and tracing kept         (default: false)
   #
-  # Set them in ios/Podfile.properties.json (`{"loom.renderer": "true", ...}`) or, for CI, in the
-  # environment with env(1): `env loom.renderer=true pod install`. The environment wins.
+  # Set them in ios/Podfile.properties.json (`{"loom.renderer": "true", ...}`) or in the environment.
+  # The environment wins. Shells cannot `export` a name with a dot, so each switch also has an
+  # exportable name: loom.renderer -> LOOM_RENDERER, loom.compileFromSource -> LOOM_COMPILE_FROM_SOURCE
+  # (`export LOOM_JS=main`); `env loom.js=main pod install` works too.
+  def self.env_name(key)
+    key.sub(/\Aloom\./, 'LOOM_').gsub(/([a-z])([A-Z])/, '\\1_\\2').upcase
+  end
+
   def self.setting(ios_dir, key)
-    return ENV[key] if ENV[key] && !ENV[key].empty?
+    [key, env_name(key)].each { |name| return ENV[name] if ENV[name] && !ENV[name].empty? }
     file = File.join(ios_dir, 'Podfile.properties.json')
     return nil unless File.exist?(file)
     value = JSON.parse(File.read(file))[key]
@@ -49,19 +54,15 @@ module Loom
     compile = boolean(ios_dir, 'loom.compileFromSource', false)
     js = setting(ios_dir, 'loom.js') || 'background'
     raise "Loom: loom.js must be main or background, got '#{js}'" unless %w[main background].include?(js)
-    worker = boolean(ios_dir, 'loom.worker', true)
+    if setting(ios_dir, 'loom.worker')
+      Pod::UI.warn 'Loom: loom.worker is no longer a switch (the worker is always part of the Loom renderer); remove it.' if defined?(Pod::UI)
+    end
 
     # The internal variables are derived, never set by apps.
-    %w[RCT_LOOM_RENDERER_IOS RCT_LOOM_WORKER_IOS RCT_LOOM_JS_IOS RCT_LOOM_PROFILING_IOS].each { |k| ENV.delete(k) }
+    %w[RCT_LOOM_RENDERER_IOS RCT_LOOM_JS_IOS RCT_LOOM_PROFILING_IOS].each { |k| ENV.delete(k) }
     if renderer
       ENV['RCT_LOOM_RENDERER_IOS'] = '1'
       ENV['RCT_LOOM_JS_IOS'] = js
-      # A prebuilt has the worker built in; loom.worker=false only exists in a source build.
-      if !compile && !worker
-        Pod::UI.warn 'Loom: loom.worker=false only takes effect when compiling from source; the prebuilt has the worker built in. Set loom.compileFromSource=true to build without it.' if defined?(Pod::UI)
-        worker = true
-      end
-      ENV['RCT_LOOM_WORKER_IOS'] = worker ? '1' : '0'
     end
 
     # Release with DevTools and tracing: the release-profiling core of the prebuilt, or the debugger

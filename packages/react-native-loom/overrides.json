@@ -1,7 +1,11 @@
 {
   "upstream": {
     "package": "react-native",
-    "version": "0.89.0-rc.0"
+    "minor": "0.89",
+    "version": "0.89.0-rc.0",
+    "supported": [
+      "0.89.0-rc.0"
+    ]
   },
   "overrides": [
     {

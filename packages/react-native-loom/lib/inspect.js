@@ -15,6 +15,32 @@ function lineCount(f) {
   return fs.readFileSync(f, 'utf8').split('\n').length;
 }
 
+/**
+ * Per-file divergence of every patch override: how much of the upstream file Loom changed. A file
+ * Loom rewrote most of costs a hand merge on every React Native upgrade; those are the candidates to
+ * turn into a small patch plus a Loom-only file or hook.
+ */
+function divergence({upstreamDir, log = console.log, limit = Infinity}) {
+  const manifest = loadManifest();
+  const rows = [];
+  for (const o of manifest.overrides) {
+    if (o.type !== 'patch') continue;
+    const up = path.join(upstreamDir, o.file);
+    if (!fs.existsSync(up)) continue;
+    const s = diffStat(up, overridePath(o));
+    const lines = lineCount(up);
+    rows.push({file: o.file, lines, add: s.add, del: s.del, pct: Math.round((100 * Math.max(s.add, s.del)) / Math.max(lines, 1))});
+  }
+  rows.sort((a, b) => b.add + b.del - (a.add + a.del));
+  log('changed%  upstream   +lines   -lines  file');
+  for (const r of rows.slice(0, limit)) {
+    log(`${String(r.pct).padStart(7)}% ${String(r.lines).padStart(9)} ${String(r.add).padStart(8)} ${String(r.del).padStart(8)}  ${r.file}`);
+  }
+  const heavy = rows.filter(r => r.pct >= 50).length;
+  log(`\n${rows.length} patches; ${heavy} change half or more of their upstream file.`);
+  return rows;
+}
+
 /** Summary of how much of RN we carry, grouped by area. */
 function status({upstreamDir, log = console.log}) {
   const manifest = loadManifest();
@@ -58,4 +84,4 @@ function diff({upstreamDir, files, log = console.log}) {
   }
 }
 
-module.exports = {status, diff};
+module.exports = {status, diff, divergence};

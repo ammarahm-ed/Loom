@@ -30,16 +30,34 @@ function cacheRoot() {
 function fetchUpstream(version, packageName = 'react-native') {
   const dest = path.join(cacheRoot(), `${packageName}-${version}`);
   const pkgDir = path.join(dest, 'package');
+  // Only a completed extraction is ever at `dest` (see the rename below), so this is never a
+  // half-extracted tree left by an interrupted run.
   if (fs.existsSync(path.join(pkgDir, 'package.json'))) return pkgDir;
-  fs.mkdirSync(dest, {recursive: true});
-  const out = execFileSync(
-    'npm',
-    ['pack', `${packageName}@${version}`, '--silent', '--pack-destination', dest],
-    {encoding: 'utf8'},
-  ).trim();
-  const tgz = path.join(dest, out.split('\n').pop());
-  execFileSync('tar', ['-xzf', tgz, '-C', dest]);
-  fs.rmSync(tgz);
+  fs.mkdirSync(cacheRoot(), {recursive: true});
+  const tmp = fs.mkdtempSync(path.join(cacheRoot(), `.${packageName}-${version}-`));
+  try {
+    // `npm pack` checks the tarball against the registry's integrity hash.
+    const out = execFileSync(
+      'npm',
+      ['pack', `${packageName}@${version}`, '--silent', '--pack-destination', tmp],
+      {encoding: 'utf8'},
+    ).trim();
+    const tgz = path.join(tmp, out.split('\n').pop());
+    execFileSync('tar', ['-xzf', tgz, '-C', tmp]);
+    fs.rmSync(tgz);
+    if (!fs.existsSync(path.join(tmp, 'package', 'package.json'))) {
+      throw new Error(`${packageName}@${version}: the tarball has no package/package.json`);
+    }
+    fs.rmSync(dest, {recursive: true, force: true});
+    try {
+      fs.renameSync(tmp, dest);
+    } catch (e) {
+      // Another process finished the same version first; theirs is complete too.
+      if (!fs.existsSync(path.join(pkgDir, 'package.json'))) throw e;
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
   return pkgDir;
 }
 

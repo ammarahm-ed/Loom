@@ -3,14 +3,14 @@
   "version": "0.89.0-rc.0",
   "description": "A faster renderer for React Native: replaces Fabric with its own renderer, maintained out of tree as overrides on top of the published react-native package.",
   "author": "Ammar Ahmed",
-  "homepage": "https://github.com/ammarahm-ed/loom#readme",
+  "homepage": "https://github.com/ammarahm-ed/Loom#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ammarahm-ed/loom.git",
+    "url": "git+https://github.com/ammarahm-ed/Loom.git",
     "directory": "packages/react-native-loom"
   },
   "bugs": {
-    "url": "https://github.com/ammarahm-ed/loom/issues"
+    "url": "https://github.com/ammarahm-ed/Loom/issues"
   },
   "keywords": [
     "react-native",
@@ -45,7 +45,7 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "react-native": "0.89.0-rc.0"
+    "react-native": ">=0.89.0-rc.0 <0.90.0"
   },
   "devDependencies": {
     "react-native": "0.89.0-rc.0"

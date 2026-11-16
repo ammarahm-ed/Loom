@@ -10,8 +10,18 @@ coming.
 ## Requirements
 
 - Node.js 20 or newer.
-- Your app's `react-native` must be exactly the version Loom targets (`0.89.0-rc.0`),
-  which is also the package's pinned peer dependency.
+- Your app's `react-native` must be the React Native minor of your Loom release: Loom 0.89.x runs on
+  React Native 0.89.x only (the peer dependency is `>=0.89.0-rc.0 <0.90.0`). Support for a new
+  React Native minor comes as a new Loom minor.
+  - A React Native patch release that Loom has not verified yet still works, with a warning, as
+    long as it did not change any file Loom replaces. If it did, `loom materialize` stops and asks
+    you to update Loom.
+  - Loom's own patch numbers are independent of React Native's: Loom 0.89.4 can run on React Native
+    0.89.1.
+- npm, Yarn (with `nodeLinker: node-modules`) or pnpm. Yarn Plug'n'Play is not supported, because
+  React Native's native builds need a `node_modules` tree.
+- If you patch `react-native` (patch-package, `pnpm patch`), patches to files Loom replaces have no
+  effect; `loom materialize` lists them as warnings.
 
 ## Install
 
@@ -34,7 +44,9 @@ apply(from = file("../node_modules/react-native-loom/integration/android/loom.se
 ```
 
 That runs `loom materialize` and, by default, replaces `react-android` / `react-native` with Loom's
-prebuilt `io.github.ammarahm-ed:react-android` (the repository comes from `LOOM_MAVEN_REPOSITORY`).
+prebuilt `io.github.ammarahm-ed:react-android` from Maven Central (`LOOM_MAVEN_REPOSITORY`
+replaces the repository, with a warning in the build log). The repository is added to
+`dependencyResolutionManagement`, so it works with any `repositoriesMode`.
 Hermes and everything else keep React Native's coordinates. With `loom.compileFromSource=true` it
 includes the materialized tree as a composite build instead, and substitutes `react-android` /
 `react-native` with `:packages:react-native:ReactAndroid` and `hermes-android` / `hermes-engine`
@@ -58,7 +70,7 @@ loom.renderer=true
 loom.js=main
 ```
 
-The five switches (`loom.renderer`, `loom.js`, `loom.worker`, `loom.compileFromSource`,
+The four switches (`loom.renderer`, `loom.js`, `loom.compileFromSource`,
 `loom.releaseProfiling`) are the same on iOS.
 
 ## iOS
@@ -83,8 +95,12 @@ prebuilt core. With `loom.compileFromSource=true` it builds React Native from so
 ```sh
 bundle exec pod install
 # or, for example:
-env loom.js=main bundle exec pod install
+LOOM_JS=main bundle exec pod install
 ```
+
+Each switch also has an exportable environment name, for CI: `loom.renderer` is `LOOM_RENDERER`,
+`loom.js` is `LOOM_JS`, `loom.compileFromSource` is `LOOM_COMPILE_FROM_SOURCE`, and so on
+(`env loom.js=main pod install` works too). The environment wins over `Podfile.properties.json`.
 
 ## Metro and the CLI
 
