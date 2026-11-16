@@ -45,34 +45,33 @@ public class ReactChoreographer private constructor(choreographerProvider: Chore
   private var totalCallbacks = 0
   @GuardedBy("callbackQueues") private var hasPostedCallback = false
 
-  private val frameCallback =
-      Choreographer.FrameCallback { frameTimeNanos ->
-        // Loom: tell the JS scheduler where this frame started, so that with JavaScript
-        // on the UI thread it can stop non-urgent work before the next vsync instead of running
-        // into it. One JNI call per frame that has any React callback.
-        if (BuildConfig.LOOM_JS_ON_MAIN) {
-          ReactFrameClock.onFrame(frameTimeNanos)
-        }
-        synchronized(callbackQueues) {
-          // Callbacks run once and are then automatically removed, the callback will
-          // be posted again from postFrameCallback
-          hasPostedCallback = false
-          for (i in callbackQueues.indices) {
-            val callbackQueue = callbackQueues[i]
-            val initialLength = callbackQueue.size
-            for (callback in 0 until initialLength) {
-              val frameCallback = callbackQueue.pollFirst()
-              if (frameCallback != null) {
-                frameCallback.doFrame(frameTimeNanos)
-                totalCallbacks--
-              } else {
-                FLog.e(ReactConstants.TAG, "Tried to execute non-existent frame callback")
-              }
-            }
+  private val frameCallback = Choreographer.FrameCallback { frameTimeNanos ->
+    // Loom: tell the JS scheduler where this frame started, so that with JavaScript
+    // on the UI thread it can stop non-urgent work before the next vsync instead of running
+    // into it. One JNI call per frame that has any React callback.
+    if (BuildConfig.LOOM_JS_ON_MAIN) {
+      ReactFrameClock.onFrame(frameTimeNanos)
+    }
+    synchronized(callbackQueues) {
+      // Callbacks run once and are then automatically removed, the callback will
+      // be posted again from postFrameCallback
+      hasPostedCallback = false
+      for (i in callbackQueues.indices) {
+        val callbackQueue = callbackQueues[i]
+        val initialLength = callbackQueue.size
+        for (callback in 0 until initialLength) {
+          val frameCallback = callbackQueue.pollFirst()
+          if (frameCallback != null) {
+            frameCallback.doFrame(frameTimeNanos)
+            totalCallbacks--
+          } else {
+            FLog.e(ReactConstants.TAG, "Tried to execute non-existent frame callback")
           }
-          maybeRemoveFrameCallback()
         }
       }
+      maybeRemoveFrameCallback()
+    }
+  }
 
   init {
     UiThreadUtil.runOnUiThread { choreographer = choreographerProvider.getChoreographer() }
@@ -145,6 +144,8 @@ public class ReactChoreographer private constructor(choreographerProvider: Chore
 
     @VisibleForTesting
     internal fun overrideInstanceForTest(instance: ReactChoreographer?): ReactChoreographer? =
-        choreographer.also { choreographer = instance }
+        choreographer.also {
+          choreographer = instance
+        }
   }
 }

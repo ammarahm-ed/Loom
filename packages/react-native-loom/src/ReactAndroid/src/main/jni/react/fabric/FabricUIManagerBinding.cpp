@@ -193,38 +193,6 @@ void FabricUIManagerBinding::reportMount(SurfaceId surfaceId) {
   scheduler->reportMount(surfaceId);
 }
 
-void FabricUIManagerBinding::pullAndExecuteTransaction(SurfaceId surfaceId) {
-  TraceSection section("FabricUIManagerBinding::pullAndExecuteTransaction");
-
-  std::shared_ptr<const MountingCoordinator> mountingCoordinator;
-  {
-    std::scoped_lock lock(pullableMountingCoordinatorsMutex_);
-    auto pullable = pullableMountingCoordinators_.extract(surfaceId);
-    if (pullable.empty()) {
-      return;
-    }
-    mountingCoordinator = std::move(pullable.mapped());
-  }
-
-  auto mountingManager = getMountingManager("pullAndExecuteTransaction");
-  if (!mountingManager) {
-    return;
-  }
-
-  // The UI thread pulls the transaction itself (it may accumulate several
-  // revisions committed since the notification was enqueued, and may be empty
-  // if a previous pull already consumed them). willPerformAsynchronously =
-  // false: the transaction is applied synchronously right here, so no
-  // `didPerformAsyncTransactions` bookkeeping is needed.
-  auto mountingTransaction =
-      mountingCoordinator->pullTransaction(/* willPerformAsynchronously = */
-                                           false);
-  if (mountingTransaction.has_value()) {
-    mountingManager->executeMount(
-        *mountingTransaction, /* synchronous = */ true);
-  }
-}
-
 #pragma mark - Surface management
 
 // Used by bridgeless
@@ -723,12 +691,7 @@ void FabricUIManagerBinding::installFabricUIManager(
         globalJavaUiManager);
   };
 
-  auto fabricUIManagerOwner =
-      std::make_shared<jni::global_ref<jobject>>(globalJavaUiManager);
-  // The alias and its owner must stay registered for the container's lifetime.
-  contextContainer->insert("FabricUIManagerOwner", fabricUIManagerOwner);
-  contextContainer->insert(
-      "FabricUIManager", jni::alias_ref<jobject>(*fabricUIManagerOwner));
+  contextContainer->insert("FabricUIManager", globalJavaUiManager);
 
   animationChoreographer_ =
       std::make_shared<LoomAnimationChoreographer>(globalJavaUiManager);
@@ -1206,26 +1169,7 @@ void FabricUIManagerBinding::schedulerShouldRenderTransactions(
     }
   }
 
-  if (ReactNativeFeatureFlags::enableMountingCoordinatorPullModelAndroid()) {
-    // Pull model: do NOT pull the transaction or build the batch here (on the
-    // commit thread). Just notify Java that a transaction is available; the UI
-    // thread calls back into `pullAndExecuteTransaction` at its next mount
-    // dispatch.
-    auto surfaceId = mountingCoordinator->getSurfaceId();
-    {
-      std::scoped_lock lock(pullableMountingCoordinatorsMutex_);
-      auto& pullable = pullableMountingCoordinators_[surfaceId];
-      if (pullable != nullptr && pullable != mountingCoordinator) {
-        LOG(WARNING)
-            << "FabricUIManagerBinding::schedulerShouldRenderTransactions: "
-            << "surface " << surfaceId
-            << " was restarted while the previous surface's commit waits to be pulled";
-      }
-      pullable = mountingCoordinator;
-    }
-    mountingManager->onTransactionAvailable(surfaceId);
-  } else if (ReactNativeFeatureFlags::
-                 enableAccumulatedUpdatesInRawPropsAndroid()) {
+  if (ReactNativeFeatureFlags::enableAccumulatedUpdatesInRawPropsAndroid()) {
     auto mountingTransaction = mountingCoordinator->pullTransaction(
         /* willPerformAsynchronously = */ true);
     if (mountingTransaction.has_value()) {
@@ -1258,24 +1202,17 @@ void FabricUIManagerBinding::schedulerShouldRenderTransactions(
 
 void FabricUIManagerBinding::schedulerShouldMergeReactRevision(
     SurfaceId surfaceId) {
-  if (ReactNativeFeatureFlags::enableFabricCommitBranchingMergeOnMainThread()) {
-    auto mountingManager =
-        getMountingManager("schedulerShouldMergeReactRevision");
-    if (mountingManager) {
-      mountingManager->scheduleReactRevisionMerge(surfaceId);
-    }
-  } else {
-    mergeReactRevision(surfaceId);
+  std::shared_lock lock(installMutex_);
+  auto mountingManager =
+      getMountingManager("schedulerShouldMergeReactRevision");
+  if (mountingManager) {
+    mountingManager->scheduleReactRevisionMerge(surfaceId);
   }
 }
 
 void FabricUIManagerBinding::mergeReactRevision(SurfaceId surfaceId) {
-  auto scheduler = getScheduler();
-  if (!scheduler) {
-    return;
-  }
-
-  scheduler->getUIManager()->getShadowTreeRegistry().visit(
+  std::shared_lock lock(installMutex_);
+  scheduler_->getUIManager()->getShadowTreeRegistry().visit(
       surfaceId,
       [](const ShadowTree& shadowTree) { shadowTree.mergeReactRevision(); });
 }
@@ -1305,7 +1242,7 @@ void FabricUIManagerBinding::schedulerDidRequestPreliminaryViewAllocation(
   // the main thread), which would otherwise cost a JNI call per destroyed node.
   if (wasPreallocated &&
       shadowNode.getTraits().check(ShadowNodeTraits::Trait::FormsView)) {
-    shadowNode.getFamilyShared()->onFamilyDestroyed(
+    shadowNode.getFamilyShared()->onUnmountedFamilyDestroyed(
         [weakMountingManager =
              std::weak_ptr(mountingManager)](const ShadowNodeFamily& family) {
           if (auto mountingManager = weakMountingManager.lock()) {
@@ -1356,13 +1293,6 @@ void FabricUIManagerBinding::schedulerShouldSynchronouslyUpdateViewOnUIThread(
     const folly::dynamic& props) {
   if ((LOOM_RENDERER || ReactNativeFeatureFlags::cxxNativeAnimatedEnabled()) && mountingManager_) {
     mountingManager_->synchronouslyUpdateViewOnUIThread(tag, props);
-  }
-}
-
-void FabricUIManagerBinding::schedulerShouldSynchronouslyUpdateAnimatedProps(
-    const std::unordered_map<Tag, AnimatedProps>& updates) {
-  if (ReactNativeFeatureFlags::cxxNativeAnimatedEnabled() && mountingManager_) {
-    mountingManager_->synchronouslyUpdateAnimatedProps(updates);
   }
 }
 
@@ -1533,9 +1463,6 @@ void FabricUIManagerBinding::registerNatives() {
       makeNativeMethod(
           "dispatchDirectEvent", FabricUIManagerBinding::dispatchDirectEvent),
 #endif
-      makeNativeMethod(
-          "pullAndExecuteTransaction",
-          FabricUIManagerBinding::pullAndExecuteTransaction),
       makeNativeMethod(
           "uninstallFabricUIManager",
           FabricUIManagerBinding::uninstallFabricUIManager),

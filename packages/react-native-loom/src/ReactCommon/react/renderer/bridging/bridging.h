@@ -7,11 +7,9 @@
 
 #pragma once
 
-#include <react/cxxstableapi/FrameworksGuard.h>
-
-#include <React/Bridging.h>
-#include <React/RendererCore.h>
 #include <jsi/jsi.h>
+#include <react/bridging/Base.h>
+#include <react/renderer/core/ShadowNode.h>
 
 namespace facebook::react {
 

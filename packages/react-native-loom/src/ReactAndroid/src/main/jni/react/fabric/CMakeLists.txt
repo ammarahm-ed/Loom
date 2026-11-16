@@ -30,7 +30,6 @@ target_link_libraries(
         react_codegen_rncore
         react_debug
         react_featureflags
-        react_renderer_animationbackend
         react_renderer_animations
         react_renderer_attributedstring
         react_renderer_componentregistry
@@ -52,8 +51,15 @@ target_link_libraries(
         rrc_legacyviewmanagerinterop
         react_utils
         reactnativejni
+        rrc_image
+        rrc_modal
+        rrc_progressbar
         rrc_root
+        rrc_safeareaview
         rrc_scrollview
+        rrc_switch
+        rrc_text
+        rrc_textinput
         rrc_unimplementedview
         rrc_view
         yoga

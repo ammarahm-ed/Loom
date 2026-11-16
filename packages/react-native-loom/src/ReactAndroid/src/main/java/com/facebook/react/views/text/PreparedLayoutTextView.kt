@@ -93,17 +93,15 @@ internal class PreparedLayoutTextView(context: Context) : ViewGroup(context), Re
 
   val text: CharSequence?
     // Avoid mangling the getter name, to allow black box E2E tests to read text content via
-    // reflection. Returns the full logical text, not `layout.text`, which can be an ellipsized
-    // `Ellipsizer` exposing only the on-screen (truncated) string to accessibility and the view
-    // hierarchy; internal rendering/hit-testing continues to use `layout.text` directly.
-    @DoNotStrip get() = preparedLayout?.sourceText
+    // reflection
+    @DoNotStrip get() = preparedLayout?.layout?.text
 
   init {
     // ViewGroup by default says only its children will draw
     setWillNotDraw(false)
   }
 
-  fun recycleView() {
+  fun recycleView(): Unit {
     BackgroundStyleApplicator.reset(this)
     overflow = Overflow.VISIBLE
     clickableSpans = emptyList()
@@ -139,7 +137,7 @@ internal class PreparedLayoutTextView(context: Context) : ViewGroup(context), Re
             selectionColor ?: DefaultStyleValuesUtil.getDefaultTextColorHighlight(context)
       }
 
-      val spanned = layout.text as? Spanned
+      val spanned = text as? Spanned
       val canvasEffectSpans =
           spanned?.getSpans(0, spanned.length, CanvasEffectSpan::class.java) ?: emptyArray()
 
@@ -223,7 +221,7 @@ internal class PreparedLayoutTextView(context: Context) : ViewGroup(context), Re
     val layout = checkNotNull(preparedLayout).layout
     if (start < 0 || end > layout.text.length || start >= end) {
       throw IllegalArgumentException(
-          "setSelection start and end are not in valid range. start: $start, end: $end, text length: ${layout.text.length}",
+          "setSelection start and end are not in valid range. start: $start, end: $end, text length: ${layout.text.length}"
       )
     }
 
@@ -255,7 +253,7 @@ internal class PreparedLayoutTextView(context: Context) : ViewGroup(context), Re
     val action = event.actionMasked
     if (action == MotionEvent.ACTION_CANCEL) {
       // Forward ACTION_CANCEL to all TouchableSpans so they can reset pressed/animation state
-      val spanned = preparedLayout?.layout?.text as? Spanned
+      val spanned = text as? Spanned
       for (span in spanned?.getSpans(0, spanned.length, TouchableSpan::class.java).orEmpty()) {
         span.onTouchEvent(action, 0f, 0f)
       }
@@ -327,7 +325,7 @@ internal class PreparedLayoutTextView(context: Context) : ViewGroup(context), Re
       return null
     }
 
-    val spanned = preparedLayout?.layout?.text as? Spanned ?: return null
+    val spanned = text as? Spanned ?: return null
 
     val spans = spanned.getSpans(offset, offset, clazz)
     if (spans.isEmpty()) {
@@ -417,9 +415,10 @@ internal class PreparedLayoutTextView(context: Context) : ViewGroup(context), Re
 
   override fun shouldDelayChildPressedState(): Boolean = false
 
-  override fun dispatchHoverEvent(event: MotionEvent): Boolean = super.dispatchHoverEvent(event)
+  public override fun dispatchHoverEvent(event: MotionEvent): Boolean =
+      super.dispatchHoverEvent(event)
 
-  override fun onFocusChanged(
+  public override fun onFocusChanged(
       gainFocus: Boolean,
       direction: Int,
       previouslyFocusedRect: Rect?,
@@ -515,8 +514,6 @@ internal class PreparedLayoutTextView(context: Context) : ViewGroup(context), Re
           reactTags,
           textBreakStrategy,
           justificationMode,
-          baseTextAttributes,
-          sourceText,
       )
     }
   }

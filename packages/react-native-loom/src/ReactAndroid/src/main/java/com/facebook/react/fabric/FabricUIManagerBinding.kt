@@ -107,7 +107,6 @@ internal class FabricUIManagerBinding : HybridClassBase() {
       eventTimestamp: Long,
       synchronous: Boolean,
   )
-  external fun pullAndExecuteTransaction(surfaceId: Int)
 
   external fun mergeReactRevision(surfaceId: Int)
 

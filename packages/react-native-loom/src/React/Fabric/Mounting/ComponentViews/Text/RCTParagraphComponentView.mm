@@ -43,7 +43,7 @@ using namespace facebook::react;
 
 @interface RCTTextLayoutManager (RCTParagraphComponentViewPrivate)
 
-- (CGRect)drawingFrameForAttributedString:(const facebook::react::AttributedString &)attributedString
+- (CGRect)drawingFrameForAttributedString:(facebook::react::AttributedString)attributedString
                       paragraphAttributes:(facebook::react::ParagraphAttributes)paragraphAttributes
                                     frame:(CGRect)frame
                            containerFrame:(CGRect *)containerFrame;
@@ -204,25 +204,6 @@ static BOOL RCTAttributedStringHasAttachments(const AttributedString &attributed
   if (needsDisplay) {
     LOOM_TEXT_NEEDS_DISPLAY(_textView);
   }
-
-  // If the attributed string has changed, we need to notify the accessibility system that something changed,
-  // otherwise it may hold on to stale values (this happens most often when an element is updated async)
-  // https://github.com/react/react-native/issues/58145
-  if (state && oldState) {
-    const auto &newData = std::static_pointer_cast<const ParagraphShadowNode::ConcreteState>(state)->getData();
-    const auto &oldData = std::static_pointer_cast<const ParagraphShadowNode::ConcreteState>(oldState)->getData();
-    if (!newData.attributedString.isContentEqual(oldData.attributedString)) {
-      // Changes inside a hidden subtree must not interrupt VoiceOver on visible content.
-      UIView *view = self;
-      while (view != nil) {
-        if (view.accessibilityElementsHidden) {
-          return;
-        }
-        view = view.superview;
-      }
-      UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification, nil);
-    }
-  }
 }
 
 - (void)updateLayoutMetrics:(const LayoutMetrics &)layoutMetrics
@@ -267,13 +248,6 @@ static BOOL RCTAttributedStringHasAttachments(const AttributedString &attributed
 {
   CGRect textViewFrame = self.bounds;
   CGRect drawingFrame = RCTCGRectFromRect(_layoutMetrics.getContentFrame());
-
-  // Lay out the text in the size the paragraph has in the shadow tree rather than in the current frame, which
-  // LayoutAnimation interpolates. Otherwise, line breaks change on every frame and words jump between lines.
-  // The text view clips the text to the current bounds.
-  if (_textView.state) {
-    drawingFrame.size = RCTCGSizeFromSize(_textView.state->getData().layoutSize);
-  }
 
   if (ReactNativeFeatureFlags::enableIOSCompressedTextFrameAdjustment() && _textView.state &&
       drawingFrame.size.height > 0) {

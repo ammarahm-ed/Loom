@@ -12,8 +12,6 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <ranges>
-#import <string_view>
-#import <unordered_set>
 
 #import <RCTSwiftUIWrapper/RCTSwiftUIContainerViewWrapper.h>
 #import <React/RCTAssert.h>
@@ -23,9 +21,7 @@
 #import <React/RCTConversions.h>
 #import <React/RCTLinearGradient.h>
 #import <React/RCTLocalizedString.h>
-#import <React/RCTLog.h>
 #import <React/RCTRadialGradient.h>
-#import <React/RCTUtils.h>
 #import <react/featureflags/ReactNativeFeatureFlags.h>
 #import <react/renderer/components/view/ViewComponentDescriptor.h>
 #import <react/renderer/components/view/ViewEventEmitter.h>
@@ -40,70 +36,6 @@
 using namespace facebook::react;
 
 const CGFloat BACKGROUND_COLOR_ZPOSITION = -1024.0f;
-
-#if !TARGET_OS_TV
-// iOS Full Keyboard Access only focuses a view when it is an accessibility
-// element that also exposes an interactive trait. Views that surface their
-// interactivity through a grouping accessibility element (rather than the
-// underlying control) are otherwise skipped by the focus engine, leaving
-// keyboard-only users unable to reach them.
-//
-// The trait mask alone is not sufficient, because it is a lossy projection of
-// the role: `checkbox`, `radio`, `combobox`, `menuitem`, `spinbutton`, `tab`
-// and friends deliberately carry no interactive trait, since VoiceOver conveys
-// them through `accessibilityValue` instead. The role is therefore consulted
-// as well, otherwise those controls stay unreachable by keyboard.
-static BOOL RCTViewIsInteractiveAccessibilityElement(UIView *view, const ViewProps &props)
-{
-  if (!view.isAccessibilityElement) {
-    return NO;
-  }
-
-  UIAccessibilityTraits interactiveTraits = UIAccessibilityTraitButton | UIAccessibilityTraitLink |
-      UIAccessibilityTraitSearchField | UIAccessibilityTraitKeyboardKey | UIAccessibilityTraitAdjustable;
-  if ((view.accessibilityTraits & interactiveTraits) != 0) {
-    return YES;
-  }
-
-  // `role` wins over the legacy `accessibilityRole` when both are set, matching
-  // how the traits themselves are resolved.
-  if (props.role.value_or(Role::None) != Role::None) {
-    static const std::unordered_set<Role> interactiveRoles{
-        Role::Button,
-        Role::Checkbox,
-        Role::Combobox,
-        Role::Link,
-        Role::Menuitem,
-        Role::Option,
-        Role::Radio,
-        Role::Searchbox,
-        Role::Slider,
-        Role::Spinbutton,
-        Role::Switch,
-        Role::Tab,
-        Role::Treeitem};
-    return interactiveRoles.contains(*props.role);
-  }
-
-  static const std::unordered_set<std::string_view> interactiveAccessibilityRoles{
-      "adjustable",
-      "button",
-      "checkbox",
-      "combobox",
-      "dropdownlist",
-      "imagebutton",
-      "keyboardkey",
-      "link",
-      "menuitem",
-      "radio",
-      "search",
-      "spinbutton",
-      "switch",
-      "tab",
-      "togglebutton"};
-  return interactiveAccessibilityRoles.contains(props.accessibilityRole);
-}
-#endif
 
 @implementation RCTViewComponentView {
   UIColor *_backgroundColor;
@@ -243,9 +175,6 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
   if (_removeClippedSubviews) {
     [_reactSubviews removeObjectAtIndex:index];
   } else {
-    // This getter can migrate children from a recycled clipping container.
-    // Reconcile before reading superview, even when assertions are disabled.
-    [[maybe_unused]] UIView *containerView = self.currentContainerView;
     RCTAssert(
         childComponentView.superview != nil,
         @"Attempt to unmount a view which is not mounted. (parent: %@, child: %@, index: %@)",
@@ -253,24 +182,21 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
         childComponentView,
         @(index));
     RCTAssert(
-        childComponentView.superview == containerView,
+        childComponentView.superview == self.currentContainerView,
         @"Attempt to unmount a view which is mounted inside a different view. (parent: %@, child: %@, index: %@, existing parent: %@)",
         self,
         childComponentView,
         @(index),
         @([childComponentView.superview tag]));
-#ifndef NS_BLOCK_ASSERTIONS
-    NSArray<UIView *> *containerSubviews = containerView.subviews;
-    BOOL isIndexInBounds = index >= 0 && (NSUInteger)index < containerSubviews.count;
     RCTAssert(
-        isIndexInBounds && [containerSubviews objectAtIndex:index] == childComponentView,
+        (self.currentContainerView.subviews.count > index) &&
+            [self.currentContainerView.subviews objectAtIndex:index] == childComponentView,
         @"Attempt to unmount a view which has a different index. (parent: %@, child: %@, index: %@, actual index: %@, tag at index: %@)",
         self,
         childComponentView,
         @(index),
-        @([containerSubviews indexOfObject:childComponentView]),
-        isIndexInBounds ? @([[containerSubviews objectAtIndex:index] tag]) : @"out of bounds");
-#endif
+        @([self.currentContainerView.subviews indexOfObject:childComponentView]),
+        @([[self.currentContainerView.subviews objectAtIndex:index] tag]));
   }
 
   [childComponentView removeFromSuperview];
@@ -358,17 +284,12 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
   if (oldViewProps.opacity != newViewProps.opacity &&
       ![_propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN containsObject:@"opacity"]) {
     self.layer.opacity = (float)newViewProps.opacity;
-    // `invalidateLayer` only reads the opacity to combine it with `filter`.
-    if (!newViewProps.filter.empty()) {
-      needsInvalidateLayer = YES;
-    }
+    needsInvalidateLayer = YES;
   }
 
   // Disable `removeClippedSubviews` when Fabric View Culling is enabled.
   if (!ReactNativeFeatureFlags::enableViewCulling()) {
-    // Compare against the current state, not `_props`: `prepareForRecycle` resets
-    // `_removeClippedSubviews` but keeps `_props`.
-    if (_removeClippedSubviews != newViewProps.removeClippedSubviews) {
+    if (oldViewProps.removeClippedSubviews != newViewProps.removeClippedSubviews) {
       _removeClippedSubviews = newViewProps.removeClippedSubviews;
       [self _updateRemoveClippedSubviewsState];
     }
@@ -447,15 +368,6 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
         -newViewProps.hitSlop.right};
   }
 
-  // `onSafeAreaInsetsChange`. Re-armed whenever the prop is set rather than on
-  // its transition: `oldViewProps` comes from `_props`, which a recycled view
-  // keeps from its previous occupant, so `!old && new` would miss a reuse.
-  if (newViewProps.onSafeAreaInsetsChange) {
-    [self setNeedsLayout];
-  } else if (oldViewProps.onSafeAreaInsetsChange) {
-    [self _setLastSentSafeAreaInsets:nil];
-  }
-
   // `overflow`
   if (oldViewProps.getClipsContentToBounds() != newViewProps.getClipsContentToBounds()) {
     self.currentContainerView.clipsToBounds = newViewProps.getClipsContentToBounds();
@@ -464,8 +376,7 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
 
   // `border`
   if (oldViewProps.borderStyles != newViewProps.borderStyles || oldViewProps.borderRadii != newViewProps.borderRadii ||
-      oldViewProps.borderColors != newViewProps.borderColors ||
-      oldViewProps.borderCurves != newViewProps.borderCurves) {
+      oldViewProps.borderColors != newViewProps.borderColors) {
     needsInvalidateLayer = YES;
   }
 
@@ -559,6 +470,18 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
   if (oldViewProps.accessibilityTraits != newViewProps.accessibilityTraits) {
     self.accessibilityElement.accessibilityTraits =
         RCTUIAccessibilityTraitsFromAccessibilityTraits(newViewProps.accessibilityTraits);
+  }
+
+  // `accessibilityState`
+  if (oldViewProps.accessibilityState != newViewProps.accessibilityState) {
+    self.accessibilityTraits &= ~(UIAccessibilityTraitNotEnabled | UIAccessibilityTraitSelected);
+    const auto accessibilityState = newViewProps.accessibilityState.value_or(AccessibilityState{});
+    if (accessibilityState.selected) {
+      self.accessibilityTraits |= UIAccessibilityTraitSelected;
+    }
+    if (accessibilityState.disabled) {
+      self.accessibilityTraits |= UIAccessibilityTraitNotEnabled;
+    }
   }
 
   // `accessibilityIgnoresInvertColors`
@@ -707,16 +630,8 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
   // the oldLayoutMetrics parameter (which comes from the shadow tree).
   auto previousFrameSize = _layoutMetrics.frame.size;
 
-  // A relayout that only moves the view leaves everything `invalidateLayer`
-  // derives unchanged, since it works in the view's own coordinates. The hover
-  // shape is the exception: iOS evaluates it in the superview's space.
-  auto movedLayoutMetrics = layoutMetrics;
-  movedLayoutMetrics.frame.origin = _layoutMetrics.frame.origin;
-  BOOL const onlyMoved = movedLayoutMetrics == _layoutMetrics;
   _layoutMetrics = layoutMetrics;
-  if (!onlyMoved || _props->cursor == Cursor::Pointer) {
-    _needsInvalidateLayer = YES;
-  }
+  _needsInvalidateLayer = YES;
 
   _borderLayer.frame = self.layer.bounds;
 
@@ -744,90 +659,6 @@ static BOOL RCTLayerTransformCollapsesAxis(CALayer *layer)
 
   if (_swiftUIWrapper != nullptr) {
     [_swiftUIWrapper updateLayoutWithBounds:self.bounds];
-  }
-}
-
-#pragma mark - Safe area insets
-
-- (NSValue *_Nullable)_lastSentSafeAreaInsets
-{
-  return objc_getAssociatedObject(self, _cmd);
-}
-
-- (void)_setLastSentSafeAreaInsets:(NSValue *_Nullable)lastSentSafeAreaInsets
-{
-  objc_setAssociatedObject(
-      self, @selector(_lastSentSafeAreaInsets), lastSentSafeAreaInsets, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
-
-static BOOL RCTEdgeInsetsEqualWithThreshold(UIEdgeInsets lhs, UIEdgeInsets rhs, CGFloat threshold)
-{
-  return ABS(lhs.left - rhs.left) <= threshold && ABS(lhs.top - rhs.top) <= threshold &&
-      ABS(lhs.right - rhs.right) <= threshold && ABS(lhs.bottom - rhs.bottom) <= threshold;
-}
-
-// The event is only ever emitted from `layoutSubviews`; everything that might
-// have changed the insets merely marks the view as needing layout. This defers
-// the emit out of arbitrary call contexts — in particular out of
-// `updateProps`, which runs inside the mounting transaction where
-// synchronously re-entering React is not safe — while keeping it in the same
-// frame: the layout pass runs before the frame is displayed.
-- (void)_safeAreaInsetsMayHaveChanged
-{
-  if (!_eventEmitter) {
-    return;
-  }
-
-  if (self.window == nil || CGSizeEqualToSize(self.bounds.size, CGSizeZero)) {
-    return;
-  }
-
-  UIEdgeInsets insets = self.safeAreaInsets;
-  NSValue *lastSentSafeAreaInsets = [self _lastSentSafeAreaInsets];
-  if (lastSentSafeAreaInsets != nil &&
-      RCTEdgeInsetsEqualWithThreshold(insets, lastSentSafeAreaInsets.UIEdgeInsetsValue, 1.0 / RCTScreenScale())) {
-    return;
-  }
-
-  [self _setLastSentSafeAreaInsets:[NSValue valueWithUIEdgeInsets:insets]];
-
-  static_cast<const ViewEventEmitter &>(*_eventEmitter)
-      .onSafeAreaInsetsChange(
-          EdgeInsets{
-              .left = (Float)insets.left,
-              .top = (Float)insets.top,
-              .right = (Float)insets.right,
-              .bottom = (Float)insets.bottom});
-}
-
-- (BOOL)_observesSafeAreaInsets
-{
-  return static_cast<const ViewProps &>(*_props).onSafeAreaInsetsChange;
-}
-
-- (void)safeAreaInsetsDidChange
-{
-  [super safeAreaInsetsDidChange];
-  if ([self _observesSafeAreaInsets]) {
-    [self setNeedsLayout];
-  }
-}
-
-- (void)didMoveToWindow
-{
-  [super didMoveToWindow];
-  if ([self _observesSafeAreaInsets]) {
-    [self setNeedsLayout];
-  }
-}
-
-- (void)layoutSubviews
-{
-  [super layoutSubviews];
-  // Moving or resizing the view changes its insets without
-  // `safeAreaInsetsDidChange` firing; that only reports window-level changes.
-  if ([self _observesSafeAreaInsets]) {
-    [self _safeAreaInsetsMayHaveChanged];
   }
 }
 
@@ -868,7 +699,7 @@ static BOOL RCTEdgeInsetsEqualWithThreshold(UIEdgeInsets lhs, UIEdgeInsets rhs, 
 
   // Clean up box shadow layers to prevent cross-component contamination
   if (_boxShadowLayers != nullptr) {
-    for (CALayer *boxShadowLayer in _boxShadowLayers) {
+    for (CALayer *boxShadowLayer = nullptr in _boxShadowLayers) {
       [boxShadowLayer removeFromSuperlayer];
     }
     [_boxShadowLayers removeAllObjects];
@@ -886,13 +717,12 @@ static BOOL RCTEdgeInsetsEqualWithThreshold(UIEdgeInsets lhs, UIEdgeInsets rhs, 
   _filterLayer = nil;
   [self clearExistingBackgroundImageLayers];
 
-  [self _setLastSentSafeAreaInsets:nil];
   _propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN = nil;
   _eventEmitter.reset();
   _isJSResponder = NO;
   _removeClippedSubviews = NO;
   _reactSubviews = [NSMutableArray new];
-  _layoutMetrics = EmptyLayoutMetrics;
+  _layoutMetrics = {};
 }
 
 - (void)setPropKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN:(NSSet<NSString *> *_Nullable)props
@@ -929,7 +759,7 @@ static BOOL RCTEdgeInsetsEqualWithThreshold(UIEdgeInsets lhs, UIEdgeInsets rhs, 
     return nil;
   }
 
-  for (UIView *subview in [currentContainerView.subviews reverseObjectEnumerator]) {
+  for (UIView *subview = nullptr in [currentContainerView.subviews reverseObjectEnumerator]) {
     UIView *hitView = [subview hitTest:[subview convertPoint:point fromView:currentContainerView] withEvent:event];
     if (hitView) {
       return hitView;
@@ -1152,7 +982,7 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
     if (_swiftUIWrapper == nullptr) {
       _swiftUIWrapper = [RCTSwiftUIContainerViewWrapper new];
       UIView *swiftUIContentView = [[UIView alloc] init];
-      for (UIView *subview in self.subviews) {
+      for (UIView *subview = nullptr in self.subviews) {
         [swiftUIContentView addSubview:subview];
       }
       swiftUIContentView.clipsToBounds = self.clipsToBounds;
@@ -1170,7 +1000,7 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
   } else {
     if (_swiftUIWrapper != nullptr) {
       UIView *swiftUIContentView = _swiftUIWrapper.contentView;
-      for (UIView *subview in swiftUIContentView.subviews) {
+      for (UIView *subview = nullptr in swiftUIContentView.subviews) {
         [self addSubview:subview];
       }
       self.clipsToBounds = swiftUIContentView.clipsToBounds;
@@ -1196,7 +1026,7 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
   if (_useCustomContainerView) {
     if (!_containerView) {
       _containerView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, self.bounds.size.height)];
-      for (UIView *subview in effectiveContentView.subviews) {
+      for (UIView *subview = nullptr in effectiveContentView.subviews) {
         [_containerView addSubview:subview];
       }
       _containerView.clipsToBounds = effectiveContentView.clipsToBounds;
@@ -1244,13 +1074,6 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
     } else {
       // Can't accurately calculate box shadow, so fall back to pixel-based shadow.
       layer.shadowPath = nil;
-
-      RCTLogAdvice(
-          @"View #%ld of type %@ has a shadow set but cannot calculate "
-           "shadow efficiently. Consider setting a solid background color to "
-           "fix this or applying the shadow to a more specific component.",
-          (long)self.tag,
-          [self class]);
     }
   } else {
     layer.shadowPath = nil;
@@ -1368,10 +1191,7 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
     _outlineLayer.frame = CGRectInset(
         layer.bounds, -_props->outlineOffset - _props->outlineWidth, -_props->outlineOffset - _props->outlineWidth);
 
-    // Core Animation can only draw solid contours, so dotted and dashed outlines
-    // have to be drawn with Core Graphics, the same way non-solid borders are.
-    if (_props->outlineStyle == OutlineStyle::Solid && areBorderRadiiCircular(borderMetrics.borderRadii) &&
-        borderMetrics.borderRadii.topLeft.horizontal == 0) {
+    if (areBorderRadiiCircular(borderMetrics.borderRadii) && borderMetrics.borderRadii.topLeft.horizontal == 0) {
       UIColor *outlineColor = RCTUIColorFromSharedColor(_props->outlineColor);
       _outlineLayer.borderWidth = _props->outlineWidth;
       _outlineLayer.borderColor = outlineColor.CGColor;
@@ -1727,11 +1547,7 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
 
 - (BOOL)canBecomeFocused
 {
-#if !TARGET_OS_TV
-  return _focusable || RCTViewIsInteractiveAccessibilityElement(self, static_cast<const ViewProps &>(*_props));
-#else
   return _focusable;
-#endif
 }
 
 - (BOOL)isAccessibilityElement
@@ -1758,9 +1574,8 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
   }
 
   NSMutableArray *valueComponents = [NSMutableArray new];
-  NSString *roleString = (props.role.value_or(Role::None) != Role::None)
-      ? [NSString stringWithUTF8String:toString(*props.role).c_str()]
-      : [NSString stringWithUTF8String:props.accessibilityRole.c_str()];
+  NSString *roleString = (props.role != Role::None) ? [NSString stringWithUTF8String:toString(props.role).c_str()]
+                                                    : [NSString stringWithUTF8String:props.accessibilityRole.c_str()];
 
   // In iOS, checkbox and radio buttons aren't recognized as traits. However,
   // because our apps use checkbox and radio buttons often, we should announce
@@ -1792,15 +1607,9 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
         addObject:RCTLocalizedString(
                       "mixed", "a checkbox, radio button, or other widget which is both checked and unchecked")];
   }
-  if (const auto expanded = accessibilityState.expanded; expanded.has_value()) {
-    if (expanded.value()) {
-      [valueComponents addObject:RCTLocalizedString(
-                                     "expanded", "a menu, dialog, accordian panel, or other widget which is expanded")];
-    } else {
-      [valueComponents
-          addObject:RCTLocalizedString(
-                        "collapsed", "a menu, dialog, accordian panel, or other widget which is collapsed")];
-    }
+  if (accessibilityState.expanded.value_or(false)) {
+    [valueComponents
+        addObject:RCTLocalizedString("expanded", "a menu, dialog, accordian panel, or other widget which is expanded")];
   }
 
   if (accessibilityState.busy) {
@@ -1930,13 +1739,7 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
 
 - (BOOL)styleNeedsSwiftUIContainer
 {
-  if (_props->filter.empty()) {
-    return NO;
-  }
-
-  // A filter must not affect layout, but UIHostingController insets its content by the safe area.
-  // To disable the insets we use `safeAreaRegions` which is only available in iOS 16.4 and tvOS 16.4.
-  if (@available(iOS 16.4, tvOS 16.4, *)) {
+  if (!_props->filter.empty()) {
     for (const auto &primitive : _props->filter) {
       if (primitive.type == FilterType::Blur || primitive.type == FilterType::Grayscale ||
           primitive.type == FilterType::DropShadow || primitive.type == FilterType::Saturate ||
@@ -1945,7 +1748,6 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
       }
     }
   }
-
   return NO;
 }
 
@@ -1989,10 +1791,10 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
   if (_filterLayer != nullptr) {
     [destinationView.layer addSublayer:_filterLayer];
   }
-  for (CALayer *layer in _backgroundImageLayers) {
+  for (CALayer *layer = nullptr in _backgroundImageLayers) {
     [destinationView.layer addSublayer:layer];
   }
-  for (CALayer *layer in _boxShadowLayers) {
+  for (CALayer *layer = nullptr in _boxShadowLayers) {
     [destinationView.layer addSublayer:layer];
   }
 }
@@ -2033,14 +1835,9 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
 }
 #endif
 
-- (UIView *)viewToFocus
-{
-  return self;
-}
-
 - (void)focus
 {
-  UIView *viewToFocus = [self viewToFocus];
+  [self becomeFirstResponder];
 
 #if TARGET_OS_TV
   RCTSurfaceHostingProxyRootView *rootView = [self containingRootView];
@@ -2048,11 +1845,9 @@ static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
     return;
   }
 
-  rootView.reactPreferredFocusedView = viewToFocus;
+  rootView.reactPreferredFocusedView = self;
   [rootView setNeedsFocusUpdate];
   [rootView updateFocusIfNeeded];
-#else
-  [viewToFocus becomeFirstResponder];
 #endif
 }
 

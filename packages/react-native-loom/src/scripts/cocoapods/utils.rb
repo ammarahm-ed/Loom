@@ -6,61 +6,15 @@
 require 'shellwords'
 require 'digest'
 require 'uri'
-require 'net/http'
 
 require_relative "./helpers.rb"
 require_relative "./jsengine.rb"
 
 # Utilities class for React Native Cocoapods
 class ReactNativePodsUtils
-    MAVEN_CENTRAL_REPOSITORY = "https://repo1.maven.org/maven2"
-    REACT_NATIVE_MAVEN_MIRROR_REPOSITORY = "https://repo.reactnative.dev/maven2"
-    UNPUBLISHED_MAVEN_VERSION = "1000.0.0"
-
-    # Opt-in removal of the legacy TurboModule and component interop layers. Both are
-    # off by default and will become the default in a future React Native release.
-    LEGACY_INTEROP_REMOVAL_FLAGS = [
-        'RCT_REMOVE_LEGACY_MODULE_INTEROP',
-        'RCT_REMOVE_LEGACY_COMPONENT_INTEROP',
-    ]
-
-    # Opt-in C++ stable API macros.
-    # RN_STRICT_API arms the react/cxxstableapi guards; RN_ALLOW_FRAMEWORKS
-    # silences their "for frameworks" warning.
-    STRICT_CXX_API_FLAGS = [
-        'RN_STRICT_API',
-        'RN_ALLOW_FRAMEWORKS',
-    ]
-
     # URI::File.build validates path components as ASCII, so escape the filesystem path first.
     def self.local_file_uri(path)
         URI::File.build(path: URI::DEFAULT_PARSER.escape(path)).to_s
-    end
-
-    def self.maven_repository_urls()
-        ## You can use the `ENTERPRISE_REPOSITORY` variable to customise the base url from which artifacts will be downloaded.
-        ## The mirror's structure must be the same of the Maven repo the react-native core team publishes on Maven Central.
-        if ENV['ENTERPRISE_REPOSITORY'] != nil && ENV['ENTERPRISE_REPOSITORY'] != ""
-            return [ENV['ENTERPRISE_REPOSITORY'].sub(/\/+$/, "")]
-        end
-
-        # Keep the React Native Maven mirror before Maven Central so cached artifacts are tried first
-        # and Maven Central remains the fallback.
-        return react_native_maven_mirror_enabled? ?
-            [REACT_NATIVE_MAVEN_MIRROR_REPOSITORY, MAVEN_CENTRAL_REPOSITORY] :
-            [MAVEN_CENTRAL_REPOSITORY]
-    end
-
-    def self.react_native_maven_mirror_enabled?()
-        value = ENV['RCT_REACT_NATIVE_MAVEN_MIRROR_ENABLED']
-        return true if value == nil || value == ""
-
-        value.downcase != "false" && value != "0"
-    end
-
-    def self.maven_artifact_version_published?(version)
-        # 1000.0.0 identifies a source checkout on main and is never published to Maven.
-        return version != UNPUBLISHED_MAVEN_VERSION
     end
 
     def self.warn_if_not_on_arm64
@@ -123,29 +77,6 @@ class ReactNativePodsUtils
                 self.add_build_settings_to_pod(installer, "GCC_PREPROCESSOR_DEFINITIONS", "REACT_NATIVE_DEBUGGER_ENABLED=1 REACT_NATIVE_DEBUGGER_MODE_PROD=1", pod, :release)
             end
         end
-    end
-
-    # The react/cxxstableapi guards turn a direct include of a fine-grained React Native
-    # header into an error for consumers that opt into RN_STRICT_API. React Native's own
-    # sources are exempt via RN_BUILDING, so every first-party pod defines it. Third-party
-    # pods must never get it, or they would silently opt out of the guards.
-    #
-    # This merges into pod_target_xcconfig as it stands when called, so call it after the
-    # spec has set its own xcconfig — in practice, last in the spec block.
-    def self.add_rn_building_definition(spec)
-        current_config = spec.to_hash["pod_target_xcconfig"] || {}
-        definitions = current_config["GCC_PREPROCESSOR_DEFINITIONS"] || "$(inherited)"
-
-        if definitions.is_a?(Array)
-            definitions = definitions.join(" ")
-        end
-
-        definitions = "$(inherited)" if definitions.strip.empty?
-
-        return if definitions.include?("RN_BUILDING=1")
-
-        current_config["GCC_PREPROCESSOR_DEFINITIONS"] = "#{definitions.strip()} RN_BUILDING=1".strip()
-        spec.pod_target_xcconfig = current_config
     end
 
     def self.turn_off_resource_bundle_react_core(installer)
@@ -370,26 +301,6 @@ class ReactNativePodsUtils
         return search_paths
     end
 
-    def self.create_header_search_paths_for_stable_umbrellas(base_folder)
-        return [] unless ReactNativeCoreUtils.build_rncore_from_source()
-
-        self.stable_umbrella_frameworks.flat_map { |pod_name, framework_name|
-            self.create_header_search_path_for_frameworks(base_folder, pod_name, framework_name, [])
-        }
-    end
-
-    def self.stable_umbrella_frameworks
-        [
-            ["React-Fabric", "React_Fabric"],
-            ["React-callinvoker", "React_callinvoker"],
-            ["React-cxxreact", "React_cxxreact"],
-            ["React-debug", "React_debug"],
-            ["React-rendererdebug", "React_rendererdebug"],
-            ["React-timing", "React_timing"],
-            ["React-utils", "React_utils"],
-        ]
-    end
-
     # Add a new dependency to an existing spec, configuring also the headers search paths
     def self.add_dependency(spec, dependency_name, base_folder_for_frameworks, framework_name, additional_paths: [], version: nil, subspec_dependency: nil)
         # Update Search Path
@@ -420,9 +331,6 @@ class ReactNativePodsUtils
         projects = self.extract_projects(installer)
 
         projects.each do |project|
-            stable_umbrella_search_paths = project == installer.pods_project ?
-                [] : ReactNativePodsUtils.create_header_search_paths_for_stable_umbrellas("PODS_CONFIGURATION_BUILD_DIR")
-
             project.build_configurations.each do |config|
 
                 header_search_paths = config.build_settings["HEADER_SEARCH_PATHS"] ||= "$(inherited)"
@@ -430,25 +338,12 @@ class ReactNativePodsUtils
                 ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "ReactCommon", "ReactCommon", ["react/nativemodule/core"])
                     .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-runtimeexecutor", "React_runtimeexecutor", ["platform/ios"]))
                     .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "ReactCommon-Samples", "ReactCommon_Samples", ["platform/ios"]))
-                    .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-Fabric", "React_Fabric", [
-                        "react/renderer/components/view/platform/cxx",
-                        "react/renderer/components/scrollview/platform/cxx",
-                        "react/renderer/components/scrollview/platform/ios",
-                    ], false))
-                    .concat(stable_umbrella_search_paths)
-                    .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-FabricComponents", "React_FabricComponents", [
-                        "react/renderer/textlayoutmanager/platform/ios",
-                        "react/renderer/components/text/platform/cxx",
-                        "react/renderer/components/textinput/platform/ios",
-                        "react/renderer/components/switch/iosswitch",
-                    ], false))
+                    .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-Fabric", "React_Fabric", ["react/renderer/components/view/platform/cxx"], false))
                     .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-NativeModulesApple", "React_NativeModulesApple", []))
                     .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-bridging", "React_bridging", []))
                     .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-graphics", "React_graphics", ["react/renderer/graphics/platform/ios"]))
                     .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-featureflags", "React_featureflags", []))
                     .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-renderercss", "React_renderercss", []))
-                    .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-cxxstableapi", "React_cxxstableapi", []))
-                    .concat(ReactNativePodsUtils.create_header_search_path_for_frameworks("PODS_CONFIGURATION_BUILD_DIR", "React-debug", "React_debug", []))
                     .each{ |search_path|
                         header_search_paths = self.add_search_path_if_not_included(header_search_paths, search_path)
                     }
@@ -460,8 +355,6 @@ class ReactNativePodsUtils
         end
 
         installer.target_installation_results.pod_target_installation_results.each do |pod_name, target_installation_result|
-            self.set_stable_umbrella_search_paths(target_installation_result)
-
             if self.react_native_pods.include?(pod_name) || pod_name.include?("Pod") || pod_name.include?("Tests")
                 next
             end
@@ -477,14 +370,11 @@ class ReactNativePodsUtils
     def self.updateOSDeploymentTarget(installer)
         installer.target_installation_results.pod_target_installation_results
             .each do |pod_name, target_installation_result|
-                targets = [target_installation_result.native_target] + target_installation_result.resource_bundle_targets
-                targets.each do |target|
-                    target.build_configurations.each do |config|
-                        old_iphone_deploy_target = config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] ?
-                            config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] :
-                            Helpers::Constants.min_ios_version_supported
-                        config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = [Helpers::Constants.min_ios_version_supported.to_f, old_iphone_deploy_target.to_f].max.to_s
-                    end
+                target_installation_result.native_target.build_configurations.each do |config|
+                    old_iphone_deploy_target = config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] ?
+                        config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] :
+                        Helpers::Constants.min_ios_version_supported
+                    config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = [Helpers::Constants.min_ios_version_supported.to_f, old_iphone_deploy_target.to_f].max.to_s
                 end
             end
     end
@@ -598,36 +488,6 @@ class ReactNativePodsUtils
         end
     end
 
-    # The macros gate declarations in public headers (RCTBridge.h, RCTBridgeModule.h), so
-    # they are applied to the whole project rather than to React Native's pods alone.
-    def self.set_legacy_interop_removal_flags(installer, build_rncore_from_source:)
-        LEGACY_INTEROP_REMOVAL_FLAGS.each do |flag|
-            if ENV[flag] == '1'
-                self.add_compiler_flag_to_project(installer, "-D#{flag}=1")
-                unless build_rncore_from_source
-                    Pod::UI.warn("#{flag}=1 only prunes your app's headers while using the prebuilt " \
-                        "React.xcframework. Set RCT_USE_PREBUILT_RNCORE=0 to also compile React Native " \
-                        "without the legacy interop layer.")
-                end
-            else
-                self.remove_compiler_flag_from_project(installer, "-D#{flag}=1")
-            end
-        end
-    end
-
-    # The macros reach every target that inherits the project settings: the app,
-    # third-party pods and app codegen. React Native's own pods define RN_BUILDING,
-    # which keeps the guards inert for them.
-    def self.set_strict_cxx_api_flags(installer)
-        STRICT_CXX_API_FLAGS.each do |macro|
-            if ENV[macro] == '1'
-                self.add_compiler_flag_to_project(installer, "-D#{macro}")
-            else
-                self.remove_compiler_flag_from_project(installer, "-D#{macro}")
-            end
-        end
-    end
-
     def self.add_compiler_flag_to_pods(installer, flag, configuration: nil)
         installer.target_installation_results.pod_target_installation_results.each do |pod_name, target_installation_result|
             target_installation_result.native_target.build_configurations.each do |config|
@@ -691,9 +551,7 @@ class ReactNativePodsUtils
 
         if current_search_paths.is_a?(String)
           current_search_paths = current_search_paths.strip
-          current_paths = Shellwords.shellsplit(current_search_paths)
-          normalized_new_path = Shellwords.shellsplit(new_search_path).first
-          return "#{current_search_paths} #{new_search_path}" unless current_paths.include?(normalized_new_path)
+          return "#{current_search_paths} #{new_search_path}" unless current_search_paths.include?(new_search_path)
         end
 
         if current_search_paths.is_a?(Array)
@@ -704,52 +562,14 @@ class ReactNativePodsUtils
         current_search_paths
     end
 
-    def self.target_depends_on?(target, dependency_name, visited_targets = {})
-        return false if target == nil
-
-        target_identifier = target.respond_to?(:uuid) ? target.uuid : target.object_id
-        target_identifier ||= target.object_id
-        return false if visited_targets[target_identifier]
-
-        visited_targets[target_identifier] = true
-        target.dependencies.any? do |dependency|
-            dependency.name == dependency_name ||
-                (dependency.respond_to?(:target) && self.target_depends_on?(dependency.target, dependency_name, visited_targets))
-        end
-    end
-
-    def self.update_header_paths_if_depends_on(target_installation_result, dependency_name, header_paths, include_transitive_dependencies: false)
-        native_target = target_installation_result.native_target
-        depends_on_framework = if include_transitive_dependencies
-            self.target_depends_on?(native_target, dependency_name)
-        else
-            native_target.dependencies.any? { |d| d.name == dependency_name }
-        end
+    def self.update_header_paths_if_depends_on(target_installation_result, dependency_name, header_paths)
+        depends_on_framework = target_installation_result.native_target.dependencies.any? { |d| d.name == dependency_name }
         if depends_on_framework
-            native_target.build_configurations.each do |config|
+            target_installation_result.native_target.build_configurations.each do |config|
                 header_search_path = config.build_settings["HEADER_SEARCH_PATHS"] != nil ? config.build_settings["HEADER_SEARCH_PATHS"] : "$(inherited)"
                 header_paths.each { |header| header_search_path = ReactNativePodsUtils.add_search_path_if_not_included(header_search_path, header) }
                 config.build_settings["HEADER_SEARCH_PATHS"] = header_search_path
             end
-        end
-    end
-
-    def self.set_stable_umbrella_search_paths(target_installation_result)
-        return unless ReactNativeCoreUtils.build_rncore_from_source()
-
-        ReactNativePodsUtils.stable_umbrella_frameworks.each do |pod_name, framework_name|
-            header_search_paths = ReactNativePodsUtils.create_header_search_path_for_frameworks(
-                "PODS_CONFIGURATION_BUILD_DIR",
-                pod_name,
-                framework_name,
-                []
-            ).map { |search_path| "\"#{search_path}\"" }
-            ReactNativePodsUtils.update_header_paths_if_depends_on(
-                target_installation_result,
-                pod_name,
-                header_search_paths,
-                include_transitive_dependencies: true
-            )
         end
     end
 
@@ -888,57 +708,6 @@ class ReactNativePodsUtils
         end
     end
 
-    REACT_NATIVE_THIRD_PARTY_PODS = [
-        'RCT-Folly',
-        'glog',
-        'boost',
-        'DoubleConversion',
-        'fmt',
-        'fast_float',
-        'SocketRocket',
-    ].freeze
-
-    # Generated by React Native into the app's build folder, so not under react_native_path.
-    REACT_NATIVE_GENERATED_PODS = [
-        'ReactCodegen',
-        'ReactAppDependencyProvider',
-    ].freeze
-
-    ALWAYS_OPTIMIZED_PODS = [
-        'Yoga',
-        'glog',
-    ].freeze
-
-    # Xcode builds Release at -Os by default. Android builds React Native and its
-    # third-party dependencies at -O2 in Release, and Yoga and glog at -O2 in Debug
-    # too, so match it. Hermes keeps its own MinSizeRel build on both platforms, and
-    # pods outside React Native are left alone.
-    def self.set_optimization_level_for_react_native_pods(installer, react_native_path)
-        Pod::UI.puts("Setting GCC_OPTIMIZATION_LEVEL to 2 for React Native pods in Release, and for #{ALWAYS_OPTIMIZED_PODS.join(', ')} in all configurations")
-        rn_real_path = File.realpath(File.expand_path(react_native_path, Pod::Config.instance.installation_root.to_s))
-
-        installer.target_installation_results.pod_target_installation_results.each do |_, target_installation_result|
-            pod_name = target_installation_result.target.pod_name
-            next unless self.react_native_pod?(installer.sandbox, pod_name, rn_real_path)
-
-            always_optimized = ALWAYS_OPTIMIZED_PODS.include?(pod_name)
-            target_installation_result.native_target.build_configurations.each do |config|
-                next unless always_optimized || config.type == :release
-                config.build_settings['GCC_OPTIMIZATION_LEVEL'] = '2'
-            end
-        end
-    end
-
-    def self.react_native_pod?(sandbox, pod_name, rn_real_path)
-        return false if pod_name == 'hermes-engine'
-        return true if REACT_NATIVE_THIRD_PARTY_PODS.include?(pod_name)
-        return true if REACT_NATIVE_GENERATED_PODS.include?(pod_name)
-        return false unless sandbox.local?(pod_name)
-
-        pod_real_path = File.realpath(sandbox.pod_dir(pod_name).to_s)
-        pod_real_path == rn_real_path || pod_real_path.start_with?(rn_real_path + File::SEPARATOR)
-    end
-
     def self.add_flag_to_map_with_inheritance(map, field, flag)
         if map[field] == nil
             map[field] = "$(inherited)" + flag
@@ -969,50 +738,6 @@ class ReactNativePodsUtils
         if header_mappings_dir != nil && ReactNativeCoreUtils.build_rncore_from_source()
             spec.header_mappings_dir = header_mappings_dir
         end
-    end
-
-    # ============================ #
-    # Network request memoization  #
-    # ============================ #
-    # CocoaPods evaluates the prebuilt podspecs several times during a single
-    # `pod install`, and every evaluation re-resolves the artifact URLs from
-    # scratch: existence probes against the mirror/Maven Central and nightly
-    # metadata lookups. The answers should not change within one install, so
-    # each request is issued at most once per process and then served from
-    # these in-memory caches.
-    @@artifact_exists_cache = {}
-    @@get_response_cache = {}
-
-    # Memoized existence probe (HTTP HEAD) for a prebuilt artifact URL.
-    # Only conclusive answers are cached. If curl never got an HTTP status
-    # (DNS failure, no route, ...) the probe is left uncached so that a
-    # transient hiccup doesn't permanently mark the artifact as missing.
-    def self.artifact_exists?(tarball_url)
-        unpublished_version = Regexp.escape(UNPUBLISHED_MAVEN_VERSION)
-        return false if tarball_url.match?(%r{/#{unpublished_version}(?:-SNAPSHOT)?/})
-
-        unless @@artifact_exists_cache.key?(tarball_url)
-            # -L is used to follow redirects, useful for the nightlies
-            # The url is wrapped in quotes to avoid escaping & and ?.
-            http_code = `curl -o /dev/null --silent -Iw '%{http_code}' -L "#{tarball_url}"`
-            return false if !$?.success? || http_code == "000"
-            @@artifact_exists_cache[tarball_url] = (http_code == "200")
-        end
-        return @@artifact_exists_cache[tarball_url]
-    end
-
-    # Memoized HTTP GET for small metadata lookups (Maven snapshot metadata).
-    # Returns the Net::HTTPResponse. Only successful responses are cached:
-    # raised network errors propagate uncached, and non-2xx responses (a
-    # transient 5xx, a 404) are returned without being stored, so a later
-    # call within the same process can retry.
-    def self.memoized_get_response(url)
-        unless @@get_response_cache.key?(url)
-            response = Net::HTTP.get_response(URI(url))
-            return response unless response.is_a?(Net::HTTPSuccess)
-            @@get_response_cache[url] = response
-        end
-        return @@get_response_cache[url]
     end
 
     # ==================== #

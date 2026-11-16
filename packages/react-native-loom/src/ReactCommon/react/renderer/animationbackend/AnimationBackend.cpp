@@ -7,13 +7,11 @@
 
 #include "AnimationBackend.h"
 #include "AnimatedPropsRegistry.h"
-#include "AnimationBackendCommitHook.h"
 
 #include <react/debug/react_native_assert.h>
 #include <react/featureflags/ReactNativeFeatureFlags.h>
 #include <react/renderer/animationbackend/AnimatedPropsSerializer.h>
 #include <react/renderer/graphics/Color.h>
-#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -57,35 +55,12 @@ static inline Props::Shared cloneProps(
   return newProps;
 }
 
-// Combines two mutations of the same view from one frame.
-static void mergeMutation(
-    AnimationMutation& existing,
-    AnimationMutation&& incoming) {
-  auto& props = existing.props;
-  for (auto& animatedProp : incoming.props.props) {
-    props.props.push_back(std::move(animatedProp));
-  }
-  if (incoming.props.rawProps) {
-    if (props.rawProps) {
-      auto merged = props.rawProps->toDynamic();
-      mergeAnimatedRawProps(merged, incoming.props.rawProps->toDynamic());
-      props.rawProps = std::make_unique<RawProps>(std::move(merged));
-    } else {
-      props.rawProps = std::move(incoming.props.rawProps);
-    }
-  }
-  existing.hasLayoutUpdates |= incoming.hasLayoutUpdates;
-}
-
 AnimationBackend::AnimationBackend(
     std::shared_ptr<AnimationChoreographer> animationChoreographer,
     std::shared_ptr<UIManager> uiManager)
     : animatedPropsRegistry_(std::make_shared<AnimatedPropsRegistry>()),
       animationChoreographer_(std::move(animationChoreographer)),
-      commitHook_(
-          std::make_unique<AnimationBackendCommitHook>(
-              *uiManager,
-              animatedPropsRegistry_)),
+      commitHook_(*uiManager, animatedPropsRegistry_),
       uiManager_(std::move(uiManager)) {
   react_native_assert(uiManager_.expired() == false);
 
@@ -107,20 +82,19 @@ AnimationBackend::AnimationBackend(
   }
 }
 
-AnimationBackend::~AnimationBackend() = default;
-
 void AnimationBackend::unpackMutations(
     AnimationMutations& mutations,
     std::unordered_map<SurfaceId, SurfaceUpdates>& surfaceUpdates,
     std::set<SurfaceId>& asyncFlushSurfaces) {
   for (auto& mutation : mutations.batch) {
-    auto& updates = surfaceUpdates[mutation.family->getSurfaceId()];
-    const auto tag = mutation.tag;
-    if (auto it = updates.find(tag); it != updates.end()) {
-      mergeMutation(it->second, std::move(mutation));
-    } else {
-      updates.emplace(tag, std::move(mutation));
-    }
+    const auto family = mutation.family;
+    react_native_assert(family != nullptr);
+
+    auto& [families, updates, hasLayoutUpdates] =
+        surfaceUpdates[family->getSurfaceId()];
+    hasLayoutUpdates |= mutation.hasLayoutUpdates;
+    families.insert(family);
+    updates[mutation.tag] = std::move(mutation.props);
   }
 
   asyncFlushSurfaces.merge(mutations.asyncFlushSurfaces);
@@ -135,69 +109,49 @@ void AnimationBackend::applySurfaceUpdates(
   // batched call for the whole frame (typed values, no per-view round trip),
   // and Loom's animation lane only records it. A view with layout props goes
   // to the lane, which lays it out and writes its paint keys to the view.
+  // React Native 0.87 tracks layout updates per surface, not per view, so a
+  // surface with any layout update sends all of its views to the lane.
+  // Loom skips the props registry: it only feeds the commit hook, which
+  // re-applies animated props to React's shadow-tree commits, and Loom's
+  // renderer keeps the values itself.
   if (auto uiManager = uiManager_.lock()) {
     std::unordered_map<Tag, AnimatedProps> paintOnly;
     for (auto& [surfaceId, updates] : surfaceUpdates) {
-      for (auto& [tag, mutation] : updates) {
-        auto packed = animationbackend::packAnimatedProps(mutation.props);
-        if (mutation.hasLayoutUpdates) {
+      for (auto& [tag, props] : updates.propsMap) {
+        auto packed = animationbackend::packAnimatedProps(props);
+        if (updates.hasLayoutUpdates) {
           loomRecordAnimationProps(tag, std::move(packed), /*viewApplied=*/false);
         } else {
           loomRecordAnimationProps(tag, std::move(packed), /*viewApplied=*/true);
-          paintOnly.emplace(tag, std::move(mutation.props));
+          paintOnly.emplace(tag, std::move(props));
         }
       }
     }
     if (!paintOnly.empty()) {
-      uiManager->synchronouslyUpdateAnimatedProps(paintOnly);
+      synchronouslyUpdateProps(paintOnly);
     }
   }
-#if LOOM_RENDERER
   loomFlushAnimationFrames();
-#endif
   (void)asyncFlushSurfaces;
   return;
 #endif
+  animatedPropsRegistry_->update(surfaceUpdates);
+
   for (auto& [surfaceId, updates] : surfaceUpdates) {
-    SurfaceUpdates layoutUpdates;
-    std::unordered_map<Tag, AnimatedProps> directProps;
-    for (auto& [tag, mutation] : updates) {
-      if (mutation.hasLayoutUpdates) {
-        layoutUpdates.emplace(tag, std::move(mutation));
-      } else {
-        directProps.emplace(tag, std::move(mutation.props));
-      }
-    }
-    if (!layoutUpdates.empty()) {
-      // A platform may re-apply a view's earlier direct writes when mounting
-      // it, so committed views are written directly too.
-      if (auto uiManager = uiManager_.lock()) {
-        for (const auto& [tag, mutation] : layoutUpdates) {
-          uiManager->synchronouslyUpdateViewOnUIThread(
-              tag, animationbackend::packAnimatedProps(mutation.props));
-        }
-      }
-      commitUpdates(surfaceId, layoutUpdates);
-    }
-    if (!directProps.empty()) {
-      synchronouslyUpdateProps(directProps);
+    if (updates.hasLayoutUpdates) {
+      commitUpdates(surfaceId, updates);
+    } else {
+      synchronouslyUpdateProps(updates.propsMap);
     }
   }
 
   requestAsyncFlushForSurfaces(asyncFlushSurfaces);
 }
 
-void AnimationBackend::applyMutations(std::vector<AnimationMutations> batches) {
-#if !LOOM_RENDERER
-  // The registry only feeds the commit hook, which re-applies animated props to
-  // React's shadow-tree commits. Loom has none: its renderer keeps the values.
-  animatedPropsRegistry_->update(batches);
-#endif
+void AnimationBackend::applyMutations(AnimationMutations mutations) {
   std::unordered_map<SurfaceId, SurfaceUpdates> surfaceUpdates;
   std::set<SurfaceId> asyncFlushSurfaces;
-  for (auto& mutations : batches) {
-    unpackMutations(mutations, surfaceUpdates, asyncFlushSurfaces);
-  }
+  unpackMutations(mutations, surfaceUpdates, asyncFlushSurfaces);
   applySurfaceUpdates(surfaceUpdates, asyncFlushSurfaces);
 }
 
@@ -209,17 +163,13 @@ void AnimationBackend::onAnimationFrame(AnimationTimestamp timestamp) {
     callbacksCopy = callbacks;
   }
 
-  // Sized up front rather than grown: MSVC's std::set move isn't noexcept, so
-  // growing a vector of AnimationMutations would try to copy move-only props.
-  std::vector<AnimationMutations> batches(callbacksCopy.size());
-  std::transform(
-      callbacksCopy.begin(),
-      callbacksCopy.end(),
-      batches.begin(),
-      [timestamp](const CallbackWithId& callbackWithId) {
-        return callbackWithId.callback(timestamp);
-      });
-  applyMutations(std::move(batches));
+  std::unordered_map<SurfaceId, SurfaceUpdates> surfaceUpdates;
+  std::set<SurfaceId> asyncFlushSurfaces;
+  for (auto& callbackWithId : callbacksCopy) {
+    auto mutations = callbackWithId.callback(timestamp);
+    unpackMutations(mutations, surfaceUpdates, asyncFlushSurfaces);
+  }
+  applySurfaceUpdates(surfaceUpdates, asyncFlushSurfaces);
 }
 
 CallbackId AnimationBackend::start(const Callback& callback) {
@@ -258,9 +208,8 @@ void AnimationBackend::trigger() {
 
 void AnimationBackend::pushAnimationMutations(const Callback& callback) {
   auto timestamp = animationChoreographer_->now();
-  std::vector<AnimationMutations> batches(1);
-  batches[0] = callback(timestamp);
-  applyMutations(std::move(batches));
+  auto mutations = callback(timestamp);
+  applyMutations(std::move(mutations));
 }
 
 void AnimationBackend::commitUpdates(
@@ -271,28 +220,24 @@ void AnimationBackend::commitUpdates(
     return;
   }
 
-  std::unordered_set<std::shared_ptr<const ShadowNodeFamily>> surfaceFamilies;
-  for (const auto& [tag, mutation] : surfaceUpdates) {
-    surfaceFamilies.insert(mutation.family);
-  }
+  auto& surfaceFamilies = surfaceUpdates.families;
+  auto& updates = surfaceUpdates.propsMap;
 
   uiManager->getShadowTreeRegistry().visit(
-      surfaceId,
-      [&surfaceFamilies, &surfaceUpdates](const ShadowTree& shadowTree) {
+      surfaceId, [&surfaceFamilies, &updates](const ShadowTree& shadowTree) {
         shadowTree.commit(
             [&surfaceFamilies,
-             &surfaceUpdates](const RootShadowNode& oldRootShadowNode) {
+             &updates](const RootShadowNode& oldRootShadowNode) {
               return std::static_pointer_cast<RootShadowNode>(
                   oldRootShadowNode.cloneMultiple(
                       surfaceFamilies,
-                      [&surfaceFamilies, &surfaceUpdates](
+                      [&surfaceFamilies, &updates](
                           const ShadowNode& shadowNode,
                           const ShadowNodeFragment& fragment) {
                         auto newProps = ShadowNodeFragment::propsPlaceholder();
                         if (surfaceFamilies.contains(
                                 shadowNode.getFamilyShared())) {
-                          auto& animatedProps =
-                              surfaceUpdates.at(shadowNode.getTag()).props;
+                          auto& animatedProps = updates.at(shadowNode.getTag());
                           newProps = cloneProps(animatedProps, shadowNode);
                         }
                         return shadowNode.clone(
@@ -307,12 +252,6 @@ void AnimationBackend::commitUpdates(
 
 void AnimationBackend::synchronouslyUpdateProps(
     const std::unordered_map<Tag, AnimatedProps>& updates) {
-  if (ReactNativeFeatureFlags::optimizedAnimatedPropUpdates()) {
-    if (auto uiManager = uiManager_.lock()) {
-      uiManager->synchronouslyUpdateAnimatedProps(updates);
-    }
-    return;
-  }
   for (auto& [tag, animatedProps] : updates) {
     // TODO: We shouldn't repack it into dynamic, but for that a rewrite
     // of synchronouslyUpdateViewOnUIThread is needed

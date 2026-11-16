@@ -52,9 +52,7 @@ Pod::Spec.new do |s|
   s.dependency "React-logger"
   s.dependency "React-Core"
   s.dependency "React-debug"
-  s.dependency "React-cxxstableapi"
   s.dependency "React-featureflags"
-  s.dependency "React-timing"
   s.dependency "React-runtimescheduler"
   s.dependency "React-cxxreact"
   s.dependency "React-bridging"
@@ -70,8 +68,6 @@ Pod::Spec.new do |s|
 
   s.subspec "animated" do |ss|
     ss.dependency             "React-Fabric/animationbackend"
-    ss.dependency             "React-Fabric/coreUmbrella"
-    ss.dependency             "ReactCommon/turbomodule/coreUmbrella"
     ss.source_files         = podspec_sources("react/renderer/animated/**/*.{m,mm,cpp,h}", "react/renderer/animated/**/*.{h}")
     ss.exclude_files        = "react/renderer/animated/tests"
     ss.header_dir           = "react/renderer/animated"
@@ -85,19 +81,11 @@ Pod::Spec.new do |s|
   end
 
   s.subspec "animationbackend" do |ss|
-    ss.dependency             "React-Fabric/coreUmbrella"
-    ss.dependency             "React-Fabric/components/viewUmbrella"
-    ss.dependency             "React-callinvoker"
-    ss.dependency             "React-timing"
     ss.source_files         = podspec_sources("react/renderer/animationbackend/**/*.{m,mm,cpp,h}", "react/renderer/animationbackend/**/*.{h}")
-    ss.exclude_files        = "react/renderer/animationbackend/tests"
     ss.header_dir           = "react/renderer/animationbackend"
   end
 
   s.subspec "attributedstring" do |ss|
-    ss.dependency             "React-Fabric/coreUmbrella"
-    ss.dependency             "React-Fabric/components/viewUmbrella"
-    ss.dependency             "React-renderercss"
     ss.source_files         = podspec_sources("react/renderer/attributedstring/**/*.{m,mm,cpp,h}", "react/renderer/attributedstring/**/*.{h}")
     ss.exclude_files        = "react/renderer/attributedstring/tests"
     ss.header_dir           = "react/renderer/attributedstring"
@@ -125,37 +113,20 @@ Pod::Spec.new do |s|
         "\"$(PODS_TARGET_SRCROOT)/react/renderer/components/text/platform/cxx\"",
         "\"$(PODS_TARGET_SRCROOT)/react/renderer/components/textinput/platform/ios\"",
         "\"$(PODS_TARGET_SRCROOT)/react/renderer/components/view/platform/cxx\"",
-        "\"$(PODS_TARGET_SRCROOT)/react/renderer/components/view\"",
-        "\"$(PODS_TARGET_SRCROOT)/react/renderer/componentregistry\"",
-        "\"$(PODS_TARGET_SRCROOT)/react/renderer/core\"",
-        "\"$(PODS_TARGET_SRCROOT)/react/renderer/componentregistry\"",
-        "\"$(PODS_TARGET_SRCROOT)/react/renderer/debug\"",
       ]
     end
 
     ss.source_files         = podspec_sources("react/renderer/core/**/*.{m,mm,cpp,h}", "react/renderer/core/**/*.{h}")
-    ss.exclude_files        = ["react/renderer/core/tests", "react/renderer/core/React"]
+    ss.exclude_files        = "react/renderer/core/tests"
     ss.header_dir           = "react/renderer/core"
     ss.pod_target_xcconfig  = {
       "HEADER_SEARCH_PATHS" => header_search_path.join(" ")
     }
   end
 
-  s.subspec "coreUmbrella" do |ss|
-    ss.source_files         = "react/renderer/core/React/*.h"
-    ss.header_dir           = ""
-    ss.header_mappings_dir  = "react/renderer/core"
-  end
-
   s.subspec "componentregistry" do |ss|
     ss.source_files         = podspec_sources("react/renderer/componentregistry/*.{m,mm,cpp,h}", "react/renderer/componentregistry/*.{h}")
     ss.header_dir           = "react/renderer/componentregistry"
-  end
-
-  s.subspec "componentregistryUmbrella" do |ss|
-    ss.source_files         = "react/renderer/componentregistry/React/*.h"
-    ss.header_dir           = ""
-    ss.header_mappings_dir  = "react/renderer/componentregistry"
   end
 
   s.subspec "componentregistrynative" do |ss|
@@ -165,8 +136,6 @@ Pod::Spec.new do |s|
 
   s.subspec "components" do |ss|
     ss.subspec "root" do |sss|
-      sss.dependency             "React-Fabric/coreUmbrella"
-      sss.dependency             "React-Fabric/components/viewUmbrella"
       sss.source_files         = podspec_sources("react/renderer/components/root/**/*.{m,mm,cpp,h}", "react/renderer/components/root/**/*.{h}")
       sss.exclude_files        = "react/renderer/components/root/tests"
       sss.header_dir           = "react/renderer/components/root"
@@ -179,15 +148,7 @@ Pod::Spec.new do |s|
       sss.header_dir           = "react/renderer/components/view"
     end
 
-    ss.subspec "viewUmbrella" do |sss|
-      sss.source_files         = "react/renderer/components/view/React/*.h"
-      sss.header_dir           = ""
-      sss.header_mappings_dir  = "react/renderer/components/view"
-    end
-
     ss.subspec "scrollview" do |sss|
-      sss.dependency             "React-Fabric/coreUmbrella"
-      sss.dependency             "React-Fabric/components/viewUmbrella"
       sss.source_files         = podspec_sources("react/renderer/components/scrollview/**/*.{m,mm,cpp,h}", "react/renderer/components/scrollview/**/*.{h}")
       sss.header_dir           = "react/renderer/components/scrollview"
       sss.exclude_files        = "react/renderer/components/scrollview/tests", "react/renderer/components/scrollview/platform/android"
@@ -224,14 +185,7 @@ Pod::Spec.new do |s|
     ss.header_dir           = "react/renderer/imagemanager"
   end
 
-  s.subspec "imagemanagerUmbrella" do |ss|
-    ss.source_files         = "react/renderer/imagemanager/React/*.h"
-    ss.header_dir           = ""
-    ss.header_mappings_dir  = "react/renderer/imagemanager"
-  end
-
   s.subspec "mounting" do |ss|
-    ss.dependency             "React-Fabric/coreUmbrella"
     ss.dependency             "React-jsinspectortracing"
     ss.source_files         = podspec_sources("react/renderer/mounting/**/*.{m,mm,cpp,h}", "react/renderer/mounting/**/*.h")
     ss.exclude_files        = "react/renderer/mounting/tests"
@@ -246,7 +200,6 @@ Pod::Spec.new do |s|
     end
 
     ss.subspec "intersection" do |sss|
-      sss.dependency           "React-renderercss"
       sss.source_files         = podspec_sources("react/renderer/observers/intersection/**/*.{m,mm,cpp,h}", "react/renderer/observers/intersection/**/*.h")
       sss.exclude_files        = "react/renderer/observers/intersection/tests"
       sss.header_dir           = "react/renderer/observers/intersection"
@@ -256,12 +209,6 @@ Pod::Spec.new do |s|
       sss.source_files         = podspec_sources("react/renderer/observers/mutation/**/*.{m,mm,cpp,h}", "react/renderer/observers/mutation/**/*.h")
       sss.exclude_files        = "react/renderer/observers/mutation/tests"
       sss.header_dir           = "react/renderer/observers/mutation"
-    end
-
-    ss.subspec "resize" do |sss|
-      sss.source_files         = podspec_sources("react/renderer/observers/resize/**/*.{m,mm,cpp,h}", "react/renderer/observers/resize/**/*.h")
-      sss.exclude_files        = "react/renderer/observers/resize/tests"
-      sss.header_dir           = "react/renderer/observers/resize"
     end
   end
 
@@ -284,9 +231,6 @@ Pod::Spec.new do |s|
     end
 
     ss.dependency             "React-rendererconsistency"
-    ss.dependency             "React-Fabric/coreUmbrella"
-    ss.dependency             "React-Fabric/componentregistryUmbrella"
-    ss.dependency             "React-Fabric/components/viewUmbrella"
     ss.dependency             "React-Fabric/loomRenderer"
     ss.source_files         = podspec_sources("react/renderer/uimanager/*.{m,mm,cpp,h}", "react/renderer/uimanager/*.h")
     ss.header_dir           = "react/renderer/uimanager"
@@ -294,9 +238,9 @@ Pod::Spec.new do |s|
 
   # Loom: the renderer module (react/renderer/loom/{binding,core,mounting,worker,text,host,compat}).
   s.subspec "loomRenderer" do |ss|
-    ss.dependency             "React-Fabric/coreUmbrella"
-    ss.dependency             "React-Fabric/components/viewUmbrella"
-    ss.dependency             "React-Fabric/componentregistryUmbrella"
+    ss.dependency             "React-Fabric/core"
+    ss.dependency             "React-Fabric/components/view"
+    ss.dependency             "React-Fabric/componentregistry"
     ss.dependency             "React-Fabric/consistency"
     ss.source_files         = podspec_sources("react/renderer/loom/{binding,core,mounting,worker,text,host,compat}/**/*.{m,mm,cpp,h}", "react/renderer/loom/{binding,core,mounting,worker,text,host,compat}/**/*.h")
     ss.header_dir           = ""
@@ -307,7 +251,7 @@ Pod::Spec.new do |s|
   # (<react/renderer/LoomConfig.h>, which lives in loom/config so it can be published at that path).
   s.subspec "loom" do |ss|
     ss.dependency             "React-Fabric/animationbackend"
-    ss.dependency             "React-Fabric/coreUmbrella"
+    ss.dependency             "React-Fabric/core"
     ss.dependency             "React-runtimescheduler"
     ss.source_files         = podspec_sources("react/loom/*.h", "react/loom/*.h")
     ss.header_dir           = "react/loom"
@@ -329,6 +273,4 @@ Pod::Spec.new do |s|
     ss.source_files         = podspec_sources("react/renderer/viewtransition/**/*.{m,mm,cpp,h}", "react/renderer/viewtransition/**/*.h")
     ss.header_dir           = "react/renderer/viewtransition"
   end
-
-  mark_as_react_native_build(s)
 end

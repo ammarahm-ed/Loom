@@ -16,7 +16,7 @@
 #include <react/common/mapbuffer/JReadableMapBuffer.h>
 #include <react/debug/react_native_assert.h>
 #include <react/featureflags/ReactNativeFeatureFlags.h>
-#include <react/jni/NativeArray.h>
+#include <react/jni/ReadableNativeMap.h>
 #include <react/renderer/attributedstring/conversions.h>
 #include <react/renderer/core/conversions.h>
 #include <react/renderer/mapbuffer/MapBuffer.h>
@@ -53,8 +53,8 @@ Size measureText(
     float minHeight,
     float maxHeight,
     jfloatArray attachmentPositions) {
-  auto fabricUIManager =
-      contextContainer->at<jni::alias_ref<jobject>>("FabricUIManager");
+  const jni::global_ref<jobject>& fabricUIManager =
+      contextContainer->at<jni::global_ref<jobject>>("FabricUIManager");
 
   static auto measure =
       jni::findClassStatic("com/facebook/react/fabric/FabricUIManager")
@@ -250,8 +250,8 @@ LinesMeasurements TextLayoutManager::measureLines(
   const auto& attributedString = attributedStringBox.getValue();
 
   auto doMeasureLines = [&]() {
-    auto fabricUIManager =
-        contextContainer_->at<jni::alias_ref<jobject>>("FabricUIManager");
+    const jni::global_ref<jobject>& fabricUIManager =
+        contextContainer_->at<jni::global_ref<jobject>>("FabricUIManager");
     static auto measureLines =
         jni::findClassStatic("com/facebook/react/fabric/FabricUIManager")
             ->getMethod<NativeArray::javaobject(
@@ -341,8 +341,8 @@ TextLayoutManager::PreparedTextLayout TextLayoutManager::prepareLayout(
        .pointScaleFactor = layoutContext.pointScaleFactor},
       [&]() {
         createdPreparedLayout = true;
-        auto fabricUIManager =
-            contextContainer_->at<jni::alias_ref<jobject>>("FabricUIManager");
+        const auto& fabricUIManager =
+            contextContainer_->at<jni::global_ref<jobject>>("FabricUIManager");
         auto attributedStringMB = JReadableMapBuffer::createWithContents(
             toMapBuffer(attributedString));
         auto paragraphAttributesMB = JReadableMapBuffer::createWithContents(
@@ -422,8 +422,8 @@ TextLayoutManager::PreparedTextLayout TextLayoutManager::prepareLayout(
     javaReactTags->setRegion(
         0, static_cast<jsize>(reactTags.size()), reactTags.data());
 
-    auto fabricUIManager =
-        contextContainer_->at<jni::alias_ref<jobject>>("FabricUIManager");
+    const auto& fabricUIManager =
+        contextContainer_->at<jni::global_ref<jobject>>("FabricUIManager");
     return PreparedTextLayout{
         jni::make_global(reusePreparedLayoutWithNewReactTags(
             fabricUIManager, preparedText->get(), javaReactTags.get()))};
@@ -436,8 +436,8 @@ TextMeasurement TextLayoutManager::measurePreparedLayout(
     const PreparedTextLayout& preparedLayout,
     const TextLayoutContext& /*layoutContext*/,
     const LayoutConstraints& layoutConstraints) const {
-  auto fabricUIManager =
-      contextContainer_->at<jni::alias_ref<jobject>>("FabricUIManager");
+  const auto& fabricUIManager =
+      contextContainer_->at<jni::global_ref<jobject>>("FabricUIManager");
 
   static auto measurePreparedLayout =
       jni::findClassStatic("com/facebook/react/fabric/FabricUIManager")
@@ -496,8 +496,8 @@ TextMeasurement TextLayoutManager::measurePreparedLayoutSize(
     const TextLayoutContext& /*layoutContext*/,
     const LayoutConstraints& layoutConstraints,
     TextLayoutManagerProfile* profile) const {
-  auto fabricUIManager =
-      contextContainer_->at<jni::alias_ref<jobject>>("FabricUIManager");
+  const auto& fabricUIManager =
+      contextContainer_->at<jni::global_ref<jobject>>("FabricUIManager");
 
   static auto measurePreparedLayoutSize =
       jni::findClassStatic("com/facebook/react/fabric/FabricUIManager")

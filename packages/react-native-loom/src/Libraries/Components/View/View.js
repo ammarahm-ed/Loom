@@ -9,7 +9,6 @@
  */
 
 import type {HostInstance} from '../../../src/private/types/HostInstance';
-import type {SafeAreaInsetsChangeEvent} from '../../Types/CoreEventTypes';
 import type {ViewProps} from './ViewPropTypes';
 
 import TextAncestorContext from '../../Text/TextAncestorContext';
@@ -17,13 +16,6 @@ import ViewNativeComponent from './ViewNativeComponent';
 import * as React from 'react';
 import {use} from 'react';
 import {jsx} from 'react/jsx-runtime';
-
-const warnOnRepeatedSafeAreaInsetsChanges: (
-  onSafeAreaInsetsChange: (event: SafeAreaInsetsChangeEvent) => unknown,
-) => (event: SafeAreaInsetsChangeEvent) => unknown = __DEV__
-  ? require('../../../src/private/components/view/warnOnRepeatedSafeAreaInsetsChanges')
-      .default
-  : onSafeAreaInsetsChange => onSafeAreaInsetsChange;
 
 export type ViewInstance = HostInstance;
 
@@ -48,7 +40,6 @@ const VIEW_OWN_PROPS: {+[string]: true} = {
   'aria-label': true,
   'aria-labelledby': true,
   'aria-live': true,
-  'aria-modal': true,
   'aria-selected': true,
   'aria-valuemax': true,
   'aria-valuemin': true,
@@ -73,9 +64,8 @@ function View_withRef(
   // ref. Their props are then already exactly the native component's props, so
   // they are handed on as they are instead of being copied key by key. (React
   // treats props objects as immutable, so sharing one between this component
-  // and the host component is safe.) Development keeps the copy: it wraps
-  // `experimental_onSafeAreaInsetsChange` in place.
-  if (!__DEV__ && ref == null) {
+  // and the host component is safe.)
+  if (ref == null) {
     let rewritesProps = false;
     for (const key in props) {
       if (VIEW_OWN_PROPS[key] === true) {
@@ -112,7 +102,6 @@ function View_withRef(
   const ariaLabel = props['aria-label'];
   const ariaLabelledBy = props['aria-labelledby'];
   const ariaLive = props['aria-live'];
-  const ariaModal = props['aria-modal'];
   const ariaSelected = props['aria-selected'];
   const ariaValueMax = props['aria-valuemax'];
   const ariaValueMin = props['aria-valuemin'];
@@ -135,10 +124,6 @@ function View_withRef(
   if (ariaLive !== undefined) {
     resolvedProps.accessibilityLiveRegion =
       ariaLive === 'off' ? 'none' : ariaLive;
-  }
-
-  if (ariaModal !== undefined) {
-    resolvedProps.accessibilityViewIsModal = ariaModal;
   }
 
   if (ariaHidden !== undefined) {
@@ -186,15 +171,6 @@ function View_withRef(
       now: ariaValueNow ?? accessibilityValue?.now,
       text: ariaValueText ?? accessibilityValue?.text,
     };
-  }
-
-  if (__DEV__) {
-    const onSafeAreaInsetsChange =
-      resolvedProps.experimental_onSafeAreaInsetsChange;
-    if (onSafeAreaInsetsChange != null) {
-      resolvedProps.experimental_onSafeAreaInsetsChange =
-        warnOnRepeatedSafeAreaInsetsChanges(onSafeAreaInsetsChange);
-    }
   }
 
   // Loom: `resolvedProps` is this render's own object (the rest copy above),

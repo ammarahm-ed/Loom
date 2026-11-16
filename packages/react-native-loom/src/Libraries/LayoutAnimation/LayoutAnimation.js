@@ -46,7 +46,7 @@ let isLayoutAnimationEnabled: boolean =
   ReactNativeFeatureFlags.isLayoutAnimationEnabled();
 
 function setLayoutAnimationEnabled(value: boolean) {
-  isLayoutAnimationEnabled = value;
+  isLayoutAnimationEnabled = isLayoutAnimationEnabled;
 }
 
 /**
@@ -93,7 +93,7 @@ function configureNext(
   // conditionally enabled on iOS (pending fully shipping; this is a temporary state).
   const FabricUIManager = getFabricUIManager();
   if (FabricUIManager?.configureNextLayoutAnimation) {
-    FabricUIManager.configureNextLayoutAnimation(
+    global?.nativeFabricUIManager?.configureNextLayoutAnimation(
       config,
       onAnimationComplete,
       () => {

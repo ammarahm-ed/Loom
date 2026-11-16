@@ -20,7 +20,6 @@ import android.view.Gravity
 import com.facebook.common.logging.FLog
 import com.facebook.react.BuildConfig
 import com.facebook.react.R
-import com.facebook.react.bridge.Dynamic
 import com.facebook.react.common.ReactConstants
 import com.facebook.react.common.annotations.UnstableReactNativeAPI
 import com.facebook.react.common.mapbuffer.MapBuffer
@@ -33,7 +32,6 @@ import com.facebook.react.uimanager.IViewManagerWithChildren
 import com.facebook.react.uimanager.LayoutShadowNode
 import com.facebook.react.uimanager.LengthPercentage
 import com.facebook.react.uimanager.LengthPercentageType
-import com.facebook.react.uimanager.PointerEvents
 import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.ReferenceStateWrapper
 import com.facebook.react.uimanager.StateWrapper
@@ -47,7 +45,6 @@ import com.facebook.react.uimanager.style.BorderStyle.Companion.fromString
 import com.facebook.react.uimanager.style.LogicalEdge
 import com.facebook.react.views.text.DefaultStyleValuesUtil.getDefaultTextColorHighlight
 import com.facebook.react.views.text.ReactTypefaceUtils.getFontWeightAdjustment
-import com.facebook.react.views.view.ImportantForInteractionHelper
 import java.util.HashMap
 
 /** View manager for `<Text>` nodes. */
@@ -56,7 +53,7 @@ import java.util.HashMap
 public open class ReactTextViewManager
 @JvmOverloads
 public constructor(
-    protected var reactTextViewManagerCallback: ReactTextViewManagerCallback? = null,
+    protected var reactTextViewManagerCallback: ReactTextViewManagerCallback? = null
 ) :
     BaseViewManager<ReactTextView, LayoutShadowNode>(),
     IViewManagerWithChildren,
@@ -101,7 +98,7 @@ public constructor(
       ReactTextView(context)
 
   override fun updateExtraData(view: ReactTextView, extraData: Any) {
-    SystraceSection("ReactTextViewManager.updateExtraData").use { _ ->
+    SystraceSection("ReactTextViewManager.updateExtraData").use { s ->
       val update = extraData as ReactTextUpdate
       val spanned: Spanned = update.text
       view.setText(update)
@@ -125,7 +122,7 @@ public constructor(
   override fun createShadowNodeInstance(): LayoutShadowNode = LayoutShadowNode()
 
   public fun createShadowNodeInstance(
-      reactTextViewManagerCallback: ReactTextViewManagerCallback?,
+      reactTextViewManagerCallback: ReactTextViewManagerCallback?
   ): LayoutShadowNode = LayoutShadowNode()
 
   override fun getShadowNodeClass(): Class<LayoutShadowNode> = LayoutShadowNode::class.java
@@ -142,7 +139,7 @@ public constructor(
       props: ReactStylesDiffMap,
       stateWrapper: StateWrapper,
   ): Any? {
-    SystraceSection("ReactTextViewManager.updateState").use { _ ->
+    SystraceSection("ReactTextViewManager.updateState").use { s ->
       val refState = (stateWrapper as? ReferenceStateWrapper)?.stateDataReference
       if (refState is PreparedLayout) {
         return getReactTextUpdateFromPreparedLayout(view, refState)
@@ -177,26 +174,14 @@ public constructor(
 
     val minimumFontSize: Float =
         paragraphAttributes.getDouble(TextLayoutManager.PA_KEY_MINIMUM_FONT_SIZE).toFloat()
-    @Suppress("DEPRECATION") view.setMinimumFontSize(minimumFontSize)
-    val minimumFontScale: Float =
-        if (paragraphAttributes.contains(TextLayoutManager.PA_KEY_MINIMUM_FONT_SCALE))
-            paragraphAttributes.getDouble(TextLayoutManager.PA_KEY_MINIMUM_FONT_SCALE).toFloat()
-        else Float.NaN
-    view.setMinimumFontScale(minimumFontScale)
-
-    view.setEllipsizeLocation(
-        TextAttributeProps.getEllipsizeMode(
-            paragraphAttributes.getString(TextLayoutManager.PA_KEY_ELLIPSIZE_MODE),
-        ),
-    )
-    view.updateView()
+    view.setMinimumFontSize(minimumFontSize)
 
     // Clear any stale PreparedLayout from a previous update
     view.setPreparedLayout(null)
 
     val textBreakStrategy =
         TextAttributeProps.getTextBreakStrategy(
-            paragraphAttributes.getString(TextLayoutManager.PA_KEY_TEXT_BREAK_STRATEGY),
+            paragraphAttributes.getString(TextLayoutManager.PA_KEY_TEXT_BREAK_STRATEGY)
         )
     val currentJustificationMode =
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) 0 else view.justificationMode
@@ -207,9 +192,6 @@ public constructor(
         TextLayoutManager.getTextGravity(attributedString, spanned),
         textBreakStrategy,
         TextAttributeProps.getJustificationMode(props, currentJustificationMode),
-        TextAttributeProps.fromMapBuffer(
-            attributedString.getMapBuffer(TextLayoutManager.AS_KEY_BASE_ATTRIBUTES),
-        ),
     )
   }
 
@@ -239,7 +221,6 @@ public constructor(
         textAlign,
         preparedLayout.textBreakStrategy,
         preparedLayout.justificationMode,
-        preparedLayout.baseTextAttributes,
     )
   }
 
@@ -261,12 +242,6 @@ public constructor(
   @ReactProp(name = "overflow")
   public fun setOverflow(view: ReactTextView, overflow: String?) {
     view.setOverflow(overflow)
-    ImportantForInteractionHelper.setImportantForInteraction(
-        view,
-        // <Text> has no pointerEvents prop, so it always behaves as AUTO.
-        PointerEvents.AUTO,
-        view.overflow,
-    )
   }
 
   @ReactProp(name = "accessible")
@@ -349,20 +324,6 @@ public constructor(
     }
   }
 
-  @ReactProp(name = "lineBreak")
-  public fun setLineBreak(view: ReactTextView, lineBreak: String?) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      view.lineBreakStyle = TextAttributeProps.getLineBreakStyle(lineBreak)
-    }
-  }
-
-  @ReactProp(name = "wordBreak")
-  public fun setWordBreak(view: ReactTextView, wordBreak: String?) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      view.lineBreakWordStyle = TextAttributeProps.getLineBreakWordStyle(wordBreak)
-    }
-  }
-
   @ReactPropGroup(
       names =
           [
@@ -372,21 +333,15 @@ public constructor(
               ViewProps.BORDER_BOTTOM_RIGHT_RADIUS,
               ViewProps.BORDER_BOTTOM_LEFT_RADIUS,
           ],
-  )
-  public fun setBorderRadius(view: ReactTextView, index: Int, rawBorderRadius: Dynamic) {
-    val borderRadius = LengthPercentage.setFromDynamic(rawBorderRadius)
-    BackgroundStyleApplicator.setBorderRadius(view, BorderRadiusProp.values()[index], borderRadius)
-  }
-
-  @Deprecated(
-      "Don't use setBorderRadius(view, index, Float) as it was deprecated in React Native 0.88.0.",
+      defaultFloat = Float.NaN,
   )
   public fun setBorderRadius(view: ReactTextView, index: Int, borderRadius: Float) {
-    // Direct body: DynamicFromObject(Float).asDouble() throws, and setFromDynamic
-    // would not map NaN back to null like the original Float path did.
     val radius =
-        if (borderRadius.isNaN()) null
-        else LengthPercentage(borderRadius, LengthPercentageType.POINT)
+        if (borderRadius.isNaN()) {
+          null
+        } else {
+          LengthPercentage(borderRadius, LengthPercentageType.POINT)
+        }
     BackgroundStyleApplicator.setBorderRadius(view, BorderRadiusProp.values()[index], radius)
   }
 

@@ -34,7 +34,6 @@
 #import <react/utils/FollyConvert.h>
 
 #import <react/featureflags/ReactNativeFeatureFlags.h>
-#import <react/renderer/animationbackend/AnimatedProps.h>
 #import <react/renderer/componentregistry/ComponentDescriptorFactory.h>
 #import <react/renderer/components/image/ImageComponentDescriptor.h>
 #import <react/renderer/components/image/ImageShadowNode.h>
@@ -560,12 +559,11 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   std::unordered_set<Tag> _directReplacedTags;
   std::unordered_map<Tag, State::Shared> _directPendingStates;
   // The last paragraph state delivered per tag, with what it was built from. A republish whose
-  // string (by identity), paragraph attributes and layout size are unchanged reuses it instead of
-  // copying the attributed string into a new ParagraphState.
+  // string (by identity) and paragraph attributes are unchanged reuses it instead of copying the
+  // attributed string into a new ParagraphState.
   struct DirectTextState {
     std::shared_ptr<const AttributedString> attributedString;
     ParagraphAttributes paragraphAttributes;
-    facebook::react::Size layoutSize;
     ParagraphShadowNode::ConcreteState::Shared state;
   };
   std::unordered_map<Tag, DirectTextState> _directTextStates;
@@ -631,7 +629,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
     _mountingManager.contextContainer = contextContainer;
     _mountingManager.delegate = self;
 
-    if (ReactNativeFeatureFlags::enableFabricCommitBranchingMergeOnMainThread()) {
+    if (ReactNativeFeatureFlags::enableFabricCommitBranching()) {
       _mergeRunLoopObserverDelegate = std::make_shared<ReactRevisionMergeRunLoopObserverDelegate>(self);
       _mergeRunLoopObserver = std::make_unique<const MainRunLoopObserver>(
           RunLoopObserver::Activity::BeforeWaiting, _mergeRunLoopObserverDelegate);
@@ -800,56 +798,6 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 }
 
 #if LOOM_RENDERER
-- (void)schedulerDidSynchronouslyUpdateAnimatedProps:
-    (const std::unordered_map<facebook::react::Tag, facebook::react::AnimatedProps> &)updates
-{
-  // Loom's animation lane already recorded these frames; this only writes them
-  // to the views. Each view's current props are copied and the animated fields
-  // set in place, which costs no dictionary and no parse.
-  RCTAssertMainQueue();
-  RCTScheduler *scheduler = [self scheduler];
-  if (!scheduler || !_contextContainer) {
-    return;
-  }
-  auto *registry = _mountingManager.componentViewRegistry;
-  for (const auto &[tag, animated] : updates) {
-    UIView<RCTComponentViewProtocol> *view = [registry findComponentViewWithTag:tag];
-    if (view == nil) {
-      continue;
-    }
-    const auto handle = [[view class] componentDescriptorProvider].handle;
-    const auto *descriptor = [scheduler findComponentDescriptorByHandle_DO_NOT_USE_THIS_IS_BROKEN:handle];
-    if (descriptor == nullptr) {
-      continue;
-    }
-    const auto oldProps = [view props];
-    SurfaceId surfaceId = -1;
-    for (UIView *ancestor = view; ancestor != nil; ancestor = ancestor.superview) {
-      if (RCTIsReactRootView(@(ancestor.tag))) {
-        surfaceId = static_cast<SurfaceId>(ancestor.tag);
-        break;
-      }
-    }
-    const PropsParserContext context{surfaceId, *_contextContainer};
-    auto newProps = animated.rawProps
-        ? descriptor->cloneProps(context, oldProps, RawProps(*animated.rawProps))
-        : descriptor->cloneProps(context, oldProps, RawProps(folly::dynamic::object()));
-    if (auto viewProps = std::dynamic_pointer_cast<const BaseViewProps>(newProps)) {
-      auto &mutableProps = const_cast<BaseViewProps &>(*viewProps);
-      for (const auto &animatedProp : animated.props) {
-        cloneProp(mutableProps, *animatedProp);
-      }
-    }
-    // A view skips the keys an earlier synchronous update marked as managed by
-    // Animated; like that update, this one is the animation writing them.
-    NSSet<NSString *> *managedKeys = view.propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN;
-    view.propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN = nil;
-    [view updateProps:newProps oldProps:oldProps];
-    view.propKeysManagedByAnimated_DO_NOT_USE_THIS_IS_BROKEN = managedKeys;
-    [view finalizeUpdates:RNComponentViewUpdateMaskProps];
-  }
-}
-
 - (void)directDeferFinalize:(UIView<RCTComponentViewProtocol> *)view mask:(RNComponentViewUpdateMask)mask
 {
   if (!_directFinalizeViews) {
@@ -1490,7 +1438,6 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   }
   const SurfaceId surfaceId = update.surfaceId;
   const Tag tag = update.tag;
-  const auto &layoutSize = update.prepared.size;
   _directSurfaceByTag[tag] = surfaceId;
   if (!_directTextLayoutManager) {
     _directTextLayoutManager = std::make_shared<TextLayoutManager>(_contextContainer);
@@ -1498,22 +1445,19 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   ParagraphShadowNode::ConcreteState::Shared state;
   auto &last = _directTextStates[tag];
   if (last.state && last.attributedString == update.attributedString &&
-      last.paragraphAttributes == update.paragraphAttributes && last.layoutSize == layoutSize) {
+      last.paragraphAttributes == update.paragraphAttributes) {
     state = last.state;
   } else {
-    // RCTParagraphComponentView draws into state.layoutSize (the content box, as ParagraphShadowNode
-    // sets it); a zero size would draw the paragraph unwrapped. The string copy here is the one the
-    // platform state type requires.
+    // RCTParagraphComponentView draws into its layout metrics' content frame. The string copy here
+    // is the one the platform state type requires.
     ParagraphState data{
         .attributedString = *update.attributedString,
         .paragraphAttributes = update.paragraphAttributes,
-        .layoutManager = _directTextLayoutManager,
-        .layoutSize = layoutSize};
+        .layoutManager = _directTextLayoutManager};
     auto sharedData = std::make_shared<const ParagraphState>(std::move(data));
     state = std::make_shared<const ParagraphShadowNode::ConcreteState>(sharedData, ShadowNodeFamily::Weak{});
     last.attributedString = update.attributedString;
     last.paragraphAttributes = update.paragraphAttributes;
-    last.layoutSize = layoutSize;
     last.state = state;
   }
   if (auto *view = [_mountingManager.componentViewRegistry findComponentViewWithTag:tag]) {
@@ -1748,17 +1692,11 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   toolbox.runtimeExecutor = runtimeExecutor;
   toolbox.bridgelessBindingsExecutor = _bridgelessBindingsExecutor;
 
-  __weak RCTMountingManager *weakMountingManager = _mountingManager;
-  toolbox.eventBeatFactory = [runtimeScheduler, weakMountingManager](
-                                 std::shared_ptr<EventBeat::OwnerBox> ownerBox) -> std::unique_ptr<EventBeat> {
+  toolbox.eventBeatFactory =
+      [runtimeScheduler](std::shared_ptr<EventBeat::OwnerBox> ownerBox) -> std::unique_ptr<EventBeat> {
     auto runLoopObserver =
         std::make_unique<const MainRunLoopObserver>(RunLoopObserver::Activity::BeforeWaiting, ownerBox->owner);
-    auto windowLayerResolver = [weakMountingManager](Tag tag) -> CALayer * {
-      RCTMountingManager *mountingManager = weakMountingManager;
-      return [mountingManager.componentViewRegistry findComponentViewWithTag:tag].window.layer;
-    };
-    return std::make_unique<AppleEventBeat>(
-        std::move(ownerBox), std::move(runLoopObserver), *runtimeScheduler, std::move(windowLayerResolver));
+    return std::make_unique<AppleEventBeat>(std::move(ownerBox), std::move(runLoopObserver), *runtimeScheduler);
   };
 
   RCTScheduler *scheduler = [[RCTScheduler alloc] initWithToolbox:toolbox];
@@ -1806,7 +1744,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 
 - (void)schedulerShouldMergeReactRevision:(SurfaceId)surfaceId
 {
-  if (RCTIsMainQueue() || !ReactNativeFeatureFlags::enableFabricCommitBranchingMergeOnMainThread()) {
+  if (RCTIsMainQueue()) {
     [self _mergeReactRevisionForSurfaceId:surfaceId];
     return;
   }
@@ -1825,6 +1763,7 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
 
 - (void)_mergeReactRevisionForSurfaceId:(SurfaceId)surfaceId
 {
+  RCTAssertMainQueue();
   RCTScheduler *scheduler = [self scheduler];
   if (!scheduler) {
     return;
@@ -1885,14 +1824,11 @@ extern "C" void LoomTextSetApplyingAnimationFrame(bool animationFrame);
   [_mountingManager setIsJSResponder:isJSResponder blockNativeResponder:blockNativeResponder forShadowView:shadowView];
 }
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-implementations"
 - (void)addObserver:(id<RCTSurfacePresenterObserver>)observer
 {
   std::unique_lock lock(_observerListMutex);
   _observers.push_back(observer);
 }
-#pragma clang diagnostic pop
 
 - (void)removeObserver:(id<RCTSurfacePresenterObserver>)observer
 {

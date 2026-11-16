@@ -4,7 +4,7 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
- * @flow strict-local
+ * @flow
  * @format
  */
 
@@ -21,13 +21,13 @@ import type {
 import * as ReactNativeFeatureFlags from '../../src/private/featureflags/ReactNativeFeatureFlags';
 import {type ScrollResponderType} from '../Components/ScrollView/ScrollView';
 import View from '../Components/View/View';
-import Platform from '../Utilities/Platform';
 import VirtualizedLists from '@react-native/virtualized-lists';
 import memoizeOne from 'memoize-one';
 import * as React from 'react';
 
 const StyleSheet = require('../StyleSheet/StyleSheet').default;
 const deepDiffer = require('../Utilities/differ/deepDiffer').default;
+const Platform = require('../Utilities/Platform').default;
 const invariant = require('invariant');
 
 // Loom: windowing updates are transitions when JavaScript runs on the main thread.
@@ -79,7 +79,7 @@ type OptionalFlatListProps<ItemT> = {
    * any of your `renderItem`, Header, Footer, etc. functions depend on anything outside of the
    * `data` prop, stick it here and treat it immutably.
    */
-  extraData?: unknown,
+  extraData?: any,
   /**
    * `getItemLayout` is an optional optimizations that let us skip measurement of dynamic content if
    * you know the height of items a priori. `getItemLayout` is the most efficient, and is easy to
@@ -173,10 +173,9 @@ function numColumnsOrDefault(numColumns: ?number) {
   return numColumns ?? 1;
 }
 
-function isArrayLike<ItemT>(
-  data: ?Readonly<$ArrayLike<ItemT>>,
-): implies data is Readonly<$ArrayLike<ItemT>> {
-  return data != null && typeof data.length === 'number';
+function isArrayLike(data: unknown): boolean {
+  // $FlowExpectedError[incompatible-use]
+  return typeof Object(data).length === 'number';
 }
 
 type FlatListBaseProps<ItemT> = {
@@ -307,7 +306,6 @@ export type FlatListProps<ItemT> = Readonly<{
  *
  * Also inherits [ScrollView Props](docs/scrollview.html#props), unless it is nested in another FlatList of same orientation.
  */
-// flowlint-next-line unclear-type:off
 class FlatList<ItemT = any> extends React.PureComponent<FlatListProps<ItemT>> {
   /**
    * Scrolls to the end of the content. May be janky without `getItemLayout` prop.
@@ -407,7 +405,7 @@ class FlatList<ItemT = any> extends React.PureComponent<FlatListProps<ItemT>> {
     }
   }
 
-  getScrollableNode(): ?number {
+  getScrollableNode(): any {
     if (this._listRef) {
       return this._listRef.getScrollableNode();
     }
@@ -502,10 +500,7 @@ class FlatList<ItemT = any> extends React.PureComponent<FlatListProps<ItemT>> {
       'FlatList does not support custom data formats.',
     );
     if (numColumns > 1) {
-      invariant(
-        Boolean(horizontal) === false,
-        'numColumns does not support horizontal.',
-      );
+      invariant(!horizontal, 'numColumns does not support horizontal.');
     } else {
       invariant(
         !columnWrapperStyle,
@@ -617,13 +612,11 @@ class FlatList<ItemT = any> extends React.PureComponent<FlatListProps<ItemT>> {
   }
 
   _renderer = (
-    ListItemComponent: ?(
-      React.ComponentType<ListRenderItemInfo<ItemT>> | React.MixedElement
-    ),
+    ListItemComponent: ?(React.ComponentType<any> | React.MixedElement),
     renderItem: ?ListRenderItem<ItemT>,
     columnWrapperStyle: ?ViewStyleProp,
     numColumns: ?number,
-    extraData: ?unknown,
+    extraData: ?any,
     // $FlowFixMe[missing-local-annot]
   ) => {
     const cols = numColumnsOrDefault(numColumns);

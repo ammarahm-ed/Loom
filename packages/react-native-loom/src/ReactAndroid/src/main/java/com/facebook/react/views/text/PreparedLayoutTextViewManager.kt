@@ -14,7 +14,6 @@ import android.text.Spanned
 import android.view.View
 import androidx.core.view.ViewCompat
 import com.facebook.react.R
-import com.facebook.react.bridge.Dynamic
 import com.facebook.react.internal.SystraceSection
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.BackgroundStyleApplicator
@@ -22,7 +21,7 @@ import com.facebook.react.uimanager.BaseViewManager
 import com.facebook.react.uimanager.IViewGroupManager
 import com.facebook.react.uimanager.LayoutShadowNode
 import com.facebook.react.uimanager.LengthPercentage
-import com.facebook.react.uimanager.PointerEvents
+import com.facebook.react.uimanager.LengthPercentageType
 import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.ReferenceStateWrapper
 import com.facebook.react.uimanager.StateWrapper
@@ -35,7 +34,6 @@ import com.facebook.react.uimanager.style.BorderStyle
 import com.facebook.react.uimanager.style.LogicalEdge
 import com.facebook.react.uimanager.style.Overflow
 import com.facebook.react.views.text.ReactTextViewAccessibilityDelegate.AccessibilityLinks
-import com.facebook.react.views.view.ImportantForInteractionHelper
 import java.util.HashMap
 
 @ReactModule(name = PreparedLayoutTextViewManager.REACT_CLASS)
@@ -72,7 +70,7 @@ internal class PreparedLayoutTextViewManager :
     )
   }
 
-  override fun createViewInstance(context: ThemedReactContext): PreparedLayoutTextView =
+  public override fun createViewInstance(context: ThemedReactContext): PreparedLayoutTextView =
       PreparedLayoutTextView(context)
 
   override fun updateExtraData(view: PreparedLayoutTextView, extraData: Any) {
@@ -122,30 +120,24 @@ internal class PreparedLayoutTextViewManager :
   }
 
   @ReactProp(name = "overflow")
-  fun setOverflow(view: PreparedLayoutTextView, overflow: String?) {
-    view.overflow = Overflow.fromString(overflow)
-    ImportantForInteractionHelper.setImportantForInteraction(
-        view,
-        // <Text> has no pointerEvents prop, so it always behaves as AUTO.
-        PointerEvents.AUTO,
-        view.overflow,
-    )
+  fun setOverflow(view: PreparedLayoutTextView, overflow: String?): Unit {
+    view.overflow = overflow?.let { Overflow.fromString(it) } ?: Overflow.VISIBLE
   }
 
   @ReactProp(name = "accessible")
-  fun setAccessible(view: PreparedLayoutTextView, accessible: Boolean) {
+  fun setAccessible(view: PreparedLayoutTextView, accessible: Boolean): Unit {
     view.isFocusable = accessible
   }
 
   @ReactProp(name = "selectable", defaultBoolean = false)
-  fun setSelectable(view: PreparedLayoutTextView, isSelectable: Boolean) {
+  fun setSelectable(view: PreparedLayoutTextView, isSelectable: Boolean): Unit {
     check(!isSelectable) {
       "selectable Text should use SelectableTextViewManager instead of PreparedLayoutViewManager"
     }
   }
 
   @ReactProp(name = "selectionColor", customType = "Color")
-  fun setSelectionColor(view: PreparedLayoutTextView, color: Int?) {
+  fun setSelectionColor(view: PreparedLayoutTextView, color: Int?): Unit {
     if (color == null) {
       view.selectionColor = DefaultStyleValuesUtil.getDefaultTextColorHighlight(view.context)
     } else {
@@ -162,14 +154,17 @@ internal class PreparedLayoutTextViewManager :
               ViewProps.BORDER_BOTTOM_RIGHT_RADIUS,
               ViewProps.BORDER_BOTTOM_LEFT_RADIUS,
           ],
+      defaultFloat = Float.NaN,
   )
-  fun setBorderRadius(view: PreparedLayoutTextView, index: Int, rawBorderRadius: Dynamic) {
-    val borderRadius = LengthPercentage.setFromDynamic(rawBorderRadius)
-    BackgroundStyleApplicator.setBorderRadius(view, BorderRadiusProp.values()[index], borderRadius)
+  fun setBorderRadius(view: PreparedLayoutTextView, index: Int, borderRadius: Float): Unit {
+    val radius =
+        if (borderRadius.isNaN()) null
+        else LengthPercentage(borderRadius, LengthPercentageType.POINT)
+    BackgroundStyleApplicator.setBorderRadius(view, BorderRadiusProp.values()[index], radius)
   }
 
   @ReactProp(name = "borderStyle")
-  fun setBorderStyle(view: PreparedLayoutTextView, borderStyle: String?) {
+  fun setBorderStyle(view: PreparedLayoutTextView, borderStyle: String?): Unit {
     val parsedBorderStyle = if (borderStyle == null) null else BorderStyle.fromString(borderStyle)
     BackgroundStyleApplicator.setBorderStyle(view, parsedBorderStyle)
   }
@@ -187,7 +182,7 @@ internal class PreparedLayoutTextViewManager :
           ],
       defaultFloat = Float.NaN,
   )
-  fun setBorderWidth(view: PreparedLayoutTextView, index: Int, width: Float) {
+  fun setBorderWidth(view: PreparedLayoutTextView, index: Int, width: Float): Unit {
     BackgroundStyleApplicator.setBorderWidth(view, LogicalEdge.values()[index], width)
   }
 
@@ -207,12 +202,12 @@ internal class PreparedLayoutTextViewManager :
           ],
       customType = "Color",
   )
-  fun setBorderColor(view: PreparedLayoutTextView, index: Int, color: Int?) {
+  fun setBorderColor(view: PreparedLayoutTextView, index: Int, color: Int?): Unit {
     BackgroundStyleApplicator.setBorderColor(view, LogicalEdge.values()[index], color)
   }
 
   @ReactProp(name = "disabled", defaultBoolean = false)
-  fun setDisabled(view: PreparedLayoutTextView, disabled: Boolean) {
+  fun setDisabled(view: PreparedLayoutTextView, disabled: Boolean): Unit {
     view.isEnabled = !disabled
   }
 
@@ -222,7 +217,7 @@ internal class PreparedLayoutTextViewManager :
       top: Int,
       right: Int,
       bottom: Int,
-  ) {
+  ): Unit {
     view.setPadding(left, top, right, bottom)
   }
 

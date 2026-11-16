@@ -119,14 +119,6 @@ def use_react_native! (
   # Make `REMOVE_LEGACY_ARCH` enabled by default. This will build React Native
   # excluding the legacy arch unless the user turns this flag off explicitly.
   ENV['RCT_REMOVE_LEGACY_ARCH'] = ENV['RCT_REMOVE_LEGACY_ARCH'] == '0' ? '0' : '1'
-  # Removing the legacy TurboModule and component interop layers is opt-in while those
-  # layers are still supported. Both will default to 1 in a future React Native release.
-  ENV['RCT_REMOVE_LEGACY_MODULE_INTEROP'] = ENV['RCT_REMOVE_LEGACY_MODULE_INTEROP'] == '1' ? '1' : '0'
-  ENV['RCT_REMOVE_LEGACY_COMPONENT_INTEROP'] = ENV['RCT_REMOVE_LEGACY_COMPONENT_INTEROP'] == '1' ? '1' : '0'
-  # Enforcing the C++ stable API is opt-in.
-  ENV['RN_STRICT_API'] = ENV['RN_STRICT_API'] == '1' ? '1' : '0'
-  # Silences the stable API's "for frameworks" warning.
-  ENV['RN_ALLOW_FRAMEWORKS'] = ENV['RN_ALLOW_FRAMEWORKS'] == '1' ? '1' : '0'
 
   ReactNativePodsUtils.check_minimum_required_xcode()
 
@@ -196,7 +188,6 @@ def use_react_native! (
   pod 'React-idlecallbacksnativemodule', :path => "#{prefix}/ReactCommon/react/nativemodule/idlecallbacks"
   pod 'React-intersectionobservernativemodule', :path => "#{prefix}/ReactCommon/react/nativemodule/intersectionobserver"
   pod 'React-mutationobservernativemodule', :path => "#{prefix}/ReactCommon/react/nativemodule/mutationobserver"
-  pod 'React-resizeobservernativemodule', :path => "#{prefix}/ReactCommon/react/nativemodule/resizeobserver"
   pod 'React-viewtransitionnativemodule', :path => "#{prefix}/ReactCommon/react/nativemodule/viewtransition"
   pod 'React-webperformancenativemodule', :path => "#{prefix}/ReactCommon/react/nativemodule/webperformance"
   pod 'React-domnativemodule', :path => "#{prefix}/ReactCommon/react/nativemodule/dom"
@@ -318,20 +309,6 @@ def resolve_use_frameworks(spec, header_mappings_dir: nil, module_name: nil)
   ReactNativePodsUtils.resolve_use_frameworks(spec, :header_mappings_dir => header_mappings_dir, :module_name => module_name)
 end
 
-# Mark a spec as part of React Native's own build by defining RN_BUILDING for it. The
-# react/cxxstableapi guards use it to stay inert for React Native's internal sources,
-# which keep including the fine-grained headers the guards fence off from consumers.
-# Only first-party React Native pods may call this.
-#
-# Call it last in the spec block: it merges into GCC_PREPROCESSOR_DEFINITIONS as
-# pod_target_xcconfig stands at call time, so a later assignment would drop it.
-#
-# Parameters:
-# - spec: the spec to modify
-def mark_as_react_native_build(spec)
-  ReactNativePodsUtils.add_rn_building_definition(spec)
-end
-
 # Add a dependency to a spec, making sure that the HEADER_SERACH_PATHS are set properly.
 # This function automate the requirement to specify the HEADER_SEARCH_PATHS which was error prone
 # and hard to pull out properly to begin with.
@@ -402,11 +379,8 @@ end
 # - url: The URL of the Swift Package Manager dependency
 # - requirement: The version requirement of the Swift Package Manager dependency (eg. ` {kind: 'upToNextMajorVersion', minimumVersion: '5.9.1'},`)
 # - products: The product/target of the Swift Package Manager dependency (eg. AlamofireDynamic)
-# - embed_frameworks: The names of the dynamic frameworks the products load, including those of the packages they depend
-#   on, embedded in the app (eg. Sentry for the Sentry-Dynamic product; MapboxCommon, MapboxCoreMaps and Turf for
-#   MapboxMaps). Defaults to the product names. A name that matches no framework is not reported
-def spm_dependency(spec, url:, requirement:, products:, embed_frameworks: products)
-  SPM.dependency(spec, url: url, requirement: requirement, products: products, embed_frameworks: embed_frameworks)
+def spm_dependency(spec, url:, requirement:, products:)
+  SPM.dependency(spec, url: url, requirement: requirement, products: products)
 end
 
 # It returns the default flags.
@@ -640,18 +614,10 @@ def react_native_post_install(
     ReactNativePodsUtils.add_compiler_flag_to_project(installer, "-DLOOM_RENDERER=0")
   end
 
-  ReactNativePodsUtils.set_legacy_interop_removal_flags(
-    installer,
-    build_rncore_from_source: ReactNativeCoreUtils.build_rncore_from_source()
-  )
-
-  ReactNativePodsUtils.set_strict_cxx_api_flags(installer)
-
   ReactNativePodsUtils.set_ccache_compiler_and_linker_build_settings(installer, react_native_path, ccache_enabled)
   ReactNativePodsUtils.updateOSDeploymentTarget(installer)
   ReactNativePodsUtils.set_dynamic_frameworks_flags(installer)
   ReactNativePodsUtils.add_ndebug_flag_to_pods_in_release(installer)
-  ReactNativePodsUtils.set_optimization_level_for_react_native_pods(installer, react_native_path)
 
   if !ReactNativeCoreUtils.build_rncore_from_source()
     # The Xcode-26 SWIFT_ENABLE_EXPLICIT_MODULES=NO workaround (#53457) is removed:

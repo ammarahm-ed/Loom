@@ -7,9 +7,7 @@
 
 #pragma once
 
-#include <react/cxxstableapi/FrameworksGuard.h>
-
-#include <React/View.h>
+#include <react/renderer/components/view/ViewEventEmitter.h>
 #include <react/renderer/textlayoutmanager/TextMeasureCache.h>
 #include <mutex>
 

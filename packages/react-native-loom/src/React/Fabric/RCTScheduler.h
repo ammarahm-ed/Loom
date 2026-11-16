@@ -8,18 +8,16 @@
 #import <UIKit/UIKit.h>
 #import <memory>
 
-#import <React/ComponentRegistry.h>
-#import <React/Graphics.h>
-#import <React/RendererCore.h>
-#import <React/Utils.h>
+#import <react/renderer/componentregistry/ComponentDescriptorFactory.h>
+#import <react/renderer/core/ComponentDescriptor.h>
+#import <react/renderer/core/EventListener.h>
+#import <react/renderer/core/LayoutConstraints.h>
+#import <react/renderer/core/LayoutContext.h>
 #import <react/renderer/mounting/MountingCoordinator.h>
 #import <react/renderer/scheduler/SchedulerToolbox.h>
 #import <react/renderer/scheduler/SurfaceHandler.h>
 #import <react/renderer/uimanager/UIManager.h>
-
-namespace facebook::react {
-struct AnimatedProps;
-}
+#import <react/utils/ContextContainer.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -47,12 +45,6 @@ NS_ASSUME_NONNULL_BEGIN
                        forShadowView:(const facebook::react::ShadowView &)shadowView;
 
 - (void)schedulerDidSynchronouslyUpdateViewOnUIThread:(facebook::react::Tag)reactTag props:(folly::dynamic)props;
-
-#if LOOM_RENDERER
-/** One frame of the shared animation backend for paint-only views (Loom). */
-- (void)schedulerDidSynchronouslyUpdateAnimatedProps:
-    (const std::unordered_map<facebook::react::Tag, facebook::react::AnimatedProps> &)updates;
-#endif
 
 @end
 

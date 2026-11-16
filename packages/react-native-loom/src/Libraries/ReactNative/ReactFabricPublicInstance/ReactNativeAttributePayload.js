@@ -4,7 +4,7 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
- * @flow strict-local
+ * @flow
  * @format
  */
 
@@ -24,7 +24,7 @@ const emptyObject = {};
  * across modules, I've kept them isolated to this module.
  */
 
-type NestedNode = Array<NestedNode> | {[string]: unknown};
+type NestedNode = Array<NestedNode> | Object;
 
 // Tracks removed keys
 let removedKeys: {[string]: boolean} | null = null;
@@ -45,7 +45,7 @@ function defaultDiffer(prevProp: unknown, nextProp: unknown): boolean {
 }
 
 function restoreDeletedValuesInNestedArray(
-  updatePayload: {[string]: unknown},
+  updatePayload: Object,
   node: NestedNode,
   validAttributes: AttributeConfiguration,
 ) {
@@ -76,9 +76,11 @@ function restoreDeletedValuesInNestedArray(
       }
 
       if (typeof nextProp === 'function') {
+        // $FlowFixMe[incompatible-type] found when upgrading Flow
         nextProp = true;
       }
       if (typeof nextProp === 'undefined') {
+        // $FlowFixMe[incompatible-type] found when upgrading Flow
         nextProp = null;
       }
 
@@ -104,12 +106,11 @@ function restoreDeletedValuesInNestedArray(
 }
 
 function diffNestedArrayProperty(
-  updatePayloadInput: null | {[string]: unknown},
+  updatePayload: null | Object,
   prevArray: Array<NestedNode>,
   nextArray: Array<NestedNode>,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
-  let updatePayload = updatePayloadInput;
+): null | Object {
   const minLength =
     prevArray.length < nextArray.length ? prevArray.length : nextArray.length;
   let i;
@@ -143,11 +144,11 @@ function diffNestedArrayProperty(
 }
 
 function diffNestedProperty(
-  updatePayload: null | {[string]: unknown},
+  updatePayload: null | Object,
   prevProp: NestedNode,
   nextProp: NestedNode,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
+): null | Object {
   if (!updatePayload && prevProp === nextProp) {
     // If no properties have been added, then we can bail out quickly on object
     // equality.
@@ -182,9 +183,7 @@ function diffNestedProperty(
   if (Array.isArray(prevProp)) {
     return diffProperties(
       updatePayload,
-      // $FlowFixMe[incompatible-type] flattenStyle is reused to flatten a nested style array here
       flattenStyle(prevProp),
-      // $FlowFixMe[incompatible-type] a non-array nested node is a plain props object here
       nextProp,
       validAttributes,
     );
@@ -193,7 +192,6 @@ function diffNestedProperty(
   return diffProperties(
     updatePayload,
     prevProp,
-    // $FlowFixMe[incompatible-type] flattenStyle is reused to flatten a nested style array here
     flattenStyle(nextProp),
     validAttributes,
   );
@@ -204,11 +202,10 @@ function diffNestedProperty(
  * adds a null sentinel to the updatePayload, for each prop key.
  */
 function clearNestedProperty(
-  updatePayloadInput: null | {[string]: unknown},
+  updatePayload: null | Object,
   prevProp: NestedNode,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
-  let updatePayload = updatePayloadInput;
+): null | Object {
   if (!prevProp) {
     return updatePayload;
   }
@@ -236,15 +233,14 @@ function clearNestedProperty(
  * anything changed.
  */
 function diffProperties(
-  updatePayloadInput: null | {[string]: unknown},
-  prevProps: {[string]: unknown},
-  nextProps: {[string]: unknown},
+  updatePayload: null | Object,
+  prevProps: Object,
+  nextProps: Object,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
-  let updatePayload = updatePayloadInput;
+): null | Object {
   let attributeConfig;
-  let nextProp: unknown;
-  let prevProp: unknown;
+  let nextProp;
+  let prevProp;
 
   for (const propKey in nextProps) {
     prevProp = prevProps[propKey];
@@ -271,11 +267,11 @@ function diffProperties(
       if (!attributeConfigHasProcess) {
         // functions are converted to booleans as markers that the associated
         // events should be sent from native.
-        nextProp = true;
+        nextProp = true as any;
         // If nextProp is not a function, then don't bother changing prevProp
         // since nextProp will win and go into the updatePayload regardless.
         if (typeof prevProp === 'function') {
-          prevProp = true;
+          prevProp = true as any;
         }
       }
     }
@@ -283,9 +279,9 @@ function diffProperties(
     // An explicit value of undefined is treated as a null because it overrides
     // any other preceding value.
     if (typeof nextProp === 'undefined') {
-      nextProp = null;
+      nextProp = null as any;
       if (typeof prevProp === 'undefined') {
-        prevProp = null;
+        prevProp = null as any;
       }
     }
 
@@ -326,7 +322,7 @@ function diffProperties(
       // case: !Object is the default case
       if (defaultDiffer(prevProp, nextProp)) {
         // a normal leaf has changed
-        (updatePayload || (updatePayload = {} as {[string]: unknown}))[
+        (updatePayload || (updatePayload = {} as {[string]: $FlowFixMe}))[
           propKey
         ] = nextProp;
       }
@@ -346,7 +342,7 @@ function diffProperties(
             ? // $FlowFixMe[incompatible-use] found when upgrading Flow
               attributeConfig.process(nextProp)
             : nextProp;
-        (updatePayload || (updatePayload = {} as {[string]: unknown}))[
+        (updatePayload || (updatePayload = {} as {[string]: $FlowFixMe}))[
           propKey
         ] = nextValue;
       }
@@ -358,19 +354,14 @@ function diffProperties(
       // this point so we assume it must be AttributeConfiguration.
       updatePayload = diffNestedProperty(
         updatePayload,
-        // $FlowFixMe[incompatible-type] prop values are typed `unknown` but are nodes in this nested-config path
         prevProp,
-        // $FlowFixMe[incompatible-type] prop values are typed `unknown` but are nodes in this nested-config path
         nextProp,
-        // $FlowFixMe[unclear-type] AttributeConfiguration/AnyAttributeType are defined upstream with $FlowFixMe
         attributeConfig as any as AttributeConfiguration,
       );
       if (removedKeyCount > 0 && updatePayload) {
         restoreDeletedValuesInNestedArray(
           updatePayload,
-          // $FlowFixMe[incompatible-type] prop values are typed `unknown` but are nodes in this nested-config path
           nextProp,
-          // $FlowFixMe[unclear-type] AttributeConfiguration/AnyAttributeType are defined upstream with $FlowFixMe
           attributeConfig as any as AttributeConfiguration,
         );
         removedKeys = null;
@@ -407,8 +398,9 @@ function diffProperties(
     ) {
       // case: CustomAttributeConfiguration | !Object
       // Flag the leaf property for removal by sending a sentinel.
-      (updatePayload || (updatePayload = {} as {[string]: unknown}))[propKey] =
-        null;
+      (updatePayload || (updatePayload = {} as {[string]: $FlowFixMe}))[
+        propKey
+      ] = null;
       if (!removedKeys) {
         removedKeys = {} as {[string]: boolean};
       }
@@ -422,9 +414,7 @@ function diffProperties(
       // were removed so we need to go through and clear out all of them.
       updatePayload = clearNestedProperty(
         updatePayload,
-        // $FlowFixMe[incompatible-type] prop values are typed `unknown` but are nodes in this nested-config path
         prevProp,
-        // $FlowFixMe[unclear-type] AttributeConfiguration/AnyAttributeType are defined upstream with $FlowFixMe
         attributeConfig as any as AttributeConfiguration,
       );
     }
@@ -433,11 +423,10 @@ function diffProperties(
 }
 
 function addNestedProperty(
-  payloadInput: null | {[string]: unknown},
-  props: NestedNode,
+  payload: null | Object,
+  props: Object,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
-  let payload = payloadInput;
+): null | Object {
   // Flatten nested style props.
   if (Array.isArray(props)) {
     for (let i = 0; i < props.length; i++) {
@@ -451,7 +440,6 @@ function addNestedProperty(
 
     const attributeConfig = validAttributes[
       propKey
-      // $FlowFixMe[unclear-type] AttributeConfiguration/AnyAttributeType are defined upstream with $FlowFixMe
     ] as any as AttributeConfiguration;
 
     if (attributeConfig == null) {
@@ -487,18 +475,13 @@ function addNestedProperty(
 
     if (newValue !== undefined) {
       if (!payload) {
-        payload = {} as {[string]: unknown};
+        payload = {} as {[string]: $FlowFixMe};
       }
       payload[propKey] = newValue;
       continue;
     }
 
-    payload = addNestedProperty(
-      payload,
-      // $FlowFixMe[incompatible-type] prop values are typed `unknown` but are nodes here
-      prop,
-      attributeConfig,
-    );
+    payload = addNestedProperty(payload, prop, attributeConfig);
   }
 
   return payload;
@@ -509,25 +492,25 @@ function addNestedProperty(
  * to the payload for each valid key.
  */
 function clearProperties(
-  updatePayload: null | {[string]: unknown},
-  prevProps: {[string]: unknown},
+  updatePayload: null | Object,
+  prevProps: Object,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
+): null | Object {
   return diffProperties(updatePayload, prevProps, emptyObject, validAttributes);
 }
 
 export function create(
-  props: NestedNode,
+  props: Object,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
+): null | Object {
   return addNestedProperty(null, props, validAttributes);
 }
 
 export function diff(
-  prevProps: {[string]: unknown},
-  nextProps: {[string]: unknown},
+  prevProps: Object,
+  nextProps: Object,
   validAttributes: AttributeConfiguration,
-): null | {[string]: unknown} {
+): null | Object {
   return diffProperties(
     null, // updatePayload
     prevProps,

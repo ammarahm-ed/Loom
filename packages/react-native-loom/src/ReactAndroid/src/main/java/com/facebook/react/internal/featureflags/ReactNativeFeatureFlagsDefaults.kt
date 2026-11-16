@@ -4,7 +4,7 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
- * @generated SignedSource<<a1368426dd823245c54b4312ae7b14e6>>
+ * @generated SignedSource<<5c36c0a5e9e67b43016ab02eab0ecd8f>>
  */
 
 /**
@@ -31,13 +31,7 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun defaultTextToOverflowHidden(): Boolean = true
 
-  override fun deferTextInputTruncationIOS(): Boolean = false
-
   override fun disableEarlyViewCommandExecution(): Boolean = false
-
-  override fun disableIdleEventDispatchFrameCallbackRearmAndroid(): Boolean = false
-
-  override fun disableIdleMountItemFrameCallbackRearmAndroid(): Boolean = false
 
   override fun disableImageViewPreallocationAndroid(): Boolean = false
 
@@ -53,13 +47,11 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun enableAccumulatedUpdatesInRawPropsAndroid(): Boolean = false
 
-  override fun enableAndroidAutoOffscreenCompositingForElevation(): Boolean = false
+  override fun enableAndroidFontWeightAdjustment(): Boolean = true
 
-  override fun enableAndroidTextMeasurementOptimizations(): Boolean = true
+  override fun enableAndroidTextMeasurementOptimizations(): Boolean = false
 
-  override fun enableAsyncDiskCacheCheckInMultiSourceImageAndroid(): Boolean = false
-
-  override fun enableBridgelessArchitecture(): Boolean = true
+  override fun enableBridgelessArchitecture(): Boolean = false
 
   override fun enableCppPropsIteratorSetter(): Boolean = false
 
@@ -75,13 +67,11 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun enableFabricCommitBranching(): Boolean = false
 
-  override fun enableFabricCommitBranchingMergeOnMainThread(): Boolean = false
-
   override fun enableFabricLogs(): Boolean = false
 
   override fun enableFlexboxAutoMinSizeInStrictMode(): Boolean = false
 
-  override fun enableFollowUpMountItemDispatchAndroid(): Boolean = false
+  override fun enableFontScaleChangesUpdatingLayout(): Boolean = true
 
   override fun enableIOSCompressedTextFrameAdjustment(): Boolean = false
 
@@ -91,11 +81,7 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun enableImagePrefetchingAndroid(): Boolean = false
 
-  override fun enableImageTransparentTintColor(): Boolean = false
-
   override fun enableImmediateUpdateModeForContentOffsetChanges(): Boolean = false
-
-  override fun enableImperativeEvents(): Boolean = false
 
   override fun enableImperativeFocus(): Boolean = false
 
@@ -111,19 +97,19 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun enableModuleArgumentNSNullConversionIOS(): Boolean = false
 
-  override fun enableMountingCoordinatorPullModelAndroid(): Boolean = false
-
   override fun enableMutationObserverByDefault(): Boolean = false
 
   override fun enableNativeCSSParsing(): Boolean = false
 
-  override fun enablePreallocatedPropsDiffOnInsertAndroid(): Boolean = false
+  override fun enableNetworkEventReporting(): Boolean = true
 
-  override fun enablePreparedTextLayout(): Boolean = true
+  override fun enablePreparedTextLayout(): Boolean = false
 
   override fun enablePropsUpdateReconciliationAndroid(): Boolean = false
 
-  override fun enableResizeObserverByDefault(): Boolean = false
+  override fun enableRuntimeSchedulerQueueClearingOnError(): Boolean = false
+
+  override fun enableSchedulerDelegateInvalidation(): Boolean = false
 
   override fun enableSwiftUIBasedFilters(): Boolean = false
 
@@ -141,11 +127,9 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun enableVirtualViewContainerStateExperimental(): Boolean = false
 
-  override fun fixBorderlessRippleAndroid(): Boolean = false
+  override fun fixDifferentiatorParentTagForUnflattenCase(): Boolean = true
 
   override fun fixMappingOfEventPrioritiesBetweenFabricAndReact(): Boolean = false
-
-  override fun fixTextLayoutOnPixelDensityChange(): Boolean = false
 
   override fun fixYogaFlexBasisFitContentInMainAxis(): Boolean = false
 
@@ -155,11 +139,9 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun fuseboxFrameRecordingEnabled(): Boolean = false
 
-  override fun fuseboxScreenshotCaptureEnabled(): Boolean = true
+  override fun fuseboxNetworkInspectionEnabled(): Boolean = true
 
-  override fun fuseboxWebSocketEventsEnabled(): Boolean = false
-
-  override fun keepTimersRunningWhileHostPausedAndroid(): Boolean = false
+  override fun fuseboxScreenshotCaptureEnabled(): Boolean = false
 
   override fun optimizedAnimatedPropUpdates(): Boolean = false
 
@@ -169,7 +151,7 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
 
   override fun perfMonitorV2Enabled(): Boolean = false
 
-  override fun preparedTextCacheSize(): Double = 1000.0
+  override fun preparedTextCacheSize(): Double = 200.0
 
   override fun preventShadowTreeCommitExhaustion(): Boolean = false
 
@@ -182,8 +164,6 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
   override fun shouldTriggerResponderTransferOnScrollAndroid(): Boolean = false
 
   override fun skipActivityIdentityAssertionOnHostPause(): Boolean = false
-
-  override fun skipUnchangedChildrenInDifferentiator(): Boolean = false
 
   override fun syncAndroidClipBoundsWithOverflow(): Boolean = false
 
@@ -207,8 +187,6 @@ public open class ReactNativeFeatureFlagsDefaults : ReactNativeFeatureFlagsProvi
   override fun useTraitHiddenOnAndroid(): Boolean = false
 
   override fun useTurboModuleInterop(): Boolean = false
-
-  override fun useWindowDensityForDisplayMetricsAndroid(): Boolean = false
 
   override fun viewCullingOutsetRatio(): Double = 0.0
 

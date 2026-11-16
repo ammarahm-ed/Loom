@@ -7,11 +7,9 @@
 
 package com.facebook.react.views.text;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Rect;
-import android.graphics.text.LineBreakConfig;
 import android.os.Build;
 import android.text.Layout;
 import android.text.Spannable;
@@ -26,9 +24,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.TextView;
 import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
 import androidx.appcompat.widget.AppCompatTextView;
 import androidx.core.view.AccessibilityDelegateCompat;
 import androidx.core.view.ViewCompat;
@@ -50,13 +46,10 @@ import com.facebook.react.uimanager.style.BorderRadiusProp;
 import com.facebook.react.uimanager.style.BorderStyle;
 import com.facebook.react.uimanager.style.LogicalEdge;
 import com.facebook.react.uimanager.style.Overflow;
-import com.facebook.react.util.AndroidVersion;
 import com.facebook.react.views.text.internal.span.CanvasEffectSpan;
-import com.facebook.react.views.text.internal.span.ReactAbsoluteSizeSpan;
 import com.facebook.react.views.text.internal.span.ReactFragmentIndexSpan;
 import com.facebook.react.views.text.internal.span.ReactTagSpan;
 import com.facebook.yoga.YogaMeasureMode;
-import java.lang.reflect.Method;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class ReactTextView extends AppCompatTextView implements ReactCompoundView {
@@ -67,17 +60,11 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
   // https://github.com/aosp-mirror/platform_frameworks_base/blob/master/core/java/android/widget/TextView.java#L854
   private static final int DEFAULT_GRAVITY = Gravity.TOP | Gravity.START;
 
-  // TextView.setUseBoundsForWidth (API 35+). Looked up reflectively because some internal targets
-  // compile against an SDK older than 35 (see AndroidVersion).
-  private static final @Nullable Method SET_USE_BOUNDS_FOR_WIDTH = resolveSetUseBoundsForWidth();
-
-  private final float mDefaultTextSize;
   private int mNumberOfLines;
   private @Nullable TextUtils.TruncateAt mEllipsizeLocation;
   private boolean mAdjustsFontSizeToFit;
   private float mFontSize;
   private float mMinimumFontSize;
-  private float mMinimumFontScale;
   private float mLetterSpacing;
   private int mLinkifyMaskType;
   private boolean mTextIsSelectable;
@@ -85,50 +72,11 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
   private Overflow mOverflow = Overflow.VISIBLE;
 
   private @Nullable Spannable mSpanned;
-  // Fitting the font size to the view shrinks the font size spans of mSpanned in place. These are
-  // the spans it had before the first fit, so that a later fit (when the view's size changes) can
-  // start from the original sizes, and the text can grow back.
-  private @Nullable Spanned mUnfittedSpanned;
-  private @Nullable TextAttributeProps mBaseTextAttributes;
   private @Nullable PreparedLayout mPreparedLayout;
 
-  @SuppressWarnings("this-escape")
   public ReactTextView(Context context) {
     super(context);
-    mDefaultTextSize = getTextSize();
     initView();
-  }
-
-  private static @Nullable Method resolveSetUseBoundsForWidth() {
-    if (Build.VERSION.SDK_INT < AndroidVersion.VERSION_CODE_VANILLA_ICE_CREAM) {
-      return null;
-    }
-    try {
-      return TextView.class.getMethod("setUseBoundsForWidth", boolean.class);
-    } catch (NoSuchMethodException e) {
-      return null;
-    }
-  }
-
-  /**
-   * Keeps this view's line breaking on the same basis as TextLayoutManager's measurement.
-   *
-   * <p>On Android 15+ a TextView in an app targeting API 35+ breaks lines on glyph bounds
-   * (TextView#USE_BOUNDS_FOR_WIDTH), while TextLayoutManager measures with a StaticLayout that
-   * breaks on glyph advances. For a font whose ink overhangs its advance, a line that fit at
-   * measure time can wrap at draw time; the extra line lands outside the measured height and is
-   * never seen. Drawing with advance-based breaking makes the painted line count match the measured
-   * one.
-   */
-  private void matchLineBreakingToMeasurement() {
-    if (SET_USE_BOUNDS_FOR_WIDTH == null) {
-      return;
-    }
-    try {
-      SET_USE_BOUNDS_FOR_WIDTH.invoke(this, false);
-    } catch (ReflectiveOperationException e) {
-      FLog.w(ReactConstants.TAG, "Could not disable useBoundsForWidth on ReactTextView", e);
-    }
   }
 
   /**
@@ -145,14 +93,10 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
     mEllipsizeLocation = TextUtils.TruncateAt.END;
     mFontSize = Float.NaN;
     mMinimumFontSize = Float.NaN;
-    mMinimumFontScale = Float.NaN;
     mLetterSpacing = 0.f;
     mOverflow = Overflow.VISIBLE;
     mSpanned = null;
-    mUnfittedSpanned = null;
-    mBaseTextAttributes = null;
     mPreparedLayout = null;
-    matchLineBreakingToMeasurement();
   }
 
   /* package */ void recycleView() {
@@ -178,7 +122,6 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
     // reset text
     setLayoutParams(EMPTY_LAYOUT_PARAMS);
     super.setText(null);
-    TextLayoutManager.resetTextPaint(getPaint(), mDefaultTextSize);
     applyTextAttributes();
 
     // Call setters to ensure that any super setters are called
@@ -206,14 +149,8 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       setFocusable(View.FOCUSABLE_AUTO);
     }
-    // TextView's constructor makes the view important for accessibility
-    setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
 
     setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE);
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      setLineBreakStyle(LineBreakConfig.LINE_BREAK_STYLE_NONE);
-      setLineBreakWordStyle(LineBreakConfig.LINE_BREAK_WORD_STYLE_NONE);
-    }
     updateView(); // call after changing ellipsizeLocation in particular
   }
 
@@ -248,19 +185,11 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
   }
 
   @Override
-  @SuppressWarnings("try")
   protected void onDraw(Canvas canvas) {
     try (SystraceSection s = new SystraceSection("ReactTextView.onDraw")) {
       Spannable spanned = getSpanned();
       if (mAdjustsFontSizeToFit && spanned != null && mShouldAdjustSpannableFontSize) {
         mShouldAdjustSpannableFontSize = false;
-        if (mUnfittedSpanned == null) {
-          mUnfittedSpanned = new SpannableString(spanned);
-        } else {
-          restoreUnfittedFontSizes(spanned, mUnfittedSpanned);
-          // Fitting also scales the paint's text size, so start again from the base attributes.
-          applyBaseTextAttributes(mBaseTextAttributes);
-        }
         TextLayoutManager.adjustSpannableFontToFit(
             spanned,
             getWidth(),
@@ -268,13 +197,10 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
             getHeight(),
             YogaMeasureMode.EXACTLY,
             mMinimumFontSize,
-            mMinimumFontScale,
             mNumberOfLines,
             getIncludeFontPadding(),
             getBreakStrategy(),
             getHyphenationFrequency(),
-            getLineBreakStyleCompat(),
-            getLineBreakWordStyleCompat(),
             // always passing ALIGN_NORMAL here should be fine, since this method doesn't depend on
             // how exactly lines are aligned, just their width
             Layout.Alignment.ALIGN_NORMAL,
@@ -381,22 +307,12 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
   }
 
   @Override
-  @SuppressWarnings("try")
   protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
     try (SystraceSection s = new SystraceSection("ReactTextView.onMeasure")) {
       super.onMeasure(widthMeasureSpec, heightMeasureSpec);
     }
   }
 
-  @Override
-  protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-    super.onSizeChanged(w, h, oldw, oldh);
-    if (mAdjustsFontSizeToFit && (w != oldw || h != oldh)) {
-      mShouldAdjustSpannableFontSize = true;
-    }
-  }
-
-  @SuppressWarnings("try")
   public void setText(ReactTextUpdate update) {
     try (SystraceSection s = new SystraceSection("ReactTextView.setText(ReactTextUpdate)")) {
       // Android's TextView crashes when it tries to relayout if LayoutParams are
@@ -413,7 +329,6 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
         Linkify.addLinks((Spannable) spanned, mLinkifyMaskType);
         setMovementMethod(LinkMovementMethod.getInstance());
       }
-      applyBaseTextAttributes(update.getBaseTextAttributes());
       setText(spanned);
 
       int nextTextAlign = update.getTextAlign();
@@ -433,40 +348,6 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
       // state are refreshed after replacing the text content.
       requestLayout();
     }
-  }
-
-  private static void restoreUnfittedFontSizes(Spannable spanned, Spanned unfitted) {
-    for (ReactAbsoluteSizeSpan span :
-        spanned.getSpans(0, spanned.length(), ReactAbsoluteSizeSpan.class)) {
-      spanned.removeSpan(span);
-    }
-    for (ReactAbsoluteSizeSpan span :
-        unfitted.getSpans(0, unfitted.length(), ReactAbsoluteSizeSpan.class)) {
-      spanned.setSpan(
-          span,
-          unfitted.getSpanStart(span),
-          unfitted.getSpanEnd(span),
-          unfitted.getSpanFlags(span));
-    }
-  }
-
-  /**
-   * Android draws generated ellipses with the view's paint rather than a span, so it must match the
-   * base attributes TextLayoutManager measured with.
-   */
-  private void applyBaseTextAttributes(@Nullable TextAttributeProps baseTextAttributes) {
-    mBaseTextAttributes = baseTextAttributes;
-    if (baseTextAttributes == null) {
-      return;
-    }
-
-    TextLayoutManager.resetTextPaint(getPaint(), mDefaultTextSize);
-    applyTextAttributes();
-    TextLayoutManager.updateTextPaint(
-        getPaint(),
-        baseTextAttributes,
-        getContext().getAssets(),
-        ReactTypefaceUtils.getFontWeightAdjustment(getContext()));
   }
 
   @Override
@@ -608,17 +489,8 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
     applyTextAttributes();
   }
 
-  /**
-   * @deprecated Use {@link #setMinimumFontScale(float)} instead.
-   */
-  @Deprecated
   public void setMinimumFontSize(float minimumFontSize) {
     mMinimumFontSize = minimumFontSize;
-    mShouldAdjustSpannableFontSize = true;
-  }
-
-  public void setMinimumFontScale(float minimumFontScale) {
-    mMinimumFontScale = minimumFontScale;
     mShouldAdjustSpannableFontSize = true;
   }
 
@@ -638,34 +510,6 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
   public void setHyphenationFrequency(int hyphenationFrequency) {
     super.setHyphenationFrequency(hyphenationFrequency);
     mShouldAdjustSpannableFontSize = true;
-  }
-
-  @Override
-  @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-  public void setLineBreakStyle(int lineBreakStyle) {
-    super.setLineBreakStyle(lineBreakStyle);
-    mShouldAdjustSpannableFontSize = true;
-  }
-
-  @Override
-  @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-  public void setLineBreakWordStyle(int lineBreakWordStyle) {
-    super.setLineBreakWordStyle(lineBreakWordStyle);
-    mShouldAdjustSpannableFontSize = true;
-  }
-
-  @SuppressLint("InlinedApi")
-  private int getLineBreakStyleCompat() {
-    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-        ? getLineBreakStyle()
-        : LineBreakConfig.LINE_BREAK_STYLE_NONE;
-  }
-
-  @SuppressLint("InlinedApi")
-  private int getLineBreakWordStyleCompat() {
-    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-        ? getLineBreakWordStyle()
-        : LineBreakConfig.LINE_BREAK_WORD_STYLE_NONE;
   }
 
   @Override
@@ -731,7 +575,6 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
 
   public void setSpanned(Spannable spanned) {
     mSpanned = spanned;
-    mUnfittedSpanned = null;
     mShouldAdjustSpannableFontSize = true;
   }
 
@@ -823,11 +666,13 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
   }
 
   public void setOverflow(@Nullable String overflow) {
-    mOverflow = Overflow.fromString(overflow);
-    invalidate();
-  }
+    if (overflow == null) {
+      mOverflow = Overflow.VISIBLE;
+    } else {
+      @Nullable Overflow parsedOverflow = Overflow.fromString(overflow);
+      mOverflow = parsedOverflow == null ? Overflow.VISIBLE : parsedOverflow;
+    }
 
-  /* package */ Overflow getOverflow() {
-    return mOverflow;
+    invalidate();
   }
 }

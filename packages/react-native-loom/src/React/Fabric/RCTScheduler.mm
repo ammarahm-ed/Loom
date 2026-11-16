@@ -7,8 +7,6 @@
 
 #import "RCTScheduler.h"
 
-#import <react/renderer/animationbackend/AnimatedProps.h>
-
 #import <QuartzCore/CADisplayLink.h>
 #import <cxxreact/TraceSection.h>
 #import <react/featureflags/ReactNativeFeatureFlags.h>
@@ -83,18 +81,6 @@ class SchedulerDelegateProxy : public SchedulerDelegate {
     RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
     [scheduler.delegate schedulerDidSynchronouslyUpdateViewOnUIThread:tag props:props];
   }
-
-#if LOOM_RENDERER
-  // Loom: a frame of the shared animation backend arrives as one typed batch
-  // (paint-only views); the presenter writes it without packing and re-parsing
-  // a props dictionary per view.
-  void schedulerShouldSynchronouslyUpdateAnimatedProps(
-      const std::unordered_map<facebook::react::Tag, facebook::react::AnimatedProps> &updates) override
-  {
-    RCTScheduler *scheduler = (__bridge RCTScheduler *)scheduler_;
-    [scheduler.delegate schedulerDidSynchronouslyUpdateAnimatedProps:updates];
-  }
-#endif
 
   void schedulerDidUpdateShadowTree(const std::unordered_map<Tag, folly::dynamic> &tagToProps) override
   {

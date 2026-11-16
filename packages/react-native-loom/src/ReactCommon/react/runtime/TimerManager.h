@@ -7,9 +7,7 @@
 
 #pragma once
 
-#include <react/cxxstableapi/FrameworksGuard.h>
-
-#include <React/RuntimeExecutor.h>
+#include <ReactCommon/RuntimeExecutor.h>
 #include <unordered_map>
 #include <vector>
 

@@ -8,14 +8,12 @@
 #import "RCTTextLayoutManager.h"
 
 #import <array>
-#import <cmath>
 
 #import "RCTAttributedTextUtils.h"
 
 #import <React/NSTextStorage+FontScaling.h>
 #import <React/RCTUtils.h>
 #import <react/featureflags/ReactNativeFeatureFlags.h>
-#import <react/renderer/textlayoutmanager/TextMeasurementRounding.h>
 #import <react/utils/ManagedObjectWrapper.h>
 #import <react/utils/SimpleThreadSafeCache.h>
 #if LOOM_RENDERER
@@ -290,7 +288,7 @@ static bool LoomMeasureLayoutIsDrawable(
 }
 #endif
 
-- (TextMeasurement)measureAttributedString:(const AttributedString &)attributedString
+- (TextMeasurement)measureAttributedString:(AttributedString)attributedString
                        paragraphAttributes:(ParagraphAttributes)paragraphAttributes
                              layoutContext:(TextLayoutContext)layoutContext
                          layoutConstraints:(LayoutConstraints)layoutConstraints
@@ -323,7 +321,7 @@ static bool LoomMeasureLayoutIsDrawable(
                        layoutConstraints:layoutConstraints];
 }
 
-- (CGRect)drawingFrameForAttributedString:(const AttributedString &)attributedString
+- (CGRect)drawingFrameForAttributedString:(AttributedString)attributedString
                       paragraphAttributes:(ParagraphAttributes)paragraphAttributes
                                     frame:(CGRect)frame
                            containerFrame:(CGRect *)containerFrame
@@ -381,7 +379,7 @@ static bool LoomMeasureLayoutIsDrawable(
   return drawingFrame;
 }
 
-- (void)drawAttributedString:(const AttributedString &)attributedString
+- (void)drawAttributedString:(AttributedString)attributedString
          paragraphAttributes:(ParagraphAttributes)paragraphAttributes
                        frame:(CGRect)frame
            drawHighlightPath:(void (^_Nullable)(UIBezierPath *highlightPath))block
@@ -510,8 +508,8 @@ static bool LoomMeasureLayoutIsDrawable(
                     // remains visible at small sizes and proportionate at
                     // large ones. ~`fontSize / 12` plus a 1.5pt floor.
                     CGFloat thickness = MAX(fontSize / 12.0f, 1.5f);
-                    CGFloat wavyWavelength = 1.0f + 2.0f * std::round(2.0f * thickness + 0.5f);
-                    CGFloat wavyCpDistance = 0.5f + std::round(3.0f * thickness + 0.5f);
+                    CGFloat wavyWavelength = 1.0f + 2.0f * round(2.0f * thickness + 0.5f);
+                    CGFloat wavyCpDistance = 0.5f + round(3.0f * thickness + 0.5f);
 
                     NSRange targetGlyphRange = [layoutManager glyphRangeForCharacterRange:attrRange
                                                                      actualCharacterRange:nullptr];
@@ -558,6 +556,7 @@ static bool LoomMeasureLayoutIsDrawable(
                                                    CGFloat baseline =
                                                        lineRect.origin.y + font.ascender + frame.origin.y;
 
+                                                   // NOLINTNEXTLINE(cppcoreguidelines-init-variables)
                                                    for (NSString *line in lines) {
                                                      CGFloat y = 0.0f;
                                                      if ([line isEqualToString:@"underline"]) {
@@ -708,7 +707,7 @@ static bool LoomMeasureLayoutIsDrawable(
   }
 }
 
-- (LinesMeasurements)getLinesForAttributedString:(const facebook::react::AttributedString &)attributedString
+- (LinesMeasurements)getLinesForAttributedString:(facebook::react::AttributedString)attributedString
                              paragraphAttributes:(facebook::react::ParagraphAttributes)paragraphAttributes
                                             size:(CGSize)size
 {
@@ -745,11 +744,9 @@ static bool LoomMeasureLayoutIsDrawable(
                                          .width = usedRect.size.width, .height = usedRect.size.height}};
 
                                  CGFloat baseline = [layoutManager locationForGlyphAtIndex:range.location].y;
-                                 NSData *renderedData = [renderedString dataUsingEncoding:NSUTF8StringEncoding];
+                                 const char *renderedUTF8 = [renderedString UTF8String];
                                  auto line = LineMeasurement{
-                                     std::string(
-                                         renderedData != nil ? static_cast<const char *>(renderedData.bytes) : "",
-                                         renderedData != nil ? renderedData.length : 0),
+                                     std::string(renderedUTF8 != nullptr ? renderedUTF8 : ""),
                                      rect,
                                      overallRect.size.height - baseline,
                                      font.capHeight,
@@ -758,22 +755,6 @@ static bool LoomMeasureLayoutIsDrawable(
                                  blockParagraphLines->push_back(line);
                                }];
   return paragraphLines;
-}
-
-- (CGFloat)_maximumFontSizeInAttributedString:(NSAttributedString *)attributedString
-{
-  __block CGFloat maximumFontSize = 0.0;
-  [attributedString enumerateAttribute:NSFontAttributeName
-                               inRange:NSMakeRange(0, attributedString.length)
-                               options:NSAttributedStringEnumerationLongestEffectiveRangeNotRequired
-                            usingBlock:^(id _Nullable value, NSRange range, BOOL *_Nonnull stop) {
-                              CGFloat fontSize = ((UIFont *)value).pointSize;
-                              if (fontSize > maximumFontSize) {
-                                maximumFontSize = fontSize;
-                              }
-                            }];
-
-  return maximumFontSize;
 }
 
 - (NSTextStorage *)_textStorageAndLayoutManagerWithAttributesString:(NSAttributedString *)attributedString
@@ -799,20 +780,15 @@ static bool LoomMeasureLayoutIsDrawable(
   [textStorage addLayoutManager:layoutManager];
 
   if (paragraphAttributes.adjustsFontSizeToFit) {
-    CGFloat maximumFontSize = [self _maximumFontSizeInAttributedString:attributedString];
-    CGFloat minimumFontSize = 4.0;
-    if (!isnan(paragraphAttributes.minimumFontSize)) {
-      minimumFontSize = paragraphAttributes.minimumFontSize;
-    } else if (!isnan(paragraphAttributes.minimumFontScale)) {
-      minimumFontSize = MAX(paragraphAttributes.minimumFontScale * maximumFontSize, 4.0);
-    }
+    CGFloat minimumFontSize = !isnan(paragraphAttributes.minimumFontSize) ? paragraphAttributes.minimumFontSize : 4.0;
+    CGFloat maximumFontSize = !isnan(paragraphAttributes.maximumFontSize) ? paragraphAttributes.maximumFontSize : 96.0;
     [textStorage scaleFontSizeToFitSize:size minimumFontSize:minimumFontSize maximumFontSize:maximumFontSize];
   }
 
   return textStorage;
 }
 
-- (std::shared_ptr<const EventEmitter>)getEventEmitterWithAttributeString:(const AttributedString &)attributedString
+- (std::shared_ptr<const EventEmitter>)getEventEmitterWithAttributeString:(AttributedString)attributedString
                                                       paragraphAttributes:(ParagraphAttributes)paragraphAttributes
                                                                     frame:(CGRect)frame
                                                                   atPoint:(CGPoint)point
@@ -842,7 +818,7 @@ static bool LoomMeasureLayoutIsDrawable(
   return nil;
 }
 
-- (void)getRectWithAttributedString:(const AttributedString &)attributedString
+- (void)getRectWithAttributedString:(AttributedString)attributedString
                 paragraphAttributes:(ParagraphAttributes)paragraphAttributes
                  enumerateAttribute:(NSString *)enumerateAttribute
                               frame:(CGRect)frame
@@ -884,7 +860,7 @@ static bool LoomMeasureLayoutIsDrawable(
 
 #pragma mark - Private
 
-- (NSAttributedString *)_nsAttributedStringFromAttributedString:(const AttributedString &)attributedString
+- (NSAttributedString *)_nsAttributedStringFromAttributedString:(AttributedString)attributedString
 {
   const size_t key = std::hash<AttributedString>{}(attributedString);
   std::shared_ptr<void> value;
@@ -954,7 +930,7 @@ static bool LoomMeasureLayoutIsDrawable(
   CGRect usedBounds = [layoutManager usedRectForTextContainer:textContainer];
   CGSize size = usedBounds.size;
 
-  if (textDidWrap && paragraphAttributes.textWidthMode == TextWidthMode::Auto) {
+  if (textDidWrap) {
     size.width = textContainer.size.width;
   }
 
@@ -970,11 +946,8 @@ static bool LoomMeasureLayoutIsDrawable(
     size.height = enumeratedLinesHeight;
   }
 
-  facebook::react::Size roundedSize = facebook::react::internal_roundTextMeasurementToPixelGrid(
-      {.width = static_cast<facebook::react::Float>(size.width),
-       .height = static_cast<facebook::react::Float>(size.height)},
-      layoutContext.pointScaleFactor);
-  size = CGSize{roundedSize.width, roundedSize.height};
+  size = (CGSize){ceil(size.width * layoutContext.pointScaleFactor) / layoutContext.pointScaleFactor,
+                  ceil(size.height * layoutContext.pointScaleFactor) / layoutContext.pointScaleFactor};
 
   NSRange visibleGlyphRange = [layoutManager glyphRangeForTextContainer:textContainer];
 

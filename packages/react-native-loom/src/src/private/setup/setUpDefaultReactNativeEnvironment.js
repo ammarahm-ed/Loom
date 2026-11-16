@@ -10,7 +10,7 @@
 
 let initialized = false;
 
-export default function setUpDefaultReactNativeEnvironment(
+export default function setUpDefaltReactNativeEnvironment(
   enableDeveloperTools: boolean = true,
 ) {
   if (initialized) {
@@ -21,9 +21,8 @@ export default function setUpDefaultReactNativeEnvironment(
 
   require('../../../Libraries/Core/setUpGlobals');
   require('./setUpDOM').default();
-  require('./setUpPerformance').default();
+  require('../../../Libraries/Core/setUpPerformance');
   require('../../../Libraries/Core/polyfillPromise');
-  require('../../../Libraries/Core/polyfillArrayES2023Methods');
   require('../../../Libraries/Core/setUpTimers');
   if (__DEV__ && enableDeveloperTools) {
     require('../../../Libraries/Core/setUpReactDevTools');
@@ -58,11 +57,5 @@ export default function setUpDefaultReactNativeEnvironment(
     require('../../../src/private/featureflags/ReactNativeFeatureFlags').enableMutationObserverByDefault()
   ) {
     require('./setUpMutationObserver').default();
-  }
-
-  if (
-    require('../../../src/private/featureflags/ReactNativeFeatureFlags').enableResizeObserverByDefault()
-  ) {
-    require('./setUpResizeObserver').default();
   }
 }

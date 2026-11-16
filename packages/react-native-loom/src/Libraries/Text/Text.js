@@ -10,7 +10,7 @@
 
 import type {HostInstance} from '../../src/private/types/HostInstance';
 import type {TextStyleProp} from '../StyleSheet/StyleSheet';
-import type {TextStyle} from '../StyleSheet/StyleSheetTypes';
+import type {____TextStyle_Internal as TextStyleInternal} from '../StyleSheet/StyleSheetTypes';
 import type {GestureResponderEvent} from '../Types/CoreEventTypes';
 import type {NativeTextProps} from './TextNativeComponent';
 import type {PressRetentionOffset, TextProps} from './TextProps';
@@ -62,7 +62,6 @@ const TEXT_IMPL_OWN_PROPS: {+[string]: true} = {
   'aria-expanded': true,
   'aria-hidden': true,
   'aria-label': true,
-  'aria-live': true,
   'aria-selected': true,
   'children': true,
   'ellipsizeMode': true,
@@ -113,7 +112,6 @@ const TextImpl: component(
   const ariaExpanded = props['aria-expanded'];
   const ariaHidden = props['aria-hidden'];
   const ariaLabel = props['aria-label'];
-  const ariaLive = props['aria-live'];
   const ariaSelected = props['aria-selected'];
   const children = props.children;
   const ellipsizeMode = props.ellipsizeMode;
@@ -141,22 +139,9 @@ const TextImpl: component(
     ...NativeTextProps,
   };
   const _accessibilityLabel = ariaLabel ?? accessibilityLabel;
-  const _accessibilityStateDisabled =
-    ariaDisabled ?? accessibilityState?.disabled;
-  const _disabled = disabled ?? _accessibilityStateDisabled;
-
-  // If the disabled prop and accessibilityState.disabled are out of sync but not both in
-  // falsy states we need to update the accessibilityState object to use the disabled prop.
-  const needsAccessibilityStateDisabledUpdate =
-    _disabled !== _accessibilityStateDisabled &&
-    ((_disabled != null && _disabled !== false) ||
-      (_accessibilityStateDisabled != null &&
-        _accessibilityStateDisabled !== false));
-
   let _accessibilityState: ?TextProps['accessibilityState'] =
     accessibilityState;
   if (
-    needsAccessibilityStateDisabledUpdate ||
     ariaBusy != null ||
     ariaChecked != null ||
     ariaDisabled != null ||
@@ -167,7 +152,7 @@ const TextImpl: component(
       _accessibilityState = {
         busy: ariaBusy ?? _accessibilityState.busy,
         checked: ariaChecked ?? _accessibilityState.checked,
-        disabled: _disabled,
+        disabled: ariaDisabled ?? _accessibilityState.disabled,
         expanded: ariaExpanded ?? _accessibilityState.expanded,
         selected: ariaSelected ?? _accessibilityState.selected,
       };
@@ -175,10 +160,28 @@ const TextImpl: component(
       _accessibilityState = {
         busy: ariaBusy,
         checked: ariaChecked,
-        disabled: _disabled,
+        disabled: ariaDisabled,
         expanded: ariaExpanded,
         selected: ariaSelected,
       };
+    }
+  }
+
+  const _accessibilityStateDisabled = _accessibilityState?.disabled;
+  const _disabled = disabled ?? _accessibilityStateDisabled;
+
+  // If the disabled prop and accessibilityState.disabled are out of sync but not both in
+  // falsy states we need to update the accessibilityState object to use the disabled prop.
+  if (
+    _disabled !== _accessibilityStateDisabled &&
+    ((_disabled != null && _disabled !== false) ||
+      (_accessibilityStateDisabled != null &&
+        _accessibilityStateDisabled !== false))
+  ) {
+    if (_accessibilityState == null) {
+      _accessibilityState = {disabled};
+    } else {
+      _accessibilityState.disabled = _disabled;
     }
   }
 
@@ -187,11 +190,6 @@ const TextImpl: component(
     if (ariaHidden === true) {
       processedProps.importantForAccessibility = 'no-hide-descendants';
     }
-  }
-
-  if (ariaLive !== undefined) {
-    processedProps.accessibilityLiveRegion =
-      ariaLive === 'off' ? 'none' : ariaLive;
   }
 
   // Loom: same result as `Platform.select({ios, android, default})`, without
@@ -224,6 +222,11 @@ const TextImpl: component(
     selectionColor != null ? processColor(selectionColor) : undefined;
 
   let _style = style;
+  if (__DEV__) {
+    if (PressabilityDebug.isEnabled() && onPress != null) {
+      _style = [style, {color: 'magenta'}];
+    }
+  }
 
   let _numberOfLines = numberOfLines;
   if (_numberOfLines != null && !(_numberOfLines >= 0)) {
@@ -239,22 +242,22 @@ const TextImpl: component(
 
   let processedStyle = flattenStyle<TextStyleProp>(_style);
   if (processedStyle != null) {
-    let overrides: ?{...TextStyle} = null;
+    let overrides: ?{...TextStyleInternal} = null;
     if (typeof processedStyle.fontWeight === 'number') {
-      overrides = overrides || ({} as {...TextStyle});
+      overrides = overrides || ({} as {...TextStyleInternal});
       overrides.fontWeight =
         // $FlowFixMe[incompatible-type]
-        String(processedStyle.fontWeight) as TextStyle['fontWeight'];
+        String(processedStyle.fontWeight) as TextStyleInternal['fontWeight'];
     }
 
     if (processedStyle.userSelect != null) {
       _selectable = userSelectToSelectableMap[processedStyle.userSelect];
-      overrides = overrides || ({} as {...TextStyle});
+      overrides = overrides || ({} as {...TextStyleInternal});
       overrides.userSelect = undefined;
     }
 
     if (processedStyle.verticalAlign != null) {
-      overrides = overrides || ({} as {...TextStyle});
+      overrides = overrides || ({} as {...TextStyleInternal});
       overrides.textAlignVertical =
         verticalAlignToTextAlignVerticalMap[processedStyle.verticalAlign];
       overrides.verticalAlign = undefined;
@@ -527,24 +530,6 @@ function useTextPressability({
   );
 }
 
-function usePressabilityDebugStyleDev(
-  style: ?TextStyleProp,
-  onPress: ?(event: GestureResponderEvent) => unknown,
-): ?TextStyleProp {
-  const isDebugEnabled = PressabilityDebug.useIsEnabled();
-  return isDebugEnabled && onPress != null
-    ? [style, {color: 'magenta'}]
-    : style;
-}
-
-/**
- * Colors pressable text when press targets are shown by the Inspector.
- * Outside of `__DEV__` it returns the style unchanged and uses no hooks.
- */
-const usePressabilityDebugStyle: typeof usePressabilityDebugStyleDev = __DEV__
-  ? usePressabilityDebugStyleDev
-  : style => style;
-
 /**
  * Wrap the NativeVirtualText component and initialize pressability.
  *
@@ -559,15 +544,10 @@ component PressableVirtualText(
   const [isHighlighted, eventHandlersForText] = useTextPressability(
     textPressabilityProps,
   );
-  const style = usePressabilityDebugStyle(
-    textProps.style,
-    textPressabilityProps.onPress,
-  );
 
   return (
     <NativeVirtualText
       {...textProps}
-      style={style}
       {...eventHandlersForText}
       isHighlighted={isHighlighted}
       isPressable={true}
@@ -592,18 +572,12 @@ component PressableText(
     textPressabilityProps,
   );
 
-  const style = usePressabilityDebugStyle(
-    textProps.style,
-    textPressabilityProps.onPress,
-  );
-
   const NativeComponent =
     selectable === true ? NativeSelectableText : NativeText;
 
   return (
     <NativeComponent
       {...textProps}
-      style={style}
       {...eventHandlersForText}
       isHighlighted={isHighlighted}
       isPressable={true}
