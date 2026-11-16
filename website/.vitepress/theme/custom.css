@@ -133,31 +133,3 @@
 .loom-tl-result.stale rect { fill: var(--vp-c-yellow-soft); stroke: var(--vp-c-yellow-1); }
 .loom-tl-result.stale text { fill: var(--vp-c-yellow-1); }
 .loom-tl-legend { fill: var(--vp-c-text-2); font-size: 11.5px; }
-
-/* Home hero: on desktop it fills the first screen, with the title block and the logo centred
-   vertically on it and on each other. Narrow screens keep VitePress's stacked layout. */
-@media (min-width: 960px) {
-  .VPHome .VPHero.has-image {
-    display: flex;
-    align-items: center;
-    /* VitePress pulls the hero up under the nav (negative margin-top); padding the nav back in makes
-       the centred area the visible screen below the nav. */
-    min-height: 100vh;
-    padding-top: calc(var(--vp-nav-height) + var(--vp-layout-top-height, 0px));
-    padding-bottom: 0;
-  }
-  .VPHome .VPHero.has-image .container {
-    width: 100%;
-    align-items: center;
-  }
-  .VPHome .VPHero.has-image .image {
-    display: flex;
-    align-items: center;
-    margin: 0;
-  }
-  /* VitePress nudges the logo up and left by 32px; keep the horizontal nudge, drop the vertical one so
-     the logo's centre lines up with the title block's. */
-  .VPHome .VPHero.has-image .image-container {
-    transform: translate(-32px, 0);
-  }
-}
