@@ -460,7 +460,8 @@ void LoomRenderer::refreshStyle(Node& node) {
     node.boxSizing = nextBoxSizing;
     node.styleDirty = true;
   }
-  node.displayNone = stringProp(node.props, "display") == "none";
+  node.displayNone =
+      node.offscreenHidden || stringProp(node.props, "display") == "none";
 }
 
 namespace {
@@ -556,7 +557,7 @@ void LoomRenderer::refreshStyleCached(Node& node) {
     node.style = shape.style;
     node.direction = shape.direction;
     node.boxSizing = shape.boxSizing;
-    node.displayNone = shape.displayNone;
+    node.displayNone = shape.displayNone || node.offscreenHidden;
     node.styleDirty = true;
     node.shape = cached->second;
     node.shapeGeneration = node.propsGeneration;
@@ -574,7 +575,7 @@ void LoomRenderer::refreshStyleCached(Node& node) {
   shape->style = node.style;
   shape->direction = node.direction;
   shape->boxSizing = node.boxSizing;
-  shape->displayNone = node.displayNone;
+  shape->displayNone = stringProp(node.props, "display") == "none";
   shape->layoutOnly = isLayoutOnlyView(
       node.componentRoles.has(LoomComponentTable::Box), node.props);
   shape->zIndex = numberProp(node.props, "zIndex").value_or(0);

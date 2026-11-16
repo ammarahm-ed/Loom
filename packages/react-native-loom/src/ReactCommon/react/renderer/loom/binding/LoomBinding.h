@@ -289,6 +289,12 @@ class LoomBinding final : public UIManagerBinding {
     std::shared_ptr<const std::vector<RetainedLiveChild>> retainedLiveChildren;
     bool childrenExplicit{true};
     bool committedSnapshot{false};
+    /**
+     * A hidden clone (`cloneNodeHidden`): this version is the source version
+     * hidden by an offscreen boundary. Committing the source version again
+     * shows the node with exactly its own props, as Fabric does.
+     */
+    bool offscreenHidden{false};
     // Sticky record of text effects in this node's already-committed props. The
     // applied patch chain is dropped once it has been reconciled, so this keeps
     // the text-safety decision stable without retaining the whole history.

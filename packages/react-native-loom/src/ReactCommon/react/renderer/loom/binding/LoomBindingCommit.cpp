@@ -751,6 +751,7 @@ void LoomBinding::reconcileSelectedDrafts(
     if (draft.compatProps != nullptr) {
       liveRenderer.setCompatProps(draft.tag, draft.compatProps);
     }
+    liveRenderer.setOffscreenHidden(draft.tag, draft.offscreenHidden);
   }
 
   for (const auto& entry : selected) {

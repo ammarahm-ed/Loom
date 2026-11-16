@@ -180,6 +180,35 @@ jsi::Value LoomBinding::get(
         });
   }
 
+  // React's `cloneHiddenInstance`: the same version, hidden by an offscreen
+  // boundary. Not a props patch, so committing the source version again
+  // restores it without undoing anything.
+  if (method == "cloneNodeHidden") {
+    return jsi::Function::createFromHostFunction(
+        runtime,
+        name,
+        1,
+        [this](
+            jsi::Runtime& rt,
+            const jsi::Value&,
+            const jsi::Value* arguments,
+            size_t count) -> jsi::Value {
+          requireArguments(rt, "cloneNodeHidden", 1, count);
+          auto ref = nodeRef(rt, arguments[0]);
+          if (ref == nullptr) {
+            return jsi::Value::null();
+          }
+          LOOM_HOST_CALL_SCOPE(
+              profile, *this, ref->surfaceId, ProfiledHostMethod::CloneNode);
+          auto draft = cloneDraft(ref);
+          if (draft != nullptr) {
+            draft->offscreenHidden = true;
+          }
+          return jsi::Object::createFromHostObject(
+              rt, makeNodeRef(*ref, std::move(draft)));
+        });
+  }
+
   if (method == "cloneNodeWithNewProps") {
     return jsi::Function::createFromHostFunction(
         runtime,
