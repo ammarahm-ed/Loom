@@ -20,7 +20,8 @@ LoomRenderer::LoomRenderer(
       operations_(std::move(operations)),
       scrollViewName_(
           LoomPlatformTraits::current().components.hostName("ScrollView")),
-      yogaConfig_(YGConfigNew()) {
+      yogaConfig_(YGConfigNew()),
+      strictYogaConfig_(YGConfigNew()) {
   // A power-of-two bucket count keeps `nodes_` on mask-based indexing (see TagHash).
   nodes_.reserve(1024);
   rawTextLeaves_.reserve(256);
@@ -30,6 +31,17 @@ LoomRenderer::LoomRenderer(
   YGConfigSetErrata(yogaConfig_, YGErrataAll);
   YGConfigSetExperimentalFeatureEnabled(
       yogaConfig_,
+      YGExperimentalFeatureFixFlexBasisFitContent,
+      ReactNativeFeatureFlags::fixYogaFlexBasisFitContentInMainAxis());
+  // YogaLayoutableShadowNode::resolveErrata for LayoutConformance::Strict.
+  YGConfigSetUseWebDefaults(strictYogaConfig_, false);
+  YGConfigSetErrata(
+      strictYogaConfig_,
+      ReactNativeFeatureFlags::enableFlexboxAutoMinSizeInStrictMode()
+          ? YGErrataNone
+          : YGErrataMinSizeUndefinedInsteadOfAuto);
+  YGConfigSetExperimentalFeatureEnabled(
+      strictYogaConfig_,
       YGExperimentalFeatureFixFlexBasisFitContent,
       ReactNativeFeatureFlags::fixYogaFlexBasisFitContentInMainAxis());
 }
@@ -57,6 +69,7 @@ LoomRenderer::~LoomRenderer() {
     entry.second->shape.reset();
   }
   YGConfigFree(yogaConfig_);
+  YGConfigFree(strictYogaConfig_);
 }
 
 void LoomRenderer::detachFromParent(Node& node) {
@@ -174,6 +187,8 @@ void LoomRenderer::createNode(
     }
   }
 
+  // The host name maps LayoutConformance to a plain view; keep what it is.
+  node->layoutConformance = componentName == "LayoutConformance";
   node->componentName = components.hostName(componentName);
   node->componentRoles = components.classify(node->componentName);
   node->collectPropsDelta = componentSendsPropDiffs(node->componentName);
