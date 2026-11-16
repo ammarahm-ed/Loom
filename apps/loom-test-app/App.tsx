@@ -12,6 +12,7 @@ import { StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Bench from './Bench';
 import Compat from './Compat';
+import Gaps from './Gaps';
 import LoomExample from './LoomExample';
 import LoomSmokeTest from './LoomSmokeTest';
 
@@ -30,6 +31,8 @@ function App({
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       {scenario === 'compat' ? (
         <Compat />
+      ) : scenario?.startsWith('gaps-') ? (
+        <Gaps scenario={scenario} />
       ) : scenario === 'example' ? (
         <LoomExample />
       ) : scenario ? (
