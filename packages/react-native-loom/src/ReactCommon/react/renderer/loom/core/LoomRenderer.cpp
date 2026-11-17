@@ -22,6 +22,9 @@ LoomRenderer::LoomRenderer(
           LoomPlatformTraits::current().components.hostName("ScrollView")),
       yogaConfig_(YGConfigNew()),
       strictYogaConfig_(YGConfigNew()) {
+  // Measure functions find their renderer through the node's config.
+  YGConfigSetContext(yogaConfig_, this);
+  YGConfigSetContext(strictYogaConfig_, this);
   // A power-of-two bucket count keeps `nodes_` on mask-based indexing (see TagHash).
   nodes_.reserve(1024);
   rawTextLeaves_.reserve(256);
@@ -90,13 +93,9 @@ void LoomRenderer::detachFromParent(Node& node) {
     // parent is visited (or the old parent may itself be removed). Detach the
     // Yoga edge here, while the old owner is still known, so Yoga never sees a
     // child inserted into two parents.
-    if (parent->yogaNode != nullptr && node.yogaNode != nullptr) {
-      const auto yogaChild = std::find(
-          parent->yogaChildren.begin(), parent->yogaChildren.end(), node.tag);
-      if (yogaChild != parent->yogaChildren.end()) {
-        YGNodeRemoveChild(parent->yogaNode, node.yogaNode);
-        parent->yogaChildren.erase(yogaChild);
-      }
+    if (parent->yogaNode != nullptr && node.yogaNode != nullptr &&
+        YGNodeGetParent(node.yogaNode) == parent->yogaNode) {
+      YGNodeRemoveChild(parent->yogaNode, node.yogaNode);
     }
   }
   node.parent = 0;
@@ -156,6 +155,9 @@ void LoomRenderer::dropSubtree(Tag tag) {
     node->yogaNode = nullptr;
   }
   invalidateFindCache(tag);
+  if (!propsDeltas_.empty()) {
+    propsDeltas_.erase(tag);
+  }
   nodes_.erase(tag);
 }
 
@@ -197,7 +199,6 @@ void LoomRenderer::createNode(
   if (iterator == nodes_.end()) {
     auto fresh = std::make_unique<Node>();
     fresh->tag = tag;
-    fresh->owner = this;
     fresh->parent = previousParent;
     node = fresh.get();
     nodes_.emplace(tag, std::move(fresh));
@@ -219,7 +220,8 @@ void LoomRenderer::createNode(
 
   // The host name maps LayoutConformance to a plain view; keep what it is.
   node->layoutConformance = componentName == "LayoutConformance";
-  node->componentName = components.hostName(componentName);
+  node->componentName =
+      LoomComponentName(internComponentNameString(components.hostName(componentName)));
   node->componentRoles = components.classify(node->componentName);
   node->collectPropsDelta = componentSendsPropDiffs(node->componentName);
   if (node->parent != 0) {
@@ -243,7 +245,9 @@ void LoomRenderer::createNode(
       ? LoomSharedProps(std::move(sharedProps))
       : LoomSharedProps(
             std::make_shared<const folly::dynamic>(hoistProps(props)));
-  node->propsDelta = nullptr;
+  if (!propsDeltas_.empty()) {
+    propsDeltas_.erase(node->tag);
+  }
   // Both inputs of the role flags change here, so the cache must not survive.
   node->roleFlagsValid = false;
   ++node->propsGeneration;
@@ -255,8 +259,7 @@ void LoomRenderer::createNode(
   node->shape.reset();
   // A (re)created node starts a new family: its compat ShadowNode, if any, is
   // rebuilt from these props on the next prepare.
-  node->compat.reset();
-  node->compatDescriptor = nullptr;
+  node->resetCompat();
   node->compatChecked = false;
   // Offscreen hiding belongs to a version of the node it replaces; a new
   // version starts visible, and the refresh below recomputes displayNone.
@@ -294,6 +297,9 @@ void LoomRenderer::createRawTextNode(Tag tag, std::string text) {
       YGNodeFree(oldNode->yogaNode);
     }
     invalidateFindCache(tag);
+    if (!propsDeltas_.empty()) {
+      propsDeltas_.erase(tag);
+    }
     nodes_.erase(tag);
   }
   if (auto* oldLeaf = findRawText(tag); oldLeaf != nullptr) {
@@ -652,8 +658,8 @@ bool LoomRenderer::applyComponentState(const StateUpdate& update) {
     return false;
   }
   auto* node = find(update.family->getTag());
-  if (node == nullptr || node->compat == nullptr ||
-      !node->compat->updateState(update)) {
+  if (node == nullptr || node->compatNode() == nullptr ||
+      !node->compatNode()->updateState(update)) {
     return false;
   }
   // The new revision ran `adopt`, which may have changed the node's Yoga

@@ -22,7 +22,7 @@ void LoomRenderer::syncYogaNode(Node& node) {
   }
   syncCompatNode(node);
   if (const auto compatYoga =
-          node.compat != nullptr ? node.compat->yogaNode() : nullptr;
+          node.compatNode() != nullptr ? node.compatNode()->yogaNode() : nullptr;
       compatYoga != nullptr) {
     // The component's own ShadowNode resolved this style: React Native's own
     // props parsing plus whatever its descriptor's `adopt` changed (safe-area
@@ -70,8 +70,8 @@ void LoomRenderer::syncYogaNode(Node& node) {
   YGNodeSetMeasureFunc(
       node.yogaNode,
       node.textRoot ? &LoomRenderer::measureText
-          : (node.compat != nullptr && node.children.empty() &&
-             node.compat->measurable())
+          : (node.compatNode() != nullptr && node.children.empty() &&
+             node.compatNode()->measurable())
           ? &LoomRenderer::measureCompat
           : nullptr);
 }
@@ -79,53 +79,58 @@ void LoomRenderer::syncYogaNode(Node& node) {
 void LoomRenderer::syncCompatNode(Node& node) {
   if (!node.compatChecked) {
     node.compatChecked = true;
-    node.compatDescriptor = compat_ != nullptr && !node.hostOwned
+    const auto* descriptor = compat_ != nullptr && !node.hostOwned
         ? compat_->descriptorFor(node.componentName)
         : nullptr;
+    if (descriptor != nullptr) {
+      node.ensureCold().compatDescriptor = descriptor;
+    } else if (node.cold != nullptr) {
+      node.cold->compatDescriptor = nullptr;
+    }
   }
-  if (node.compatDescriptor == nullptr) {
+  if (node.compatDescriptor() == nullptr) {
     return;
   }
+  auto& cold = *node.cold;
   try {
     // Props the descriptor parsed from the JSI value on the JS thread, when
     // the binding provided them for this props revision; otherwise the merged
     // folly props are parsed here.
     auto parsed = currentCompatProps(node);
-    if (node.compat == nullptr) {
-      node.compat = parsed != nullptr
+    if (cold.compat == nullptr) {
+      cold.compat = parsed != nullptr
           ? std::make_unique<LoomCompatNode>(
                 compat_,
-                *node.compatDescriptor,
+                *cold.compatDescriptor,
                 node.tag,
                 surfaceId_,
                 node.instanceHandle,
                 std::move(parsed))
           : std::make_unique<LoomCompatNode>(
                 compat_,
-                *node.compatDescriptor,
+                *cold.compatDescriptor,
                 node.tag,
                 surfaceId_,
                 node.instanceHandle,
                 node.props);
-      node.compat->propsGeneration = node.propsGeneration;
-    } else if (node.compat->propsGeneration != node.propsGeneration) {
+      cold.compat->propsGeneration = node.propsGeneration;
+    } else if (cold.compat->propsGeneration != node.propsGeneration) {
       if (parsed != nullptr) {
-        node.compat->updateProps(std::move(parsed));
+        cold.compat->updateProps(std::move(parsed));
       } else {
-        node.compat->updateProps(node.props);
+        cold.compat->updateProps(node.props);
       }
-      node.compat->propsGeneration = node.propsGeneration;
+      cold.compat->propsGeneration = node.propsGeneration;
     }
   } catch (const std::exception& error) {
     // A descriptor that cannot take these props leaves the node on Loom's
     // generic path rather than failing the surface.
     LOG(ERROR) << "Loom compat: " << node.componentName << " tag " << node.tag
                << ": " << error.what();
-    node.compat.reset();
-    node.compatDescriptor = nullptr;
+    node.resetCompat();
     return;
   }
-  if (node.compat->stateDirty && node.compat->state() != nullptr) {
+  if (cold.compat->stateDirty && cold.compat->state() != nullptr) {
     node.needsState = true;
     stateUpdates_.push_back(node.tag);
   }
@@ -138,7 +143,7 @@ YGSize LoomRenderer::measureCompat(
     float height,
     YGMeasureMode heightMode) {
   const auto* node = static_cast<const Node*>(YGNodeGetContext(yogaNode));
-  if (node == nullptr || node->compat == nullptr) {
+  if (node == nullptr || node->compatNode() == nullptr) {
     return YGSize{0, 0};
   }
   // The constraint mapping of YogaLayoutableShadowNode's measure connector.
@@ -160,59 +165,43 @@ YGSize LoomRenderer::measureCompat(
   }
   LayoutContext context;
   context.pointScaleFactor =
-      node->owner != nullptr ? node->owner->pointScaleFactor_ : 1.0f;
-  const auto size = node->compat->measure(context, constraints);
+      rendererOf(yogaNode) != nullptr ? rendererOf(yogaNode)->pointScaleFactor_
+                                      : 1.0f;
+  const auto size = node->compatNode()->measure(context, constraints);
   return YGSize{static_cast<float>(size.width), static_cast<float>(size.height)};
 }
 
 void LoomRenderer::syncYogaChildren(Node& node) {
-  // Compare in place before materialising the list. A steady-state commit
-  // normally finds the Yoga child list already correct, and the old order built
-  // `next` first and compared afterwards, so every node with children paid one
-  // vector allocation per commit for a result it discarded. This walk is
-  // deliberately conservative: it returns early only when the live children
-  // match `yogaChildren` element for element and to the same length, which is
-  // exactly what the vector comparison below decides. Anything else - including
-  // a list that is merely a prefix of the stored one - falls through to the
-  // original build and compare, so the decision cannot change.
+  // Yoga's own child list is the record of what is attached: compare the
+  // live, Yoga-backed children against it in place, and rebuild it only when
+  // they differ. A steady-state commit finds it correct and allocates nothing.
   bool matches = true;
-  auto expected = node.yogaChildren.begin();
+  const auto attached = YGNodeGetChildCount(node.yogaNode);
+  size_t expected = 0;
   for (const Tag childTag : node.children) {
     const auto* child = find(childTag);
-    if (child == nullptr || child->virtualNode) {
+    if (child == nullptr || child->virtualNode || child->yogaNode == nullptr) {
       continue;
     }
-    if (expected == node.yogaChildren.end() || *expected != childTag) {
+    if (expected == attached ||
+        YGNodeGetChild(node.yogaNode, expected) != child->yogaNode) {
       matches = false;
       break;
     }
     ++expected;
   }
-  if (matches && expected == node.yogaChildren.end()) {
-    return;
-  }
-
-  std::vector<Tag> next;
-  next.reserve(node.children.size());
-  for (const Tag childTag : node.children) {
-    auto* child = find(childTag);
-    if (child != nullptr && !child->virtualNode) {
-      next.push_back(childTag);
-    }
-  }
-  if (next == node.yogaChildren) {
+  if (matches && expected == attached) {
     return;
   }
   YGNodeRemoveAllChildren(node.yogaNode);
-  for (const Tag childTag : next) {
+  for (const Tag childTag : node.children) {
     auto* child = find(childTag);
-    if (child == nullptr || child->yogaNode == nullptr) {
+    if (child == nullptr || child->virtualNode || child->yogaNode == nullptr) {
       continue;
     }
     YGNodeInsertChild(
         node.yogaNode, child->yogaNode, YGNodeGetChildCount(node.yogaNode));
   }
-  node.yogaChildren = std::move(next);
 }
 
 void LoomRenderer::layoutTree() {

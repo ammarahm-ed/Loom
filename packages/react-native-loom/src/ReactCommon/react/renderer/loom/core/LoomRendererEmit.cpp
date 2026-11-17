@@ -18,7 +18,9 @@ void LoomRenderer::emitCreate(Node& node) {
   // available. Raw text leaves are stored separately and never reach here.
   // View-less tags are not inserted, which keeps text spans out of the native
   // view hierarchy.
-  node.propsDelta = nullptr;
+  if (!propsDeltas_.empty()) {
+    propsDeltas_.erase(node.tag);
+  }
   pendingOperations_.append(DirectCreateOperation{
       node.tag,
       !node.virtualNode && !node.layoutOnlyNode,
@@ -42,24 +44,27 @@ void LoomRenderer::emitUpdateProps(Node& node) {
   if (!node.roleFlagsValid) {
     refreshRoleFlags(node);
   }
-  if (node.roleSendsPropDiffs && node.propsDelta.isObject() &&
-      !node.propsDelta.empty()) {
+  const auto delta = propsDeltas_.find(node.tag);
+  if (node.roleSendsPropDiffs && delta != propsDeltas_.end() &&
+      delta->second.isObject() && !delta->second.empty()) {
     pendingOperations_.append(DirectUpdatePropsOperation{
-        node.tag, std::move(node.propsDelta), currentCompatProps(node)});
-    node.propsDelta = nullptr;
+        node.tag, std::move(delta->second), currentCompatProps(node)});
+    propsDeltas_.erase(delta);
     node.propsDirty = false;
     return;
   }
+  if (delta != propsDeltas_.end()) {
+    propsDeltas_.erase(delta);
+  }
   pendingOperations_.append(
       DirectUpdatePropsOperation{node.tag, node.props, currentCompatProps(node)});
-  node.propsDelta = nullptr;
   node.propsDirty = false;
 }
 
 std::shared_ptr<const Props> LoomRenderer::currentCompatProps(const Node& node) {
-  return node.compatProps != nullptr &&
-          node.compatPropsGeneration == node.propsGeneration
-      ? node.compatProps
+  return node.cold != nullptr && node.cold->compatProps != nullptr &&
+          node.cold->compatPropsGeneration == node.propsGeneration
+      ? node.cold->compatProps
       : nullptr;
 }
 
@@ -68,8 +73,12 @@ void LoomRenderer::setCompatProps(Tag tag, std::shared_ptr<const Props> props) {
   if (node == nullptr) {
     return;
   }
-  node->compatProps = std::move(props);
-  node->compatPropsGeneration = node->propsGeneration;
+  if (props == nullptr && node->cold == nullptr) {
+    return;
+  }
+  auto& cold = node->ensureCold();
+  cold.compatProps = std::move(props);
+  cold.compatPropsGeneration = node->propsGeneration;
 }
 
 void LoomRenderer::emitRemovals(
@@ -222,7 +231,7 @@ void LoomRenderer::emitLayout(
   // republished even when the text itself is unchanged.
   if (LoomPlatformTraits::current().republishTextStateOnResize &&
       node.textRoot && (changed || insetsChanged) &&
-      node.hasTextMeasurementCache) {
+      node.textOrEmpty().hasTextMeasurementCache) {
     node.needsState = true;
     stateUpdates_.push_back(node.tag);
   }

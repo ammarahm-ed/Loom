@@ -386,20 +386,24 @@ void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
   }
   // Copies props still shared with the version that created the node.
   auto& props = node.props.mutate();
+  // [LoomMemory] The delta is a second copy of every changed key; only
+  // components that ship diffs ever read it.
+  folly::dynamic* delta = nullptr;
+  if (node.collectPropsDelta) {
+    delta = &propsDeltas_[node.tag];
+    if (!delta->isObject()) {
+      *delta = folly::dynamic::object();
+    }
+  }
   for (const auto& item : patch.items()) {
     const auto& key = item.first;
     if (!key.isString()) {
       continue;
     }
-    // [LoomMemory] The delta is a second copy of every changed key; only
-    // components that ship diffs ever read it.
-    if (node.collectPropsDelta && !node.propsDelta.isObject()) {
-      node.propsDelta = folly::dynamic::object();
-    }
     if (key.getString() == "style") {
       mergeStyleInto(props, item.second);
-      if (node.collectPropsDelta) {
-        mergeStyleInto(node.propsDelta, item.second);
+      if (delta != nullptr) {
+        mergeStyleInto(*delta, item.second);
       }
       ++node.propsGeneration;
       continue;
@@ -412,8 +416,8 @@ void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
     // only thing that tells the host to clear the previous value, so pruning
     // applied null keys is safe only once updates carry a diff instead.
     props[key] = item.second;
-    if (node.collectPropsDelta) {
-      node.propsDelta[key] = item.second;
+    if (delta != nullptr) {
+      (*delta)[key] = item.second;
     }
     ++node.propsGeneration;
   }
