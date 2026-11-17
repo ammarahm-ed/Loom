@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
 #include <react/renderer/components/root/RootComponentDescriptor.h>
@@ -224,6 +225,32 @@ TEST_F(LoomHeadlessBindingTest, CommittingTheSourceVersionAgainShowsAHiddenClone
   Access::publish(*binding_, 1, visible, token->generation);
   LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
   EXPECT_EQ(lastDisplayType(*host_, 2), 1);
+  EXPECT_TRUE(host_->takeFailures().empty());
+}
+
+// A surface that sizes to its content (no bounded maximum) reports the size
+// its root was laid out at, never its unbounded constraints.
+TEST_F(LoomHeadlessBindingTest, AContentSizedSurfaceReportsItsLaidOutSize) {
+  using Access = LoomBindingTestAccess;
+  const float unbounded = std::numeric_limits<float>::infinity();
+  LoomBinding::setSurfaceConstraints(1, 0, 0, unbounded, unbounded, false, 0, 0);
+  const auto token = Access::tokenFor(*binding_, 1);
+  auto child = Access::draft(
+      1, token->generation, 11, 2, "View",
+      folly::dynamic::object("width", 100.0)("height", 50.0)(
+          "collapsable", false));
+  child->children =
+      std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+  Access::publish(*binding_, 1, child, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  host_->drainUIQueue();
+
+  auto runtime = loom::Runtime::from(*contextContainer_);
+  ASSERT_TRUE(runtime.has_value());
+  const auto size = runtime->latest().surfaceSize(1);
+  ASSERT_TRUE(size.has_value());
+  EXPECT_EQ(size->width, 100);
+  EXPECT_EQ(size->height, 50);
   EXPECT_TRUE(host_->takeFailures().empty());
 }
 
