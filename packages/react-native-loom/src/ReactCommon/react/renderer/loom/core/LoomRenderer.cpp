@@ -50,12 +50,14 @@ LoomRenderer::~LoomRenderer() {
   // A surface can stop without React sending a delete for every retained node.
   // Event targets are surface-owned and must be removed at teardown, otherwise
   // a later tag reuse can dispatch into the old surface.
-  if (isSurfaceActive() && operations_.unregisterEventTarget) {
+  if (isSurfaceActive()) {
+    std::vector<Tag> released;
     for (const auto& entry : nodes_) {
       if (entry.second->hasEventTarget) {
-        operations_.unregisterEventTarget(surfaceId_, entry.first);
+        released.push_back(entry.first);
       }
     }
+    unregisterEventTargets(std::move(released));
   }
   for (auto& entry : nodes_) {
     if (entry.second->yogaNode != nullptr) {
@@ -101,6 +103,19 @@ void LoomRenderer::detachFromParent(Node& node) {
   noteOrphanCandidate(node.tag);
 }
 
+void LoomRenderer::unregisterEventTargets(std::vector<Tag> tags) {
+  if (tags.empty()) {
+    return;
+  }
+  if (operations_.unregisterEventTargets) {
+    operations_.unregisterEventTargets(surfaceId_, std::move(tags));
+  } else if (operations_.unregisterEventTarget) {
+    for (const auto tag : tags) {
+      operations_.unregisterEventTarget(surfaceId_, tag);
+    }
+  }
+}
+
 void LoomRenderer::dropSubtree(Tag tag) {
   if (auto* leaf = findRawText(tag); leaf != nullptr) {
     detachRawTextFromParent(*leaf);
@@ -123,7 +138,9 @@ void LoomRenderer::dropSubtree(Tag tag) {
     dropSubtree(childTag);
   }
   if (node->hasEventTarget) {
-    if (operations_.unregisterEventTarget) {
+    if (releasedEventTargets_ != nullptr) {
+      releasedEventTargets_->push_back(tag);
+    } else if (operations_.unregisterEventTarget) {
       operations_.unregisterEventTarget(surfaceId_, tag);
     }
     node->hasEventTarget = false;

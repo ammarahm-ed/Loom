@@ -346,6 +346,11 @@ class LoomRenderer final {
     std::function<void(SurfaceId, Tag, InstanceHandle::Shared)>
         registerEventTarget;
     std::function<void(SurfaceId, Tag)> unregisterEventTarget;
+    /**
+     * Optional. Every event target an unmount releases, in one call. Without
+     * it the renderer calls `unregisterEventTarget` once per tag.
+     */
+    std::function<void(SurfaceId, std::vector<Tag>)> unregisterEventTargets;
     std::function<void(
         SurfaceId,
         Tag,
@@ -1284,7 +1289,12 @@ class LoomRenderer final {
   /** Detaches a node from whichever parent currently claims it. */
   void detachFromParent(Node& node);
   void dropSubtree(Tag tag);
+  /** Releases `tags`' event targets: one batched call when the host has it. */
+  void unregisterEventTargets(std::vector<Tag> tags);
+  /** Set while `collectUnreachable` runs: `dropSubtree` collects here. */
+  std::vector<Tag>* releasedEventTargets_{nullptr};
   void collectUnreachable();
+  void sweepUnreachable();
   void flush();
   /**
    * Whether `tag` was reached by the current commit's prepare walk, using the
