@@ -30,7 +30,7 @@ frame hooks on top, and the text services and traits at the bottom; everything e
 
 <LoomDiagram name="architecture" />
 
-With `LOOM_JS_ON_MAIN` the JS thread is the UI thread, so the first two cards of the JS lane run
+With `loom.js=main` the JS thread is the UI thread, so the first two cards of the JS lane run
 on the UI thread. `FrameClock::onFrame` and `FrameCallbackScope` feed the runtime scheduler,
 `flushAnimationFrames` feeds `LoomBinding`, and `setSurfaceConstraints`, `setPointScaleFactor`
 and `releaseSurface` are static calls on `LoomBinding`.
@@ -68,7 +68,7 @@ order on the UI thread together with that commit's result.
 
 ### One commit
 
-The same flow as a sequence, with the thread of each step. With `LOOM_JS_ON_MAIN` the JS thread
+The same flow as a sequence, with the thread of each step. With `loom.js=main` the JS thread
 is the UI thread; otherwise they differ and the UI thread never waits for JavaScript.
 
 <LoomDiagram name="commit" />
@@ -194,7 +194,7 @@ All optional. Without them the scheduler uses fixed time slices and commits land
 - **`FrameClock::onFrame(frameTimeNanos)`**, once per display frame, with the frame's start time on
   the `steady_clock` epoch. Lets React's time slicing leave room for the frame.
 - **`FrameCallbackScope`**, constructed on the UI thread around animation-phase callbacks
-  (requestAnimationFrame and timer delivery) when JS shares that thread (`LOOM_JS_ON_MAIN`). On
+  (requestAnimationFrame and timer delivery) when JS shares that thread (`loom.js=main`). On
   exit it runs the event loop that was requested inside it and applies the commits before the frame
   is drawn.
 - **`LoomBinding::flushAnimationFrames()`**, the before-frame hook, called on the UI thread just
@@ -212,7 +212,7 @@ What each host drives today:
 
 ## Build switches
 
-`LOOM_RENDERER`, `LOOM_WORKER`, `LOOM_JS_ON_MAIN` and `LOOM_PROFILE` select the renderer, the worker
+`LOOM_RENDERER`, `LOOM_WORKER` and `LOOM_PROFILE` select the renderer, the worker
 thread, whether JS runs on the UI thread, and profiling. `RN_JANK_REPORTER=1` turns on the debug
 main-thread jank reporter; its settings come from `runtime.readIntSetting`.
 
