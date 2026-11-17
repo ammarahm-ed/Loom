@@ -269,6 +269,54 @@ class TagMap : public std::unordered_map<Tag, V, LoomTagHash> {
   }
 };
 
+
+/**
+ * A node's merged props, shareable with the immutable object they came from.
+ * Reads go through `get()` (or the implicit conversion); the first write
+ * through `mutate()` copies when anyone else still holds the object, so a
+ * version JavaScript retains is never changed under it.
+ */
+class LoomSharedProps {
+ public:
+  LoomSharedProps() : value_(empty()) {}
+  /** Shares `props`; it must not be written by anyone afterwards. */
+  explicit LoomSharedProps(std::shared_ptr<const folly::dynamic> props)
+      : value_(std::move(props)) {}
+  LoomSharedProps& operator=(folly::dynamic props) {
+    value_ = std::make_shared<const folly::dynamic>(std::move(props));
+    return *this;
+  }
+
+  const folly::dynamic& get() const {
+    return *value_;
+  }
+  operator const folly::dynamic&() const {
+    return *value_;
+  }
+  const folly::dynamic* operator->() const {
+    return value_.get();
+  }
+  const folly::dynamic& operator*() const {
+    return *value_;
+  }
+
+  /** The props for writing: a private copy if the object is shared. */
+  folly::dynamic& mutate() {
+    if (value_.use_count() != 1) {
+      value_ = std::make_shared<const folly::dynamic>(*value_);
+    }
+    return const_cast<folly::dynamic&>(*value_);
+  }
+
+ private:
+  static const std::shared_ptr<const folly::dynamic>& empty() {
+    static const auto kEmpty =
+        std::make_shared<const folly::dynamic>(folly::dynamic::object());
+    return kEmpty;
+  }
+  std::shared_ptr<const folly::dynamic> value_;
+};
+
 class LoomRenderer final {
  public:
   struct TextMeasurement {
@@ -437,6 +485,15 @@ class LoomRenderer final {
       Tag tag,
       const std::string& componentName,
       const folly::dynamic& props,
+      InstanceHandle::Shared instanceHandle = nullptr);
+  /**
+   * The same, keeping a reference to `props` instead of a copy when they are
+   * already flat. Nobody may write `props` afterwards.
+   */
+  void createNode(
+      Tag tag,
+      const std::string& componentName,
+      std::shared_ptr<const folly::dynamic> props,
       InstanceHandle::Shared instanceHandle = nullptr);
   void createRawTextNode(Tag tag, std::string text);
   void updateRawText(Tag tag, std::string text);
@@ -740,8 +797,12 @@ class LoomRenderer final {
     std::string componentName;
     /** Resolved from `componentName` once, in `createNode`. */
     LoomComponentTable::Roles componentRoles;
-    /** Merged, flattened props. Never a diff. */
-    folly::dynamic props{folly::dynamic::object()};
+    /**
+     * Merged, flattened props. Never a diff. Shared with the JS-side version
+     * that created the node when that version's props were already flat, and
+     * copied on the first write (`LoomSharedProps`).
+     */
+    LoomSharedProps props;
     /**
      * Props changed since the host last saw them. The host is always sent the
      * whole merged set, which is what the shadow-tree path mounts too, so a

@@ -107,7 +107,7 @@ std::optional<LoomRenderer::FabricNodeInfo> LoomRenderer::fabricNodeInfo(
   }
   FabricNodeInfo info;
   info.componentName = &node->componentName;
-  info.props = &node->props;
+  info.props = &node->props.get();
   info.propsGeneration = node->propsGeneration;
   info.identity = node->identity;
   info.parent = node->parent;

@@ -147,6 +147,19 @@ void LoomRenderer::createNode(
     const std::string& componentName,
     const folly::dynamic& props,
     InstanceHandle::Shared instanceHandle) {
+  createNode(
+      tag,
+      componentName,
+      std::make_shared<const folly::dynamic>(props),
+      std::move(instanceHandle));
+}
+
+void LoomRenderer::createNode(
+    Tag tag,
+    const std::string& componentName,
+    std::shared_ptr<const folly::dynamic> sharedProps,
+    InstanceHandle::Shared instanceHandle) {
+  const auto& props = *sharedProps;
   const auto& components = LoomPlatformTraits::current().components;
   if (components.classify(componentName).isRawText()) {
     createRawTextNode(
@@ -207,7 +220,12 @@ void LoomRenderer::createNode(
   node->hostOwned =
       tag == surfaceId_ || node->componentName == kRootComponentName;
   node->childrenDirty = true;
-  node->props = hoistProps(props);
+  // Flat props (what React Native's JavaScript sends) are shared with the
+  // version that created the node; only a nested `style` needs a new object.
+  node->props = isFlatProps(props)
+      ? LoomSharedProps(std::move(sharedProps))
+      : LoomSharedProps(
+            std::make_shared<const folly::dynamic>(hoistProps(props)));
   node->propsDelta = nullptr;
   // Both inputs of the role flags change here, so the cache must not survive.
   node->roleFlagsValid = false;
