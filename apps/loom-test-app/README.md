@@ -84,8 +84,7 @@ cd android
 
 Notes:
 
-- `LOOM_RENDERER` requires `LOOM_JS_ON_MAIN`, and `LOOM_WORKER`
-  requires both. The build fails fast with a clear `GradleException` otherwise.
+- `LOOM_WORKER` requires `LOOM_RENDERER`. The build fails fast with a clear `GradleException` otherwise.
 - Add `-PreactNativeArchitectures=arm64-v8a` to build a single ABI. A
   from-source React Native build compiles Hermes and all of ReactAndroid, so this
   is the difference between minutes and tens of minutes.
@@ -117,14 +116,15 @@ Notes:
 Confirm the switch reached the build:
 
 ```sh
-grep -E "LOOM_JS_ON_MAIN|LOOM_RENDERER" \
+grep -E "LOOM_RENDERER" \
   node_modules/.loom/react-native/ReactAndroid/build/generated/source/buildConfig/debug/com/facebook/react/BuildConfig.java
 ```
 
 ## iOS
 
-`LOOM_JS_ON_MAIN` is Android-only (on iOS the JS runtime already has its own
-thread); the Loom renderer is switched with environment variables.
+`loom.js=main|background` (Podfile.properties.json or `env loom.js=main pod install`) is a startup setting: it only regenerates the
+`LoomRuntimeConfig` pod, so switching it needs `pod install` and a rebuild, not a new Loom build. On Android it is the same
+property in `android/gradle.properties`.
 
 ```sh
 cd ios

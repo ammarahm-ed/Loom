@@ -5,12 +5,15 @@ Loom has four public switches. They have the same names and meaning on Android a
 | Switch | Values | Effect |
 |---|---|---|
 | `loom.renderer` | `true` (default), `false` | Loom's renderer, or plain React Native (Fabric). With `false` the app uses React Native's own artifacts and no Loom code |
-| `loom.js` | `background` (default), `main` | JavaScript on its own thread, or on the main thread |
+| `loom.js` | `background` (default), `main` | JavaScript on its own thread, or on the main thread. Decided at app startup; the Loom binaries are the same for both |
 | `loom.compileFromSource` | `true`, `false` (default) | Build Loom from source instead of using the prebuilt |
 | `loom.releaseProfiling` | `true`, `false` (default) | Release builds that keep DevTools and tracing, so a release build can be profiled |
 
-The prebuilt Loom core is the default. It is published as one artifact per configuration, for debug,
+The prebuilt Loom core is the default. It is published as one artifact per build type, for debug,
 debugOptimized, release and release profiling (Android) and Debug, Release and ReleaseProfiling (iOS).
+Where JavaScript runs is not a build axis: one prebuilt serves both `loom.js` values, and switching it
+changes only the app (a generated resource on Android, a generated one-file pod on iOS). No
+`AppDelegate` or `MainApplication` edits are needed.
 
 ## Android
 
@@ -28,7 +31,7 @@ loom.js=main
 ```
 
 `loom.settings.gradle` (see [Getting started](/guide/getting-started)) reads them. The prebuilt is
-`io.github.ammarahm-ed:react-android` (`-jsmain` for `loom.js=main`, plus `-profiling` for
+`io.github.ammarahm-ed:react-android` (plus `-profiling` for
 `loom.releaseProfiling`), and Hermes keeps React Native's own `com.facebook` coordinates. The
 repository comes from the `LOOM_MAVEN_REPOSITORY` environment variable (a local directory works).
 
@@ -51,9 +54,12 @@ env loom.js=main pod install
 env loom.renderer=false pod install
 ```
 
-`Loom.react_native_path` in the Podfile reads the switches and sets up the build. The prebuilt is
+`Loom.react_native_path` in the Podfile reads the switches and sets up the build. `loom.js` is written, at
+`pod install`, into a generated `LoomRuntimeConfig` pod (one Objective-C file, added to your app target
+automatically) whose `+load` hands it to Loom before `main`; changing it needs a `pod install` and a rebuild
+of that pod only. The prebuilt is
 `react-native-artifacts` under the `io.github.ammarahm-ed` group, with React Native's classifiers
-(`reactnative-core-release`, ...); `loom.js=main` adds `jsmain-`, and `loom.releaseProfiling` selects the
+(`reactnative-core-release`, ...); `loom.releaseProfiling` selects the
 `release-profiling` core for Release. The internal `RCT_LOOM_*_IOS` variables are derived from the
 switches; do not set them.
 
@@ -231,3 +237,10 @@ Print worker and commit timing. Most of the timing code is compiled in only with
 The jank reporter is part of the debug build only. Its settings are `jankReporter` and
 `jankBudgetMs` above; `adb shell setprop debug.loom.jank_budget_ms N` and
 `adb shell setprop debug.loom.jank 0` remain as overrides.
+
+## Desktop and headless hosts
+
+A host that has no Gradle or CocoaPods configuration sets the mode from its own config, before the first
+binding or runtime scheduler exists, with `LoomHost::setJavaScriptOnUIThread(bool)`
+(`react/renderer/loom/host/LoomHost.h`; it wraps `LoomJavaScriptThread::set`). Nothing set means the UI
+thread. The value is fixed once read; changing it later is a debug assertion.
