@@ -53,6 +53,21 @@ a binding with no host is a fatal error that names `registerIn`.
 The container owns the host for the life of the instance. A host that refers to platform objects
 holds them weakly or invalidates itself on teardown, and treats calls after teardown as no-ops.
 
+### Startup for a third-party host
+
+iOS and Android name their platform themselves. Any other host (desktop, embedded) does this at
+startup, before the first surface:
+
+1. `LoomHost::setJavaScriptOnUIThread(...)`: where JavaScript runs.
+2. `LoomSettings::configurePlatform(kLoomPlatformDesktop)`: the desktop default column. It turns
+   on `earlyCreate` (a large mount sends its creates before layout finishes) and `parallelText`
+   (new paragraphs of a large commit are measured on several threads). Then apply the app's own
+   overrides with `LoomSettings::set`. Without this call no platform is configured and both stay
+   off.
+3. `LoomHost::registerIn(...)` with traits that set `parallelFor`. Without `parallelFor`,
+   `parallelText` does nothing. Set `liveReadsOnAnyThread` too if your live view state is
+   thread-safe (see [Threads](#threads)).
+
 ## Threads
 
 - **UI thread:** the one thread that owns native views and applies results. `uiExecutor()` posts
@@ -65,6 +80,32 @@ measured on the commit thread only when `LoomTextServices::canMeasureOnWorker()`
 otherwise a commit that contains text is computed on the UI thread. Every other `LoomHost` method
 is called on the UI thread. With the worker, effects recorded during a commit are replayed in
 order on the UI thread together with that commit's result.
+
+**Live reads.** `getScrollOffset` and `getViewLocationInSurface` answer from live native state.
+By default a read from the JS thread posts to the UI thread and waits for the answer, so it waits
+for whatever the UI thread is doing, such as drawing a large frame. Pressability makes these
+reads on every press-in, once per scroll view above the pressed view. A host that keeps scroll
+offsets and view locations under its own lock sets `LoomPlatformTraits::liveReadsOnAnyThread`.
+The core then calls these two methods directly on the reading thread, concurrently with UI-thread
+work, and treats an exception as "cannot answer". On a desktop host this took the first press
+after startup from 68 ms to 12 ms. iOS and Android keep the default, because their view state
+belongs to the main thread.
+
+### A dedicated UI thread for thread-agnostic hosts
+
+The UI thread is whatever thread `uiExecutor()` posts to and `isUIThread` recognizes. On iOS and
+Android it has to be the platform main thread, because UIKit and Android views live there. A host
+whose native view model is thread-agnostic (react-native-gpui, for example) can instead give Loom a dedicated thread of its own when
+JavaScript runs on its own thread:
+
+- `uiExecutor()` posts to that thread, and `isUIThread` returns true on it.
+- `applyBatch` and the effects run there and update the view model. The platform main thread
+  only draws the finished state.
+- A worker result is then applied as soon as it is ready, instead of waiting for the platform's
+  main thread to finish drawing a frame.
+
+Keep the main thread when JavaScript runs on it (`loom.js=main`), since the JS thread is then the
+UI thread.
 
 ### One commit
 
@@ -91,14 +132,15 @@ Only `uiExecutor` and `applyBatch` are required; everything else defaults to doi
 | `failSurface(surface, reason)` | UI | A commit failed part-way and the core stopped the surface. |
 | `updateViewProps(tag, props)` | UI | Applies flat changed props to a mounted view outside a batch: `setNativeProps` and animated paint. |
 | `registerEventTarget`, `unregisterEventTarget` | UI | The JS instance handle for a node; retain it until unregistered. |
+| `unregisterEventTargets(surface, tags)` | UI | Every event target an unmount or a surface teardown releases, in one call. The default calls `unregisterEventTarget` per tag; override it if a release is work on another thread, so an unmount becomes one task instead of thousands. |
 | `dispatchEvent(...)` | UI | An event the core raised for a tag (layout events and similar); forward it to React's event dispatcher. |
 | `updateComponentState(surface, tag, state)` | UI | A component's own `State`, as Fabric's UpdateState mutation. |
 | `updateTextState(update)` | UI | The resolved text payload of a paragraph or text input (`LoomTextStateUpdate`). |
 | `updateScrollContentBounds(...)` | UI | A scroll view's content bounds and props, in DIP. |
 | `dispatchCommand`, `sendAccessibilityEvent`, `setIsJSResponder` | UI | `UIManager` operations addressed by tag. |
 | `reportUnsupportedInlineAttachment` | UI | A native view was found inside a Text. The core then fails the surface. |
-| `getScrollOffset(surface, tag)` | UI | Live scroll position in DIP. Default `{0, 0}`. |
-| `getViewLocationInSurface(surface, tag)` | UI | A mounted view's origin relative to its surface root, or `nullopt`. |
+| `getScrollOffset(surface, tag)` | UI, or any thread with `liveReadsOnAnyThread` | Live scroll position in DIP. Default `{0, 0}`. |
+| `getViewLocationInSurface(surface, tag)` | UI, or any thread with `liveReadsOnAnyThread` | A mounted view's origin relative to its surface root, or `nullopt`. |
 | `textServices()` | once | The text engine, or null (text then uses an estimate). |
 | `traits()` | once, in `registerIn` | See below. |
 
@@ -128,6 +170,22 @@ views by tag must apply the delete first; `animationFrame` marks a batch produce
 animation lane rather than a React commit, whose resized text must be drawn in the same frame.
 The `componentName` in a create is the node's *host name* (see the component table).
 
+A new view gets five operations by default: create, insert, padding, overflow inset and layout.
+Early creates (`earlyCreate`) move the creates into an earlier batch but add no operations. Two
+opt-in traits change the format for hosts that want it. The defaults keep exactly the operations
+above, which iOS, Android and libraries rely on.
+
+- **`insertsCarryInitialLayout`:** for a view created in the batch, the insert carries its first
+  frame (`DirectInsertOperation::hasLayout`, then `displayType`, `layoutDirection`, `x`, `y`,
+  `width` and `height`), and no Layout operation follows for it. Its padding and overflow insets
+  are sent only when non-zero. A mount then costs two operations per view, as Fabric's create
+  and insert mutations do. For a 2,000-cell grid this cut a mount from 20,005 operations to
+  10,002, with identical frames.
+- **`removesSubtreeRootOnly`:** an unmount emits a remove only for the subtree root, from its
+  surviving parent, instead of one for every edge inside the subtree, as Fabric also does. The
+  host detaches a deleted view's children itself. A descendant that moves out of the removed
+  subtree in the same batch still gets its remove.
+
 ## Traits
 
 `LoomPlatformTraits` is filled once and read through `LoomPlatformTraits::current()`. Every field is
@@ -139,7 +197,10 @@ data or a function pointer, so a read is a load. The defaults are the generic ho
 | `sendsPropDiffs(hostName)` | Whether updates of that component carry only changed keys. Null: never. |
 | `republishTextStateOnResize` | Text is drawn in the state's content size, so a resize republishes it. |
 | `hasPreparedTextLayout` | `prepareTextForMount` returns a layout the host draws from. Without it the core publishes the content box with the text state. |
-| `parallelFor` | Runs `body(0..n-1)`, possibly in parallel. Null: no speculative text measurement. |
+| `parallelFor` | Runs `body(0..n-1)`, possibly in parallel. Null: no speculative text measurement, so the `parallelText` setting does nothing. |
+| `liveReadsOnAnyThread` | `getScrollOffset` and `getViewLocationInSurface` are thread-safe; JS-thread reads call them directly instead of waiting for the UI thread. |
+| `insertsCarryInitialLayout` | Opt-in: a new view's first frame rides on its insert (see the batch format). |
+| `removesSubtreeRootOnly` | Opt-in: an unmount removes only the subtree root (see the batch format). |
 | `log` | Receives every formatted log and profile line. Null: stderr. |
 | `profileWorker` | Enables profile lines and timing. |
 | `isUIThread` | True on the thread that owns views. Null: always true. |
