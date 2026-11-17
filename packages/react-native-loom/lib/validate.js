@@ -84,13 +84,23 @@ function validateDetailed({upstreamDir, upstreamVersion, manifest = loadManifest
       errors.push(`${o.file}: platform file now exists upstream; convert to patch or drop`);
     }
   }
-  for (const root of strict ? ['src', 'android-tests'] : []) {
-    const dir = path.join(__dirname, '..', root);
-    for (const f of walk(dir)) {
+  if (strict) errors.push(...unlistedFiles(manifest, known));
+  return {errors, warnings};
+}
+
+/**
+ * Files under src/ and android-tests/ that overrides.json does not list. A materialized tree copies
+ * only listed files, so an unlisted header compiles in this repo but is missing from every app build.
+ * Needs no installed react-native, so it is cheap enough to run on every change.
+ */
+function unlistedFiles(manifest = loadManifest(), known = new Set(manifest.overrides.map(overridePath))) {
+  const errors = [];
+  for (const root of ['src', 'android-tests']) {
+    for (const f of walk(path.join(__dirname, '..', root))) {
       if (!known.has(f)) errors.push(`${path.relative(path.join(__dirname, '..'), f)}: not listed in overrides.json`);
     }
   }
-  return {errors, warnings};
+  return errors;
 }
 
 /** Strict validation (Loom's CI, `loom validate`): every finding is an error. */
@@ -108,4 +118,4 @@ function* walk(dir) {
   }
 }
 
-module.exports = {validate, validateDetailed, minorOf, walk};
+module.exports = {validate, validateDetailed, unlistedFiles, minorOf, walk};
