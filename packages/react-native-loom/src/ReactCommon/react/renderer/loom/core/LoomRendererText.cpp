@@ -151,7 +151,28 @@ void LoomRenderer::markTextDirty(Tag tag) {
   }
 }
 
-TextAttributes LoomRenderer::attributesFor(
+namespace {
+constexpr size_t kTextAttributesCacheLimit = 256;
+} // namespace
+
+std::shared_ptr<const TextAttributes> LoomRenderer::internTextAttributes(
+    const TextAttributes& attributes) {
+  const auto hash = std::hash<TextAttributes>{}(attributes);
+  const auto [first, last] = textAttributesCache_.equal_range(hash);
+  for (auto entry = first; entry != last; ++entry) {
+    if (*entry->second == attributes) {
+      return entry->second;
+    }
+  }
+  if (textAttributesCache_.size() >= kTextAttributesCacheLimit) {
+    textAttributesCache_.clear();
+  }
+  auto shared = std::make_shared<const TextAttributes>(attributes);
+  textAttributesCache_.emplace(hash, shared);
+  return shared;
+}
+
+std::shared_ptr<const TextAttributes> LoomRenderer::attributesFor(
     Node& node,
     const TextAttributes& inherited) {
   const bool isParagraph = node.textRoot;
@@ -162,7 +183,7 @@ TextAttributes LoomRenderer::attributesFor(
   // and each node in it would otherwise cross the bridge again, even the ones
   // whose props did not change.
   if (cached.valid && cached.propsGeneration == node.propsGeneration &&
-      cached.textRoot == isParagraph && cached.inherited == inherited) {
+      cached.textRoot == isParagraph && *cached.inherited == inherited) {
     if (isParagraph) {
       text.paragraphAttributes = cached.paragraphAttributes;
     }
@@ -184,10 +205,10 @@ TextAttributes LoomRenderer::attributesFor(
   cached.valid = true;
   cached.propsGeneration = node.propsGeneration;
   cached.textRoot = isParagraph;
-  cached.inherited = inherited;
-  cached.attributes = attributes;
+  cached.inherited = internTextAttributes(inherited);
+  cached.attributes = internTextAttributes(attributes);
   cached.paragraphAttributes = text.paragraphAttributes;
-  return attributes;
+  return cached.attributes;
 }
 
 void LoomRenderer::appendTextContent(
@@ -221,7 +242,7 @@ void LoomRenderer::appendTextContent(
       // so that an unset attribute keeps the enclosing span's value.
       auto childAttributes = attributesFor(*child, inherited);
       child->text->textAttributes = childAttributes;
-      appendTextContent(*child, childAttributes, out);
+      appendTextContent(*child, *childAttributes, out);
       continue;
     }
 
@@ -239,11 +260,13 @@ void LoomRenderer::appendTextContent(
 
 void LoomRenderer::buildTextContent(Node& root) {
   auto textAttributes =
-      attributesFor(root, TextAttributes::defaultTextAttributes());
+      *attributesFor(root, TextAttributes::defaultTextAttributes());
   textAttributes.layoutDirection =
       isRTL_ ? LayoutDirection::RightToLeft : LayoutDirection::LeftToRight;
   auto& text = root.ensureText();
-  text.textAttributes = textAttributes;
+  if (*text.textAttributes != textAttributes) {
+    text.textAttributes = internTextAttributes(textAttributes);
+  }
 
   auto attributedString = AttributedString{};
   const bool textInput = root.componentRoles.textInput;
@@ -358,7 +381,7 @@ LoomRenderer::TextMeasurement LoomRenderer::measureTextNode(
   const bool bounded =
       std::isfinite(maximumSize.width) && maximumSize.width > 0;
   auto estimate = estimateTextMeasurement(
-      text.textAttributes,
+      *text.textAttributes,
       Node::TextData::stringOf(text.measurementAttributedString),
       maximumSize.width,
       bounded);
@@ -366,10 +389,10 @@ LoomRenderer::TextMeasurement LoomRenderer::measureTextNode(
            .getString()
            .empty() &&
       estimate.height <= 0) {
-    const auto fontSize = std::isnan(text.textAttributes.fontSize) ||
-            text.textAttributes.fontSize <= 0
+    const auto fontSize = std::isnan(text.textAttributes->fontSize) ||
+            text.textAttributes->fontSize <= 0
         ? 14.0f
-        : text.textAttributes.fontSize;
+        : text.textAttributes->fontSize;
     estimate.height = fontSize * 1.2f;
   }
   return estimate;
