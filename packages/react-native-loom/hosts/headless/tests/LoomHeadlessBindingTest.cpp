@@ -271,6 +271,55 @@ TEST_F(LoomHeadlessBindingTest, ShowingAHiddenCloneWithAPaintPatchShowsIt) {
   EXPECT_TRUE(host_->takeFailures().empty());
 }
 
+// A forced-sync commit must not mark its versions committed before it has
+// reconciled them: otherwise a parent whose new version gained a child looks
+// unchanged and the reconcile keeps the live (childless) children instead.
+TEST_F(LoomHeadlessBindingTest, AForcedSyncCommitKeepsAChildAddedToAMountedParent) {
+  using Access = LoomBindingTestAccess;
+  LoomBinding::setSurfaceConstraints(1, 200, 200, 200, 200, false, 0, 0);
+  const auto token = Access::tokenFor(*binding_, 1);
+  auto parent = Access::draft(
+      1, token->generation, 11, 2, "View",
+      folly::dynamic::object("width", 100.0)("height", 100.0)(
+          "collapsable", false));
+  parent->children =
+      std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+  parent->childrenExplicit = true;
+  Access::publish(*binding_, 1, parent, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  host_->drainUIQueue();
+  host_->takeBatches();
+
+  auto child = Access::draft(
+      1, token->generation, 12, 3, "View",
+      folly::dynamic::object("width", 10.0)("height", 10.0)(
+          "collapsable", false));
+  child->children =
+      std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+  auto withChild = std::make_shared<Access::Draft>(*parent);
+  withChild->published = false;
+  withChild->workerCommitted = false;
+  withChild->frozenCommit = 0;
+  withChild->freezeFacts = {};
+  withChild->children =
+      std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>(
+          std::vector<std::shared_ptr<Access::Draft>>{child});
+  Access::publish(*binding_, 1, withChild, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  host_->drainUIQueue();
+  bool created = false;
+  for (const auto& recorded : host_->takeBatches()) {
+    for (const auto& operation : recorded.batch.operations) {
+      if (const auto* create = std::get_if<DirectCreateOperation>(&operation);
+          create != nullptr && create->tag == 3) {
+        created = true;
+      }
+    }
+  }
+  EXPECT_TRUE(created);
+  EXPECT_TRUE(host_->takeFailures().empty());
+}
+
 // A surface that sizes to its content (no bounded maximum) reports the size
 // its root was laid out at, never its unbounded constraints.
 TEST_F(LoomHeadlessBindingTest, AContentSizedSurfaceReportsItsLaidOutSize) {
