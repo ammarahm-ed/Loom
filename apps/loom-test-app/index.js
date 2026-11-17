@@ -12,5 +12,5 @@ AppRegistry.registerComponent(appName, () => App);
 // JS thread) and print it, so a run shows whether JavaScript is on the main thread (iOS and Android).
 const jsThread = NativeModules.LoomBuildConfig?.jsThread?.();
 if (jsThread) {
-  NativeModules.LoomBuildConfig.log(`jsThread ${JSON.stringify(jsThread)}`);
+  NativeModules.LoomBuildConfig.log?.(`jsThread ${JSON.stringify(jsThread)}`);
 }
