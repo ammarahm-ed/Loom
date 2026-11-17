@@ -53,6 +53,7 @@ import com.facebook.react.bridge.UIManager;
 import com.facebook.react.bridge.UIManagerListener;
 import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.common.LoomJavaScriptThread;
 import com.facebook.react.common.annotations.UnstableReactNativeAPI;
 import com.facebook.react.common.build.ReactBuildConfig;
 import com.facebook.react.common.mapbuffer.ReadableMapBuffer;
@@ -1677,7 +1678,7 @@ public class FabricUIManager
       // commit is then mounted before this frame's traversal, so a tap is drawn in the same frame
       // a native app would draw it in, one vsync earlier than the queued path.
       boolean deliverNow =
-          BuildConfig.LOOM_JS_ON_MAIN
+          LoomJavaScriptThread.isOnUIThread()
               && (experimentalIsSynchronous || isUrgentEventCategory(eventCategory))
               && UiThreadUtil.isOnUiThread();
       mBinding.dispatchDirectEvent(
@@ -1699,7 +1700,7 @@ public class FabricUIManager
         // The synchronous request above only marks the event beat; ticking it here runs the
         // beat (and so the JavaScript handlers) now instead of on the next frame callback.
         mBatchEventDispatchedListener.onBatchEventDispatched();
-      } else if (!BuildConfig.LOOM_JS_ON_MAIN
+      } else if (!LoomJavaScriptThread.isOnUIThread()
           && isUrgentEventCategory(eventCategory)
           && UiThreadUtil.isOnUiThread()) {
         // JavaScript on its own thread: hand the event to it now rather than on the next frame

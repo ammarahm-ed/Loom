@@ -87,7 +87,9 @@ gradle.beforeProject { p ->
 // diagnostic that only exists in a from-source build and therefore implies one.
 //
 //   loom.renderer          true | false    Loom, or plain React Native (Fabric)            (default: true)
-//   loom.js                main | background  where JavaScript runs                       (default: background)
+//   loom.js                main | background  where JavaScript runs, decided at app startup (default: background)
+//                                             Only the app's `loom_js_on_main` resource changes (below); the
+//                                             prebuilt or source-built Loom library is the same for both.
 //   loom.compileFromSource true | false    build Loom from source instead of the prebuilt (default: false)
 //   loom.releaseProfiling  true | false    release builds with DevTools and tracing kept   (default: false)
 def loomProp = { String name -> def v = settings.providers.gradleProperty(name).orNull; v == null ? null : v.trim() }
@@ -109,7 +111,7 @@ def loomCompileFromSource = loomBool("loom.compileFromSource", false)
 def loomReleaseProfiling = loomBool("loom.releaseProfiling", false)
 def loomDiagnostics = loomBool("loom.profile", false) || loomBool("loom.cppTests", false)
 
-// A prebuilt exists for exactly one configuration per flavor: renderer on, js main|background.
+// A prebuilt exists for exactly one configuration per flavor: renderer on (it serves both JavaScript-thread modes).
 def loomFromSource = loomCompileFromSource || loomDiagnostics
 if (!loomFromSource && !loomRendererOn) {
   // Plain React Native: no Loom code at all, RN's own com.facebook artifacts.
@@ -120,7 +122,7 @@ if (!loomFromSource && !loomRendererOn) {
   // Loom's prebuilts carry Loom's own version (package.json of react-native-loom, recorded by materialize),
   // not React Native's: only 0.<minor> is shared.
   def loomVersion = new groovy.json.JsonSlurper().parse(new File(loomReactNativeDir, ".loom-stamp.json")).loomVersion
-  def loomArtifact = loomJs == "main" ? "react-android-jsmain" : "react-android"
+  def loomArtifact = "react-android"
   // loom.releaseProfiling: the release-profiling build (DevTools and tracing kept) replaces the release
   // variant; it is published as its own artifact with that one variant, so only release configurations use it.
   def loomArtifactFor = { cfg ->
@@ -129,7 +131,7 @@ if (!loomFromSource && !loomRendererOn) {
   }
   def loomRepoOverride = System.getenv("LOOM_MAVEN_REPOSITORY")
   def loomRepo = loomRepoOverride ?: "https://repo1.maven.org/maven2"
-  logger.lifecycle("Loom: using prebuilt io.github.ammarahm-ed:${loomArtifact}:${loomVersion} (loom.js=${loomJs}).")
+  logger.lifecycle("Loom: using prebuilt io.github.ammarahm-ed:${loomArtifact}:${loomVersion}.")
   if (loomRepoOverride) {
     // Said out loud: a value left in a shell profile silently changes which binaries an app ships.
     logger.warn("Loom: LOOM_MAVEN_REPOSITORY=${loomRepoOverride} replaces Maven Central for Loom's artifacts.")
@@ -189,6 +191,20 @@ if (!loomFromSource && !loomRendererOn) {
   }
 }
 gradle.ext.loomFromSource = loomFromSource
+
+// Where JavaScript runs is a startup setting of the app, not of the Loom library: the app module gets a
+// `loom_js_on_main` bool resource, which ReactInstance reads (LoomJavaScriptThread) before any JS thread
+// exists. Nothing in MainApplication changes, and the Loom artifacts are identical for both values.
+if (loomRendererOn) {
+  logger.lifecycle("Loom: JavaScript runs on the ${loomJs == 'main' ? 'main (UI)' : 'background'} thread (loom.js=${loomJs}).")
+  gradle.beforeProject { p ->
+    p.plugins.withId("com.android.application") {
+      p.extensions.getByName("androidComponents").finalizeDsl { android ->
+        android.defaultConfig.resValue("bool", "loom_js_on_main", loomJs == "main" ? "true" : "false")
+      }
+    }
+  }
+}
 
 // Native libraries that link Hermes (react-native-worklets, Reanimated, ...) read its Prefab
 // package when their CMake build is configured. Gradle does not carry that dependency across the

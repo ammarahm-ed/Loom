@@ -55,8 +55,6 @@ extra["cmake_version"] = cmakeVersion
  * Set as Gradle properties, in the app's `android/gradle.properties` or with `-P<name>=<value>`:
  *
  *   loom.renderer = true | false    which renderer draws the app: Loom, or React Native's Fabric (default: true)
- *   loom.js       = background | main  where JavaScript runs: React Native's own JS thread, or the
- *                                      Android main thread like a native app (default: background)
  *   loom.profile  = true | false     diagnostic C++ and mount timers (default: false)
  *   loom.cppTests = true | false     build the C++ Loom renderer tests (default: false)
  *   loom.leanRelease = true | false  release builds without inspector, DevTools and tracing code; every
@@ -71,7 +69,7 @@ extra["cmake_version"] = cmakeVersion
  * behaviour stay side by side in the source and are selected at build time.
  *
  * Each one reaches the code in two places, which must agree:
- *   - a `BuildConfig` boolean (LOOM_RENDERER, LOOM_JS_ON_MAIN, LOOM_WORKER, LOOM_PROFILE), for the
+ *   - a `BuildConfig` boolean (LOOM_RENDERER, LOOM_WORKER, LOOM_PROFILE), for the
  *     Java/Kotlin half;
  *   - a CMake cache variable of the same name, which `react-native-flags.cmake` mirrors into a
  *     preprocessor macro, for the C++ half.
@@ -93,7 +91,8 @@ fun loomFlag(name: String, default: Boolean = false): Boolean {
 }
 
 val loomRenderer = loomFlag("loom.renderer", default = true)
-val loomJsOnMain = loomChoice("loom.js", "background", listOf("background", "main")) == "main"
+// `loom.js` is not a build switch any more: where JavaScript runs is chosen by the app at startup
+// (app-level gradle property, see loom.settings.gradle), so one build serves both.
 // Loom's worker thread is part of the renderer: always on with it, absent without it. (A
 // worker-less build was once a switch; it was dropped rather than kept compiling.)
 val loomWorker = loomRenderer
@@ -118,7 +117,6 @@ fun loomCmakeSwitch(value: Boolean): String = if (value) "ON" else "OFF"
 
 val loomCmakeArguments =
     listOf(
-        "-DLOOM_JS_ON_MAIN=${loomCmakeSwitch(loomJsOnMain)}",
         "-DLOOM_RENDERER=${loomCmakeSwitch(loomRenderer)}",
         "-DLOOM_WORKER=${loomCmakeSwitch(loomWorker)}",
         "-DLOOM_PROFILE=${loomCmakeSwitch(loomProfile)}",
@@ -711,8 +709,7 @@ android {
 
     // Loom compile-time switches. See the Loom switches block above for what each one means and
     // how to set it. These are `static final` and therefore constant-folded, so the disabled branch
-    // of every `if (BuildConfig.LOOM_JS_ON_MAIN)` is removed from the shipped bytecode.
-    buildConfigField("boolean", "LOOM_JS_ON_MAIN", "$loomJsOnMain")
+    // of every `if (BuildConfig.LOOM_WORKER)` is removed from the shipped bytecode.
     buildConfigField("boolean", "LOOM_RENDERER", "$loomRenderer")
     buildConfigField("boolean", "LOOM_WORKER", "$loomWorker")
     buildConfigField("boolean", "LOOM_PROFILE", "$loomProfile")
