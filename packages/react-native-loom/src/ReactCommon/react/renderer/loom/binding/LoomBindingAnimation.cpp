@@ -91,25 +91,17 @@ bool LoomBinding::recordNativePropsHere(
   }
   // The UI thread reaches this while JS may be writing the same maps.
   std::lock_guard state(stateMutex_);
-  auto tokenIt = mountedTokens_.find(tag);
-  if (tokenIt == mountedTokens_.end() || !tokenIt->second->active) {
+  const auto mounted = mounted_.find(tag);
+  if (mounted == mounted_.end() || !mounted->second.token->active) {
     return false;
   }
-  auto token = tokenIt->second;
+  auto token = mounted->second.token;
+  const auto identity = mounted->second.identity;
   if (surfaceId.has_value() && token->surfaceId != *surfaceId) {
     return false;
   }
   auto owner = renderers_.find(token->surfaceId);
   if (owner == renderers_.end()) {
-    return false;
-  }
-  // A non-throwing lookup on purpose. An overlay can outlive the identity it
-  // was staged for, and the previous `mountedIdentities_.at(tag)` threw
-  // `std::out_of_range` out of a JNI frame (`std::terminate`) when the two
-  // maps disagreed (design §2, candidate C1). A tag with no identity is
-  // simply dropped.
-  auto identityIt = mountedIdentities_.find(tag);
-  if (identityIt == mountedIdentities_.end()) {
     return false;
   }
   ClassifiedAnimatedProps classified;
@@ -126,7 +118,7 @@ bool LoomBinding::recordNativePropsHere(
     // Font and text keys drive measurement, and any key on a paragraph or raw
     // text node can, which the synchronous lane must not do: the whole payload
     // keeps the ordinary per-call path (design §3.2, "Text").
-    stageNativeProps(tag, identityIt->second, token, std::move(props));
+    stageNativeProps(tag, identity, token, std::move(props));
     return true;
   }
   // The platform's synchronous update has already put these values on the
@@ -136,7 +128,7 @@ bool LoomBinding::recordNativePropsHere(
   writeAnimatedProps(
       token->surfaceId,
       tag,
-      identityIt->second,
+      identity,
       std::move(classified),
       /*applyPaintToView=*/!viewApplied && worker_->onUIThread(),
       /*viewAlreadyApplied=*/viewApplied);
@@ -507,9 +499,9 @@ void LoomBinding::flushAnimationFrame(SurfaceId surfaceId) {
   bool needsAsync = false;
   for (auto& entry : writes) {
     auto& write = entry.second;
-    const auto mounted = mountedIdentities_.find(entry.first);
-    if (mounted == mountedIdentities_.end() ||
-        mounted->second != write.identity) {
+    const auto mounted = mounted_.find(entry.first);
+    if (mounted == mounted_.end() ||
+        mounted->second.identity != write.identity) {
       continue; // The node is gone or the tag was reused: this write is stale.
     }
     needsAsync = needsAsync || write.text;
@@ -660,9 +652,9 @@ void LoomBinding::setWorkerNativeProps(
   // applied there, and a staged text/layout write replays on the UI thread.
   const bool onUIThread = worker_->onUIThread();
   std::unique_lock state(stateMutex_);
-  const auto mounted = mountedIdentities_.find(ref.tag);
-  const bool isMounted = mounted != mountedIdentities_.end() &&
-      mounted->second == ref.draft->identity;
+  const auto mounted = mounted_.find(ref.tag);
+  const bool isMounted = mounted != mounted_.end() &&
+      mounted->second.identity == ref.draft->identity;
   bool isSubmitted = false;
   if (auto surfaceIdentities = submittedIdentities_.find(ref.surfaceId);
       surfaceIdentities != submittedIdentities_.end()) {

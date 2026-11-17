@@ -562,8 +562,12 @@ class LoomBinding final : public UIManagerBinding {
       const std::shared_ptr<const std::string>& componentName);
   /** Parses `value` with the draft's compat descriptor on top of its props. */
   void parseCompatProps(jsi::Runtime& rt, DraftNode& draft, const jsi::Value& value);
-  TagMap<uint64_t> mountedIdentities_;
-  TagMap<std::shared_ptr<SurfaceToken>> mountedTokens_;
+  /** What the UI has mounted under a tag: its identity and its surface's token. */
+  struct MountedEntry {
+    uint64_t identity{0};
+    std::shared_ptr<SurfaceToken> token;
+  };
+  TagMap<MountedEntry> mounted_;
   /**
    * The last native props written for one tag, replayed onto the view after a
    * commit. `identity` and `props` must be initialized here: a fresh entry is
@@ -596,7 +600,7 @@ class LoomBinding final : public UIManagerBinding {
   std::unordered_map<SurfaceId, TagMap<NativePropsOverlay>>
       nativePropsOverlays_;
   /**
-   * The tags each surface has mounted: the per-surface index of `mountedTokens_`
+   * The tags each surface has mounted: the per-surface index of `mounted_`
    * (which stays keyed by tag, for the platform's tag-only lookups). Commits and
    * surface release walk only their own surface through it, never every mounted
    * tag of every surface. Maintained only by `setMountedLocked` and
@@ -952,7 +956,7 @@ class LoomBinding final : public UIManagerBinding {
    * Guards the bookkeeping below when JavaScript runs off the UI thread, where
    * host calls (JS) and platform callbacks (UI) both reach it: `renderers_`,
    * `surfaceTokens_`, `surfaceGenerations_`, `submittedIdentities_`,
-   * `mountedIdentities_`, `mountedTokens_`, `nativePropsOverlays_`,
+   * `mounted_`, `nativePropsOverlays_`,
    * `animationFrameBuffer_`, `pendingAnimationFrames_` and
    * `animationLaneStats_`. Recursive because the UI thread re-enters through
    * synchronous view updates. Hold it only around map accesses: never across a
