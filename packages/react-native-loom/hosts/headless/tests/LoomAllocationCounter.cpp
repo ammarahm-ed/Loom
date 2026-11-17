@@ -274,9 +274,12 @@ void printAllocationSites(const char* label, bool liveOnly, size_t top) {
     }
     std::vector<std::pair<std::string, Site>> sorted(
         byFunction.begin(), byFunction.end());
-    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
-      return a.second.count > b.second.count;
-    });
+    // What is made, by count; what is held, by size.
+    std::sort(
+        sorted.begin(), sorted.end(), [liveOnly](const auto& a, const auto& b) {
+          return liveOnly ? a.second.bytes > b.second.bytes
+                          : a.second.count > b.second.count;
+        });
     printf(
         "[sites] %s (%s): %llu allocations, %llu bytes\n",
         label,

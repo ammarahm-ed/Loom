@@ -731,16 +731,18 @@ class LoomWorker final {
 
   /**
    * Destroys an applied result's effects and keeps the vector for the next job,
-   * unless it is far larger than what recent jobs needed (the same idea as
-   * `LoomRenderer::trimScratch`): a burst of effects must not pin its peak.
+   * unless it is both large (each `Effect` carries 256 bytes of inline storage)
+   * and far larger than this job needed (the same idea as
+   * `LoomRenderer::trimScratch`): a large mount's effects must not stay
+   * allocated through the small commits after it, an unmount included.
    */
   void recycleEffects(Result& result) {
     auto effects = std::move(result.effects);
     const size_t used = effects.size();
     effects.clear();
+    constexpr size_t kSpareEffects = (64 * 1024) / sizeof(Effect);
     std::lock_guard lock(mutex_);
-    effectPeak_ = std::max(used, effectPeak_ - effectPeak_ / 8);
-    if (effects.capacity() <= 4 * std::max<size_t>(effectPeak_, 16)) {
+    if (effects.capacity() <= std::max(kSpareEffects, 4 * used)) {
       spareEffects_ = std::move(effects);
     } else {
       spareEffects_ = std::vector<Effect>();
@@ -857,7 +859,6 @@ class LoomWorker final {
   std::unique_ptr<Result> result_;
   std::vector<Effect> earlyEffects_;
   std::vector<Effect> spareEffects_; // guarded by mutex_
-  size_t effectPeak_{0}; // guarded by mutex_
   static inline thread_local Result* building_{nullptr};
   // Exclusive while a job computes (the renderer is being written); shared by readers.
   std::shared_mutex computeGate_;
