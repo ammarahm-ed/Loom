@@ -9,7 +9,13 @@
 
 #include <atomic>
 #include <cmath>
+#include <map>
 #include <thread>
+
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#endif
+#include <react/renderer/runtimescheduler/LoomSettings.h>
 #include <limits>
 
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
@@ -72,6 +78,18 @@ struct LoomBindingTestAccess {
 
   static auto tokenFor(LoomBinding& binding, SurfaceId surfaceId) {
     return binding.tokenFor(surfaceId);
+  }
+
+  /** Publishes without forcing a synchronous commit: the worker path. */
+  static void publishAsync(
+      LoomBinding& binding,
+      SurfaceId surfaceId,
+      const std::shared_ptr<Draft>& root) {
+    binding.publishWorkerCommit(
+        surfaceId,
+        {std::make_shared<LoomBinding::NodeRef>(
+            surfaceId, root->tag, binding.tokenFor(surfaceId), root)},
+        /*forceSync*/ false);
   }
 
   static void publish(
@@ -504,6 +522,213 @@ TEST_F(LoomHeadlessBindingTest, LiveReadsGoThroughTheUIThreadByDefault) {
   reader.join();
   EXPECT_EQ(host_->uiPostCount(), postsBefore + 1);
   EXPECT_EQ(value, (std::optional<std::pair<float, float>>{{3, 40}}));
+}
+
+/** Frames by tag, from Layout operations and from inserts that carry one. */
+struct MountedFrames {
+  std::map<Tag, std::array<float, 4>> frames;
+  size_t layoutOperations{0};
+  size_t insetOperations{0};
+  size_t operations{0};
+};
+
+MountedFrames mountedFrames(LoomHeadlessHost& host) {
+  host.drainUIQueue();
+  MountedFrames result;
+  for (const auto& recorded : host.takeBatches()) {
+    for (const auto& operation : recorded.batch.operations) {
+      ++result.operations;
+      if (const auto* layout = std::get_if<DirectLayoutOperation>(&operation)) {
+        ++result.layoutOperations;
+        result.frames[layout->tag] = {layout->x, layout->y, layout->width, layout->height};
+      } else if (const auto* insert = std::get_if<DirectInsertOperation>(&operation);
+                 insert != nullptr && insert->hasLayout) {
+        result.frames[insert->tag] = {insert->x, insert->y, insert->width, insert->height};
+      } else if (
+          std::holds_alternative<DirectPaddingOperation>(operation) ||
+          std::holds_alternative<DirectOverflowInsetOperation>(operation)) {
+        ++result.insetOperations;
+      }
+    }
+  }
+  return result;
+}
+
+// `insertsCarryInitialLayout` moves a new view's first frame onto its insert and
+// drops its zero insets; the frames themselves are exactly the default path's.
+TEST_F(LoomHeadlessBindingTest, InsertsCarryInitialLayoutWhenTheHostOptsIn) {
+  using Access = LoomBindingTestAccess;
+  const auto mount = [&](SurfaceId surface, Tag base) {
+    LoomBinding::setSurfaceConstraints(surface, 300, 300, 300, 300, false, 0, 0);
+    const auto token = Access::tokenFor(*binding_, surface);
+    auto outer = Access::draft(
+        surface, token->generation, base + 1, base + 1, "View",
+        folly::dynamic::object("padding", 7.0)("flexDirection", "row")(
+            "collapsable", false));
+    for (Tag index = 0; index < 3; ++index) {
+      auto child = Access::draft(
+          surface, token->generation, base + 10 + index, base + 10 + index, "View",
+          folly::dynamic::object("width", 20.0 + index)("height", 10.0)(
+              "margin", 2.0)("collapsable", false));
+      outer->children->push_back(child);
+    }
+    Access::publishAsync(*binding_, surface, outer);
+    LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+    return mountedFrames(*host_);
+  };
+  const auto byDefault = mount(31, 3100);
+  auto traits = host_->traits();
+  traits.insertsCarryInitialLayout = true;
+  LoomPlatformTraits::install(traits);
+  const auto carried = mount(41, 4100);
+  LoomPlatformTraits::install(host_->traits());
+
+  EXPECT_EQ(byDefault.layoutOperations, 4u);
+  EXPECT_EQ(byDefault.insetOperations, 8u);
+  EXPECT_EQ(carried.layoutOperations, 0u);
+  // Only the outer view's padding is non-zero.
+  EXPECT_EQ(carried.insetOperations, 1u);
+  EXPECT_EQ(carried.operations, 4u + 4u + 1u);
+  ASSERT_EQ(carried.frames.size(), byDefault.frames.size());
+  for (const auto& [tag, frame] : byDefault.frames) {
+    const auto found = carried.frames.find(tag - 3100 + 4100);
+    ASSERT_NE(found, carried.frames.end());
+    EXPECT_EQ(found->second, frame);
+  }
+  EXPECT_TRUE(host_->takeFailures().empty());
+}
+
+/** Bytes the process has allocated, or 0 where it cannot be read. */
+size_t allocatedBytes() {
+#if defined(__APPLE__)
+  malloc_statistics_t stats{};
+  malloc_zone_statistics(nullptr, &stats);
+  return stats.size_in_use;
+#else
+  return 0;
+#endif
+}
+
+/**
+ * A probe, not a check: mounts a grid of cells (View > Paragraph > RawText)
+ * through the binding's worker path, with and without early creates, and prints
+ * mount operations per kind, the commit time and the bytes held per node.
+ */
+TEST_F(LoomHeadlessBindingTest, GridMountProbe) {
+  using Access = LoomBindingTestAccess;
+  constexpr int kCells = 2000;
+  for (const int mode : {0, 1, 2}) {
+    // 0: default; 1: early creates; 2: early creates, inserts carry layout.
+    const bool earlyCreate = mode != 0;
+    LoomSettings::set(LoomSettingId::EarlyCreate, earlyCreate ? 1 : 0);
+    auto traits = host_->traits();
+    traits.insertsCarryInitialLayout = mode == 2;
+    LoomPlatformTraits::install(traits);
+    const SurfaceId surface = 11 + mode * 10;
+    LoomBinding::setSurfaceConstraints(surface, 1000, 100000, 1000, 100000, false, 0, 0);
+    const auto token = Access::tokenFor(*binding_, surface);
+    const auto bytesBefore = allocatedBytes();
+    Tag nextTag = surface * 100000 + 2;
+    uint64_t identity = surface * 100000;
+    auto grid = Access::draft(
+        surface, token->generation, ++identity, nextTag++, "View",
+        folly::dynamic::object("flexDirection", "row")("flexWrap", "wrap")(
+            "collapsable", false));
+    for (int cell = 0; cell < kCells; ++cell) {
+      auto view = Access::draft(
+          surface, token->generation, ++identity, nextTag++, "View",
+          folly::dynamic::object("width", 48.0)("height", 24.0)(
+              "margin", 1.0)("borderWidth", 1.0)("backgroundColor", 0xffeeeeee)(
+              "collapsable", false));
+      auto paragraph = Access::draft(
+          surface, token->generation, ++identity, nextTag++, "Paragraph",
+          folly::dynamic::object("fontSize", 12.0)("color", 0xff000000)(
+              "numberOfLines", 1));
+      auto text = std::make_shared<Access::Draft>();
+      text->surfaceId = surface;
+      text->surfaceGeneration = token->generation;
+      text->identity = ++identity;
+      text->tag = nextTag++;
+      text->componentName = std::make_shared<const std::string>("RawText");
+      text->roles = LoomPlatformTraits::current().components.classify("RawText");
+      text->initialRawText =
+          std::make_shared<const std::string>("cell " + std::to_string(cell));
+      text->hasInitialProps = true;
+      paragraph->children->push_back(text);
+      view->children->push_back(paragraph);
+      grid->children->push_back(view);
+    }
+    const auto bytesDrafts = allocatedBytes();
+    const auto start = std::chrono::steady_clock::now();
+    Access::publishAsync(*binding_, surface, grid);
+    LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+    host_->drainUIQueue();
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
+    std::array<size_t, 8> counts{};
+    size_t batches = 0;
+    for (const auto& recorded : host_->takeBatches()) {
+      ++batches;
+      for (const auto& operation : recorded.batch.operations) {
+        ++counts[operation.index()];
+      }
+    }
+    const auto bytesMounted = allocatedBytes();
+    const auto nodes = static_cast<size_t>(nextTag - (surface * 100000 + 2));
+    size_t total = 0;
+    for (const auto count : counts) {
+      total += count;
+    }
+    printf(
+        "[probe] grid mount, %d cells, %zu nodes, mode=%d: %zu batches, "
+        "%zu ops (create %zu, update %zu, insert %zu, remove %zu, layout %zu, "
+        "delete %zu, padding %zu, overflowInset %zu), commit %lld us, "
+        "drafts %zu B/node, mounted %zu B/node\n",
+        kCells, nodes, mode, batches, total, counts[0], counts[1],
+        counts[2], counts[3], counts[4], counts[5], counts[6], counts[7],
+        static_cast<long long>(micros),
+        (bytesDrafts - bytesBefore) / nodes,
+        (bytesMounted - bytesDrafts) / nodes);
+    // A relayout of every cell: each View gets a new version with a width patch.
+    const auto clone = [](const std::shared_ptr<Access::Draft>& source) {
+      auto next = std::make_shared<Access::Draft>(*source);
+      next->published = false;
+      next->workerCommitted = false;
+      next->frozenCommit = 0;
+      next->freezeFacts = {};
+      return next;
+    };
+    auto nextGrid = clone(grid);
+    nextGrid->children =
+        std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+    for (const auto& view : *grid->children) {
+      auto next = clone(view);
+      auto patch = std::make_shared<Access::Patch>();
+      patch->previous = view->propsTail;
+      patch->props = folly::dynamic::object("width", 46.0);
+      next->propsTail = patch;
+      nextGrid->children->push_back(next);
+    }
+    const auto updateStart = std::chrono::steady_clock::now();
+    Access::publishAsync(*binding_, surface, nextGrid);
+    LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+    host_->drainUIQueue();
+    const auto updateMicros =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - updateStart)
+            .count();
+    size_t updateOps = 0;
+    for (const auto& recorded : host_->takeBatches()) {
+      updateOps += recorded.batch.operations.size();
+    }
+    printf(
+        "[probe] grid relayout, mode=%d: %zu ops, commit %lld us\n",
+        mode, updateOps, static_cast<long long>(updateMicros));
+    EXPECT_TRUE(host_->takeFailures().empty());
+  }
+  LoomPlatformTraits::install(host_->traits());
+  LoomSettings::resetForTesting();
 }
 
 } // namespace

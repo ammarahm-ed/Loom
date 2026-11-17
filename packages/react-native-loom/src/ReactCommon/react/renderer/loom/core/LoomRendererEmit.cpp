@@ -90,9 +90,18 @@ void LoomRenderer::emitInsertions(
     const Tag* next,
     size_t nextCount,
     const std::unordered_set<uint64_t>& stationaryChildren) {
+  const bool carryLayout =
+      LoomPlatformTraits::current().insertsCarryInitialLayout;
   for (size_t index = 0; index < nextCount; ++index) {
     if (stationaryChildren.count(childPairKey(node.tag, next[index])) != 0) {
       continue;
+    }
+    if (carryLayout) {
+      if (const auto* child = find(next[index]);
+          child != nullptr && child->createdThisCommit) {
+        initialInsertIndexes_[next[index]] =
+            pendingOperations_.operations.size();
+      }
     }
     pendingOperations_.append(
         DirectInsertOperation{node.tag, next[index], index});
@@ -189,10 +198,21 @@ void LoomRenderer::emitLayout(
     return;
   }
 
+  // `insertsCarryInitialLayout`: a view created in this batch starts at zero
+  // insets, so only non-zero ones are sent, and its first frame rides on its
+  // insert.
+  const bool initialLayout = node.createdThisCommit &&
+      LoomPlatformTraits::current().insertsCarryInitialLayout;
   if (insetsChanged) {
-    pendingOperations_.append(DirectPaddingOperation{node.tag, contentInsets});
-    pendingOperations_.append(
-        DirectOverflowInsetOperation{node.tag, overflowInsets});
+    constexpr std::array<float, 4> kNoInsets{};
+    if (!initialLayout || contentInsets != kNoInsets) {
+      pendingOperations_.append(
+          DirectPaddingOperation{node.tag, contentInsets});
+    }
+    if (!initialLayout || overflowInsets != kNoInsets) {
+      pendingOperations_.append(
+          DirectOverflowInsetOperation{node.tag, overflowInsets});
+    }
     node.mountedContentInsets = contentInsets;
     node.mountedOverflowInsets = overflowInsets;
     node.hasMountedInsets = true;
@@ -211,15 +231,30 @@ void LoomRenderer::emitLayout(
     return;
   }
 
-  pendingOperations_.append(DirectLayoutOperation{
-      node.tag,
-      parent.tag,
-      displayType,
-      direction,
-      nativeLeft,
-      nativeTop,
-      width,
-      height});
+  auto insert = initialLayout ? initialInsertIndexes_.find(node.tag)
+                              : initialInsertIndexes_.end();
+  if (insert != initialInsertIndexes_.end()) {
+    auto& carried = std::get<DirectInsertOperation>(
+        pendingOperations_.operations[insert->second]);
+    carried.hasLayout = true;
+    carried.displayType = displayType;
+    carried.layoutDirection = direction;
+    carried.x = nativeLeft;
+    carried.y = nativeTop;
+    carried.width = width;
+    carried.height = height;
+    pendingOperations_.instructionCount += 6;
+  } else {
+    pendingOperations_.append(DirectLayoutOperation{
+        node.tag,
+        parent.tag,
+        displayType,
+        direction,
+        nativeLeft,
+        nativeTop,
+        width,
+        height});
+  }
 
   node.mountedLeft = left;
   node.mountedTop = top;
