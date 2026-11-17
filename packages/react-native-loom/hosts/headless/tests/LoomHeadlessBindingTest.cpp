@@ -365,8 +365,8 @@ TEST_F(LoomHeadlessBindingTest, RuntimeIsPerInstanceAndReadsAreExplicit) {
   EXPECT_EQ(runtime->latest().hasNode(1, 2), std::optional<bool>{true});
   EXPECT_EQ(
       runtime->synced().hasNode(1, 2),
-      LoomWorker::kJavaScriptOnUIThread ? std::optional<bool>{true} : std::nullopt);
-  EXPECT_EQ(runtime->synced().surfaceOf(2), LoomWorker::kJavaScriptOnUIThread ? std::optional<SurfaceId>{1} : std::nullopt);
+      LoomWorker::javaScriptOnUIThread() ? std::optional<bool>{true} : std::nullopt);
+  EXPECT_EQ(runtime->synced().surfaceOf(2), LoomWorker::javaScriptOnUIThread() ? std::optional<SurfaceId>{1} : std::nullopt);
   auto layout = runtime->latest().layout(1, 2);
   ASSERT_TRUE(layout.has_value());
   EXPECT_EQ(layout->frame.size.width, 100);
