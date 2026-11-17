@@ -395,19 +395,17 @@ class ReactNativeCoreUtils
     # artifact comes from there: ReactNativeDependencies and Hermes keep React Native's coordinates
     # (rndependencies.rb, the hermes-engine pod), they are not republished.
     #
-    # Two published flavors per build type, selected by the same switch the app builds with:
-    #   RCT_LOOM_JS_IOS=background  -> reactnative-core-{debug,release}            (same names as React Native)
-    #   RCT_LOOM_JS_IOS=main        -> reactnative-core-jsmain-{debug,release}
+    # One published flavor per build type, reactnative-core-{debug,release}: where JavaScript runs is chosen at
+    # app startup (loom.js), so the same binaries serve both modes.
     # LOOM_MAVEN_REPOSITORY overrides the repository (default: Maven Central), e.g. a local mirror.
     def self.stable_tarball_urls(version, build_type, dsyms = false)
         version = loom_version(version)
         group = "io/github/ammarahm-ed"
-        flavor = (ENV["RCT_LOOM_JS_IOS"] || "background") == "background" ? "" : "jsmain-"
         repo = ENV["LOOM_MAVEN_REPOSITORY"]
         repos = (repo != nil && repo != "") ? [repo.sub(/\/+$/, "")] : ["https://repo1.maven.org/maven2"]
         return repos.map { |maven_repo_url|
             # https://repo1.maven.org/maven2/io/github/ammarahm-ed/react-native-artifacts/0.89.0-rc.0/react-native-artifacts-0.89.0-rc.0-reactnative-core-debug.tar.gz
-            "#{maven_repo_url}/#{group}/react-native-artifacts/#{version}/react-native-artifacts-#{version}-reactnative-core-#{flavor}#{dsyms ? "dSYM-" : ""}#{build_type.to_s}.tar.gz"
+            "#{maven_repo_url}/#{group}/react-native-artifacts/#{version}/react-native-artifacts-#{version}-reactnative-core-#{dsyms ? "dSYM-" : ""}#{build_type.to_s}.tar.gz"
         }
     end
 
@@ -459,7 +457,7 @@ class ReactNativeCoreUtils
         local_source = tarball_url.start_with?("file://") ? URI.decode_www_form_component(tarball_url.sub(/\Afile:\/\//, "")) : nil
         stale = local_source && File.exist?(destination_path) && File.exist?(local_source) &&
             (File.size(destination_path) != File.size(local_source) || !FileUtils.compare_file(destination_path, local_source))
-        # The same file name holds the background-JS or the main-JS flavor: remember which one is here.
+        # The same file name can come from different sources: remember which one is here.
         flavor_marker = "#{destination_path}.source"
         stale ||= File.exist?(destination_path) && (File.exist?(flavor_marker) ? File.read(flavor_marker).strip != tarball_url : true)
         if File.exist?(destination_path) && !stale
