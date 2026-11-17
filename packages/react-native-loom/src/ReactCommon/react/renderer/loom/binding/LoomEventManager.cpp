@@ -199,7 +199,7 @@ void LoomEventManager::dispatch(
   if (!synchronous) {
     return;
   }
-  if (kLoomJavaScriptOnUIThread) {
+  if (loomJavaScriptOnUIThread()) {
     eventDispatcher_->experimental_flushSync(tag);
     return;
   }

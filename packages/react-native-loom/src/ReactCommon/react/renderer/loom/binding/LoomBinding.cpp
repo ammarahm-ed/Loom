@@ -74,7 +74,7 @@ LoomBinding::LoomBinding(
         // runtime owns this binding throughout the callback; no registry
         // lock is held across UI effects.
         if (auto* binding = lifetime->binding) {
-          if (!LoomWorker::kJavaScriptOnUIThread)
+          if (!LoomWorker::javaScriptOnUIThread())
             binding->refreshCanMeasureTextOnWorker();
           binding->worker_->applyReady();
         }
@@ -82,22 +82,26 @@ LoomBinding::LoomBinding(
     });
   });
   // The first commit resolves the executor (see publishWorkerCommit).
-#if LOOM_JS_ON_MAIN
   // Loom: when timers and requestAnimationFrame callbacks have run in
   // the frame's animation phase, apply whatever they committed now, so the
   // traversal that follows draws it instead of the next frame. A synchronous
   // commit waits for the worker; the UI thread is also the JS thread here, so
   // nothing can wait on it in turn.
-  FrameCallbackScope::afterFrameCallbacks() = [weakLifetime = std::weak_ptr<Lifetime>(lifetime_)] {
-    if (auto lifetime = weakLifetime.lock()) {
-      if (auto* binding = lifetime->binding) {
-        // Bounded: a commit that is still computing lands next frame rather
-        // than delaying this one.
-        binding->worker_->synchronizeFor(kFrameDrainBudget);
+  // Main mode only: with JS on its own thread the UI thread never drains the worker, and no
+  // hook is registered.
+  if (loomJavaScriptOnUIThread()) {
+    LOOM_MODE_COUNT(afterFrameHookInstalls);
+    FrameCallbackScope::afterFrameCallbacks() = [weakLifetime = std::weak_ptr<Lifetime>(lifetime_)] {
+      LOOM_MODE_COUNT(afterFrameHookRuns);
+      if (auto lifetime = weakLifetime.lock()) {
+        if (auto* binding = lifetime->binding) {
+          // Bounded: a commit that is still computing lands next frame rather
+          // than delaying this one.
+          binding->worker_->synchronizeFor(kFrameDrainBudget);
+        }
       }
-    }
-  };
-#endif
+    };
+  }
   std::lock_guard lock(registryMutex());
   liveBindings().emplace(this, lifetime_);
 }
@@ -112,11 +116,12 @@ std::function<void(std::function<void()>)> LoomBinding::platformUIExecutor() {
     return nullptr;
   }
   uiExecutor_ = executor;
-  if (!LoomWorker::kJavaScriptOnUIThread) {
+  if (!LoomWorker::javaScriptOnUIThread()) {
     // JS runs off the UI thread, where the Java text-capability query is not
     // allowed; seed the cached answer from the UI thread before the first
     // commit needs it.
     const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
+    LOOM_MODE_COUNT(uiCapabilityPosts);
     executor([weakLifetime] {
       if (auto lifetime = weakLifetime.lock()) {
         if (auto* binding = lifetime->binding)
@@ -181,9 +186,9 @@ LoomBinding::~LoomBinding() {
   for (auto& [surface, token] : surfaceTokens_)
     token->active = false;
   worker_->shutdown();
-#if LOOM_JS_ON_MAIN
-  FrameCallbackScope::afterFrameCallbacks() = {};
-#endif
+  if (loomJavaScriptOnUIThread()) {
+    FrameCallbackScope::afterFrameCallbacks() = {};
+  }
 }
 
 #pragma mark - Surface lifecycle
@@ -876,7 +881,7 @@ std::shared_ptr<LoomRenderer> LoomBinding::findRenderer(
 }
 
 bool LoomBinding::canMeasureTextOnWorker() {
-  if (LoomWorker::kJavaScriptOnUIThread) {
+  if (LoomWorker::javaScriptOnUIThread()) {
     // Asked only when the answer can change the decision, and not cached:
     // `TextEffectRegistry.hasRegisteredFactories()` changes when a library
     // registers or unregisters a factory.

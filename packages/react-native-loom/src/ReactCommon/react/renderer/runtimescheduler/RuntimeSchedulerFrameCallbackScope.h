@@ -26,7 +26,7 @@ namespace facebook::react {
  *     frame's start time on the `std::chrono::steady_clock` epoch. Any thread.
  *   - `FrameCallbackScope`: constructed on the UI thread around the host's
  *     animation-phase callbacks (requestAnimationFrame and timer delivery),
- *     when the JS runtime shares that thread (`LOOM_JS_ON_MAIN`).
+ *     when the JS runtime shares that thread (main mode; never constructed otherwise).
  *   - `LoomBinding::flushAnimationFrames()`: the before-frame hook. The host
  *     calls it on the UI thread just before the frame's mount dispatch, so the
  *     animation props collected since the last flush reach the screen in this

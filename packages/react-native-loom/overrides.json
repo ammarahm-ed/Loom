@@ -214,6 +214,12 @@
       "layer": "android"
     },
     {
+      "type": "platform",
+      "file": "ReactAndroid/src/main/java/com/facebook/react/common/LoomJavaScriptThread.kt",
+      "area": "threading",
+      "layer": "android"
+    },
+    {
       "type": "patch",
       "file": "ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java",
       "area": "mounting",
@@ -640,6 +646,12 @@
     },
     {
       "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBinding.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
       "file": "ReactCommon/react/renderer/loom/binding/LoomBindingAnimation.cpp",
       "area": "renderer-core",
       "layer": "core"
@@ -652,6 +664,12 @@
     },
     {
       "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/binding/LoomBindingInternals.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
       "file": "ReactCommon/react/renderer/loom/binding/LoomBindingJSI.cpp",
       "area": "renderer-core",
       "layer": "core"
@@ -659,18 +677,6 @@
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/loom/binding/LoomBindingNodes.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/loom/binding/LoomBindingInternals.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/loom/binding/LoomBinding.h",
       "area": "renderer-core",
       "layer": "core"
     },
@@ -730,37 +736,25 @@
     },
     {
       "type": "platform",
-      "file": "ReactCommon/react/renderer/loom/core/LoomRendererCommit.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/loom/core/LoomRendererEmit.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/loom/core/LoomRendererProps.cpp",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
-      "file": "ReactCommon/react/renderer/loom/core/LoomRendererShared.h",
-      "area": "renderer-core",
-      "layer": "core"
-    },
-    {
-      "type": "platform",
       "file": "ReactCommon/react/renderer/loom/core/LoomRenderer.h",
       "area": "renderer-core",
       "layer": "core"
     },
     {
       "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererCommit.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
       "file": "ReactCommon/react/renderer/loom/core/LoomRendererDOM.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererEmit.cpp",
       "area": "renderer-core",
       "layer": "core"
     },
@@ -773,6 +767,18 @@
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/loom/core/LoomRendererMetrics.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererProps.cpp",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomRendererShared.h",
       "area": "renderer-core",
       "layer": "core"
     },
@@ -840,6 +846,12 @@
       "type": "platform",
       "file": "ReactCommon/react/renderer/loom/tests/LoomRendererTest.cpp",
       "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/tests/LoomTestMode.h",
+      "area": "threading",
       "layer": "core"
     },
     {
@@ -926,6 +938,12 @@
     {
       "type": "platform",
       "file": "ReactCommon/react/renderer/runtimescheduler/JankReporter.h",
+      "area": "threading",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommon/react/renderer/runtimescheduler/LoomJavaScriptThread.h",
       "area": "threading",
       "layer": "core"
     },

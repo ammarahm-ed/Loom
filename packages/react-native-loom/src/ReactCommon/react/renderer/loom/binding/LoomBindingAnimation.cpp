@@ -572,7 +572,7 @@ void LoomBinding::deferAnimationFrame(
   // async one computes on the worker and leaves the write to `applied`, which
   // for async jobs runs on the UI thread after compute. (For synchronous jobs
   // `applied` runs before compute, so it cannot do the write itself.)
-  auto paintForView = LoomWorker::kJavaScriptOnUIThread
+  auto paintForView = LoomWorker::javaScriptOnUIThread()
       ? nullptr
       : std::make_shared<std::vector<std::pair<Tag, folly::dynamic>>>();
   auto job = std::make_unique<LoomWorker::Job>();

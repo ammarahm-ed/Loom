@@ -10,6 +10,7 @@
 #include <thread>
 
 #include <react/renderer/loom/host/LoomPlatformTraits.h>
+#include "LoomTestMode.h"
 #include <react/renderer/loom/host/LoomViewManagerNames.h>
 
 namespace facebook::react {

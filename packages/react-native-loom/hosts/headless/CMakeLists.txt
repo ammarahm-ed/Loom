@@ -37,11 +37,14 @@ if(NOT EXISTS "${LOOM_REACT_NATIVE_DIR}/ReactCommon/react/renderer/loom/host/Loo
 endif()
 
 # The switches the Loom sources branch on (see cmake-utils/react-native-flags.cmake).
-# The core runs its worker; JavaScript runs on the thread that owns the host.
+# The core runs its worker. Where JavaScript runs is a runtime setting
+# (LoomJavaScriptThread), so the same binaries serve both modes; the tests run once per mode.
 set(LOOM_RENDERER ON CACHE BOOL "")
 set(LOOM_WORKER ON CACHE BOOL "")
-set(LOOM_JS_ON_MAIN ON CACHE BOOL "")
 set(LOOM_PROFILE OFF CACHE BOOL "")
+
+# Counters and a mode reset that only tests see (LoomJavaScriptThread.h).
+add_compile_definitions(LOOM_TEST_HOOKS=1)
 
 set(REACT_COMMON_DIR "${LOOM_REACT_NATIVE_DIR}/ReactCommon")
 set(REACT_ANDROID_DIR "${LOOM_REACT_NATIVE_DIR}/ReactAndroid")
@@ -160,12 +163,21 @@ add_executable(loom-core-tests
     "${REACT_COMMON_DIR}/react/renderer/loom/tests/LoomWorkerTest.cpp")
 target_compile_reactnative_options(loom-core-tests PRIVATE)
 target_link_libraries(loom-core-tests PRIVATE loom-core GTest::gtest_main)
-add_test(NAME loom-core-tests COMMAND loom-core-tests)
+# Every suite runs once per mode: JavaScript on the UI thread (main) and on its own thread
+# (background); LOOM_TEST_JS_THREAD selects it (see LoomTestMode.h).
+foreach(mode main background)
+  add_test(NAME loom-core-tests-${mode} COMMAND loom-core-tests)
+  set_tests_properties(loom-core-tests-${mode} PROPERTIES ENVIRONMENT LOOM_TEST_JS_THREAD=${mode})
+endforeach()
 
 add_executable(loom-core-headless-tests
     tests/LoomHeadlessHostTest.cpp
     tests/LoomHeadlessBindingTest.cpp
-    tests/LoomSettingsTest.cpp)
+    tests/LoomSettingsTest.cpp
+    tests/LoomModeTest.cpp)
 target_compile_reactnative_options(loom-core-headless-tests PRIVATE)
 target_link_libraries(loom-core-headless-tests PRIVATE loom-core GTest::gtest_main)
-add_test(NAME loom-core-headless-tests COMMAND loom-core-headless-tests)
+foreach(mode main background)
+  add_test(NAME loom-core-headless-tests-${mode} COMMAND loom-core-headless-tests)
+  set_tests_properties(loom-core-headless-tests-${mode} PROPERTIES ENVIRONMENT LOOM_TEST_JS_THREAD=${mode})
+endforeach()
