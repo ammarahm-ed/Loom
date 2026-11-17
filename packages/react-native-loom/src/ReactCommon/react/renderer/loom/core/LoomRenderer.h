@@ -687,6 +687,12 @@ class LoomRenderer final {
       return !(*this == other);
     }
   };
+  static const std::shared_ptr<const TextAttributes>&
+  defaultTextAttributesShared() {
+    static const auto kDefault = std::make_shared<const TextAttributes>(
+        TextAttributes::defaultTextAttributes());
+    return kDefault;
+  }
   /** The style of a node whose props set no layout keys, shared by all of them. */
   static const std::shared_ptr<const LayoutStyle>& emptyLayoutStyle() {
     static const auto kEmpty = std::make_shared<const LayoutStyle>();
@@ -776,13 +782,18 @@ class LoomRenderer final {
         bool valid{false};
         uint64_t propsGeneration{0};
         bool textRoot{false};
-        TextAttributes inherited{};
-        TextAttributes attributes{};
+        /** Interned (`LoomRenderer::internTextAttributes`); null until parsed. */
+        std::shared_ptr<const TextAttributes> inherited;
+        std::shared_ptr<const TextAttributes> attributes;
         ParagraphAttributes paragraphAttributes{};
       };
       ParsedTextAttributes parsedTextAttributes;
-      /** Text attributes with the inherited chain already applied. */
-      TextAttributes textAttributes{};
+      /**
+       * Text attributes with the inherited chain already applied. Interned:
+       * identically styled paragraphs share one object. Never null.
+       */
+      std::shared_ptr<const TextAttributes> textAttributes{
+          defaultTextAttributesShared()};
       /** Paragraph attributes; only filled for text roots. */
       ParagraphAttributes paragraphAttributes{};
       /**
@@ -1104,7 +1115,15 @@ class LoomRenderer final {
 
   /** Marks the paragraph this node belongs to as needing a rebuild. */
   void markTextDirty(Tag tag);
-  TextAttributes attributesFor(Node& node, const TextAttributes& inherited);
+  std::shared_ptr<const TextAttributes> attributesFor(
+      Node& node,
+      const TextAttributes& inherited);
+  /**
+   * The shared copy of `attributes`: equal attributes yield one object, so
+   * paragraphs styled alike hold a pointer each instead of a full copy.
+   */
+  std::shared_ptr<const TextAttributes> internTextAttributes(
+      const TextAttributes& attributes);
   /** Rebuilds a text root's attributed string from its subtree. */
   void buildTextContent(Node& root);
   void appendTextContent(
@@ -1224,6 +1243,9 @@ class LoomRenderer final {
     return node.shape != nullptr && node.shapeGeneration == node.propsGeneration;
   }
   std::unordered_map<uint64_t, std::shared_ptr<const LayoutShape>> shapeCache_;
+  /** `internTextAttributes`, by hash. Bounded; clearing it only stops sharing. */
+  std::unordered_multimap<size_t, std::shared_ptr<const TextAttributes>>
+      textAttributesCache_;
 
   SurfaceId surfaceId_;
   NativeOperations operations_;
