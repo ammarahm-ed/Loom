@@ -165,7 +165,7 @@ Redraw a one-off resize (a commit, not an animation) in the background. Applies 
 | | |
 |---|---|
 | Type, default | boolean, `true` |
-| Platforms | iOS, Android |
+| Platforms | iOS, Android, desktop hosts (`kLoomPlatformDesktop`) |
 | Native config key | `earlyCreate` (Android: `loom.earlyCreate`) |
 | Legacy override | `NSUserDefaults` `LoomEarlyCreate`; `debug.loom.earlycreate` |
 
@@ -178,8 +178,8 @@ screen.
 
 | | |
 |---|---|
-| Type, default | boolean, `true` on iOS, `false` on Android |
-| Platforms | iOS, Android |
+| Type, default | boolean, `true` on iOS and desktop hosts, `false` on Android |
+| Platforms | iOS, Android, desktop hosts (`kLoomPlatformDesktop`; needs `LoomPlatformTraits::parallelFor`) |
 | Native config key | `parallelText` (Android: `loom.parallelText`) |
 | Legacy override | `NSUserDefaults` `LoomParallelText`; `debug.loom.paralleltext` |
 

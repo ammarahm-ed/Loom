@@ -26,6 +26,17 @@ namespace facebook::react {
  * default, the app's native config, the legacy overrides (user defaults,
  * launch arguments, system properties, environment), and then JavaScript
  * writes through `write`. The hosts do the first three with `set`.
+ *
+ * A third-party host (desktop, embedded) calls
+ * `configurePlatform(kLoomPlatformDesktop)` and gets that column's defaults:
+ *   - `earlyCreate` on: large mounts send their creates to the host before
+ *     layout finishes, so view creation overlaps layout.
+ *   - `parallelText` on: new paragraphs of a large commit are measured in
+ *     parallel. It only takes effect when the host sets
+ *     `LoomPlatformTraits::parallelFor` and its text services can measure
+ *     off the UI thread (`LoomTextServices::canMeasureOnWorker`).
+ * The `asyncText*` settings are iOS text-drawing switches; other platforms
+ * report their default and ignore writes.
  */
 enum class LoomSettingId : uint8_t {
   AsyncText,
@@ -49,6 +60,13 @@ enum LoomPlatform : uint8_t {
   kLoomPlatformAny = 0,
   kLoomPlatformIOS = 1,
   kLoomPlatformAndroid = 2,
+  /**
+   * Any other host (desktop, embedded): its own default column, so a third-party
+   * host gets sensible defaults from `configurePlatform(kLoomPlatformDesktop)`
+   * without naming settings. The host still sets `LoomPlatformTraits::parallelFor`
+   * for `parallelText` to take effect.
+   */
+  kLoomPlatformDesktop = 3,
 };
 
 struct LoomSettingInfo {
@@ -62,6 +80,7 @@ struct LoomSettingInfo {
   int defaultValue;
   int iosDefault;
   int androidDefault;
+  int desktopDefault;
   /** Smallest accepted value (Int settings). */
   int minimum;
   /** Legacy NSUserDefaults / launch-argument key (iOS), or null. */
@@ -77,18 +96,21 @@ class LoomSettings {
 
   static constexpr uint8_t kBoth = (1 << kLoomPlatformIOS) | (1 << kLoomPlatformAndroid);
   static constexpr uint8_t kIOS = 1 << kLoomPlatformIOS;
+  static constexpr uint8_t kAll = kBoth | (1 << kLoomPlatformDesktop);
 
+  // Columns: name, type, platforms, readOnly, default (no platform), iOS, Android, desktop,
+  // minimum, iOS key, Android property.
   static constexpr LoomSettingInfo kTable[kCount] = {
-      {"asyncText", LoomSettingType::Bool, kIOS, false, 1, 1, 1, 0, "LoomAsyncText", nullptr},
-      {"asyncTextFirstDraw", LoomSettingType::Bool, kIOS, false, 1, 1, 1, 0, "LoomAsyncTextFirstDraw", nullptr},
-      {"asyncTextResize", LoomSettingType::Bool, kIOS, false, 1, 1, 1, 0, "LoomAsyncTextResize", nullptr},
-      {"earlyCreate", LoomSettingType::Bool, kBoth, false, 0, 1, 1, 0, "LoomEarlyCreate", "debug.loom.earlycreate"},
-      {"parallelText", LoomSettingType::Bool, kBoth, false, 0, 1, 0, 0, "LoomParallelText", "debug.loom.paralleltext"},
-      {"jankReporter", LoomSettingType::Bool, kBoth, false, 1, 1, 1, 0, "LoomJankReporter", "debug.loom.jank"},
-      {"jankBudgetMs", LoomSettingType::Int, kBoth, false, 50, 50, 50, 1, "LoomJankBudgetMs", "debug.loom.jank_budget_ms"},
-      {"profileWorker", LoomSettingType::Bool, kBoth, false, 0, 0, 0, 0, "LoomProfileWorker", nullptr},
-      {"jsOnMainThread", LoomSettingType::Bool, kBoth, true, 1, 1, 1, 0, nullptr, nullptr},
-      {"worker", LoomSettingType::Bool, kBoth, true, 0, 0, 0, 0, nullptr, nullptr},
+      {"asyncText", LoomSettingType::Bool, kIOS, false, 1, 1, 1, 1, 0, "LoomAsyncText", nullptr},
+      {"asyncTextFirstDraw", LoomSettingType::Bool, kIOS, false, 1, 1, 1, 1, 0, "LoomAsyncTextFirstDraw", nullptr},
+      {"asyncTextResize", LoomSettingType::Bool, kIOS, false, 1, 1, 1, 1, 0, "LoomAsyncTextResize", nullptr},
+      {"earlyCreate", LoomSettingType::Bool, kAll, false, 0, 1, 1, 1, 0, "LoomEarlyCreate", "debug.loom.earlycreate"},
+      {"parallelText", LoomSettingType::Bool, kAll, false, 0, 1, 0, 1, 0, "LoomParallelText", "debug.loom.paralleltext"},
+      {"jankReporter", LoomSettingType::Bool, kAll, false, 1, 1, 1, 1, 0, "LoomJankReporter", "debug.loom.jank"},
+      {"jankBudgetMs", LoomSettingType::Int, kAll, false, 50, 50, 50, 50, 1, "LoomJankBudgetMs", "debug.loom.jank_budget_ms"},
+      {"profileWorker", LoomSettingType::Bool, kAll, false, 0, 0, 0, 0, 0, "LoomProfileWorker", nullptr},
+      {"jsOnMainThread", LoomSettingType::Bool, kAll, true, 1, 1, 1, 1, 0, nullptr, nullptr},
+      {"worker", LoomSettingType::Bool, kAll, true, 0, 0, 0, 0, 0, nullptr, nullptr},
   };
 
   enum class WriteResult : uint8_t {
@@ -147,6 +169,8 @@ class LoomSettings {
         return entry.iosDefault;
       case kLoomPlatformAndroid:
         return entry.androidDefault;
+      case kLoomPlatformDesktop:
+        return entry.desktopDefault;
       default:
         return entry.defaultValue;
     }

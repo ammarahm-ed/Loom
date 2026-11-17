@@ -176,6 +176,12 @@ struct LoomComponentTable {
  * A default-constructed instance is the generic host: no prop diffs, no
  * prepared text layout, no parallel measurement, Fabric component names,
  * logging to stderr, the default thread stack.
+ *
+ * Traits say what a platform can do; `LoomSettings` say which optional work the
+ * core does. A third-party host also calls
+ * `LoomSettings::configurePlatform(kLoomPlatformDesktop)` at startup, which
+ * turns on `earlyCreate` and `parallelText` (see `LoomSettings.h`), and sets
+ * `parallelFor` here, without which `parallelText` does nothing.
  */
 struct LoomPlatformTraits {
   LoomComponentTable components = LoomComponentTable::fabric();
@@ -214,7 +220,8 @@ struct LoomPlatformTraits {
 
   /**
    * Runs `body(0..count-1)`, possibly in parallel, and returns when every call
-   * has. Null: text is not measured speculatively.
+   * has. Null: text is not measured speculatively, and the `parallelText`
+   * setting has no effect. Required for `parallelText`.
    */
   std::function<void(size_t, const std::function<void(size_t)>&)> parallelFor;
 

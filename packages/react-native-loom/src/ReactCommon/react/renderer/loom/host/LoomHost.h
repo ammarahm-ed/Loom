@@ -92,10 +92,6 @@ class LoomHost {
   static constexpr const char* kContextKey = "LoomHost";
 
   /**
-   * Registers `host` and installs its `traits()` process-wide. Call before the
-   * first surface starts.
-   */
-  /**
    * Where JavaScript runs for this process: on the thread that owns native views
    * (true) or on a thread of its own (false). Decided once, at startup, before the
    * JS thread, the runtime scheduler or any binding exists, and fixed from then on
@@ -108,6 +104,19 @@ class LoomHost {
     LoomJavaScriptThread::set(javaScriptOnUIThread);
   }
 
+  /**
+   * Registers `host` and installs its `traits()` process-wide. Call before the
+   * first surface starts.
+   *
+   * A third-party host's startup, in order:
+   *   1. `setJavaScriptOnUIThread` (above).
+   *   2. `LoomSettings::configurePlatform(kLoomPlatformDesktop)`: the desktop
+   *      default column (`earlyCreate` and `parallelText` on), then any of the
+   *      app's own overrides with `LoomSettings::set`.
+   *   3. `registerIn` with traits that set `parallelFor` (required for
+   *      `parallelText`) and, if scroll offsets and view locations are kept
+   *      under the host's own lock, `liveReadsOnAnyThread`.
+   */
   static void registerIn(
       const ContextContainer& container,
       std::shared_ptr<LoomHost> host) {
