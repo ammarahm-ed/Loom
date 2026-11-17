@@ -95,6 +95,9 @@ jobs:
             echo "::error::Loom $VERSION must be $rn_minor.x to build on React Native $RN_VERSION"
             exit 1
           fi
+      - name: Check every Loom source file is listed in overrides.json
+        # Apps and the prebuilds copy only listed files, so an unlisted header builds here and breaks everywhere else.
+        run: node packages/react-native-loom/bin/loom.js validate --listing
       - name: Check the version is not already released
         env:
           VERSION: ${{ steps.v.outputs.version }}

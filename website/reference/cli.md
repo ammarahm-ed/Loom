@@ -8,6 +8,7 @@ Run from your app's root.
 |---|---|
 | `loom materialize [--force] [--out <dir>]` | Builds `node_modules/.loom/react-native`: the installed `react-native` with Loom's overrides applied. Runs automatically from the Gradle, CocoaPods and Metro integrations |
 | `loom validate` | Checks Loom's overrides against the installed `react-native` |
+| `loom validate --listing` | Checks only that every file in Loom's `src/` is listed in `overrides.json`; needs no `react-native` |
 
 ## Maintainer commands
 
