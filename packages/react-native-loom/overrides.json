@@ -723,6 +723,12 @@
     },
     {
       "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/core/LoomNodeArena.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
       "file": "ReactCommon/react/renderer/loom/core/LoomRenderer.cpp",
       "area": "renderer-core",
       "layer": "core"
