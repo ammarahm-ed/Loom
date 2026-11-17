@@ -728,7 +728,7 @@ void LoomBinding::reconcileSelectedDrafts(
         liveRenderer.createNode(
             draft.tag,
             *draft.componentName,
-            *draft.initialProps,
+            draft.initialProps,
             draft.instanceHandle);
       }
       liveRenderer.setIdentity(draft.tag, draft.identity);
