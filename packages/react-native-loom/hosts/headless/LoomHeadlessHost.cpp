@@ -78,9 +78,13 @@ LoomPlatformTraits LoomHeadlessHost::traits() const {
 
 std::function<void(std::function<void()>)> LoomHeadlessHost::uiExecutor() {
   if (executor_ == Executor::Inline) {
-    return [](std::function<void()> work) { work(); };
+    return [this](std::function<void()> work) {
+      ++uiPosts_;
+      work();
+    };
   }
   return [this](std::function<void()> work) {
+    ++uiPosts_;
     std::lock_guard lock(queueMutex_);
     queue_.push_back(std::move(work));
   };

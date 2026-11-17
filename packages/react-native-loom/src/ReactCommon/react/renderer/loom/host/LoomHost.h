@@ -72,6 +72,8 @@ namespace facebook::react {
  *     `LoomTextServices` the host returns (text is measured on the commit
  *     thread only when `LoomTextServices::canMeasureOnWorker()` is true; a
  *     commit containing text otherwise computes on the UI thread).
+ *   - Any thread when `LoomPlatformTraits::liveReadsOnAnyThread` is set:
+ *     `getScrollOffset` and `getViewLocationInSurface` (see below).
  *   - UI thread only: every other method. Effects recorded while a commit
  *     computes on the worker are replayed in order on the UI thread with that
  *     commit's result.
@@ -270,11 +272,20 @@ class LoomHost {
   virtual void reportUnsupportedInlineAttachment(SurfaceId, Tag) {}
 
   // ---------------------------------------------------------------------
-  // Input: live native state. UI thread.
+  // Input: live native state. UI thread, unless the host opts out.
   //
-  // When the core runs a worker, a JS-thread caller is routed through
-  // `uiExecutor` and waits for the answer, so these always run on the UI
-  // thread. A host that cannot answer returns the documented fallback.
+  // By default a JS-thread caller (JavaScript on its own thread, or the
+  // worker) is routed through `uiExecutor` and waits for the answer, so these
+  // run on the UI thread. The wait lasts as long as whatever the UI thread is
+  // doing, such as drawing a large frame, and Pressability reads these on
+  // every press-in (once per scroll view above the pressed view).
+  //
+  // A host that keeps scroll offsets and view locations under its own lock
+  // sets `LoomPlatformTraits::liveReadsOnAnyThread`: these are then called
+  // directly on the reading thread (JS or worker), concurrently with UI-thread
+  // work, and must be thread-safe. An exception thrown on that path is
+  // treated as "cannot answer". A host that cannot answer returns the
+  // documented fallback.
   // ---------------------------------------------------------------------
 
   /** The live scroll position of a mounted scroll view, in DIP. */

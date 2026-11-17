@@ -905,6 +905,14 @@ std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
     std::optional<std::pair<float, float>> fallback) {
   if (worker_->onUIThread())
     return read(*host_);
+  // A host whose live state is thread-safe answers on the calling thread.
+  if (LoomPlatformTraits::current().liveReadsOnAnyThread) {
+    try {
+      return read(*host_);
+    } catch (...) {
+      return fallback;
+    }
+  }
   auto uiExecutor = host_->uiExecutor();
   if (!uiExecutor)
     return fallback;
