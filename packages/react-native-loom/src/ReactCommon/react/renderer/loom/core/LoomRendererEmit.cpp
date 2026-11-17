@@ -23,7 +23,7 @@ void LoomRenderer::emitCreate(Node& node) {
       node.tag,
       !node.virtualNode && !node.layoutOnlyNode,
       node.componentName,
-      node.layoutOnlyNode ? folly::dynamic::object() : node.props.get(),
+      node.layoutOnlyNode ? LoomSharedProps() : node.props,
       currentCompatProps(node)});
   pendingOperations_.requiresTagReplacement =
       pendingOperations_.requiresTagReplacement ||

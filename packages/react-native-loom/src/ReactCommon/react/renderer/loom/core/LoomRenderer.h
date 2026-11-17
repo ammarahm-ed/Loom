@@ -304,53 +304,6 @@ using TagHashSet = std::unordered_set<
     std::equal_to<Tag>,
     LoomNodeAllocator<Tag>>;
 
-/**
- * A node's merged props, shareable with the immutable object they came from.
- * Reads go through `get()` (or the implicit conversion); the first write
- * through `mutate()` copies when anyone else still holds the object, so a
- * version JavaScript retains is never changed under it.
- */
-class LoomSharedProps {
- public:
-  LoomSharedProps() : value_(empty()) {}
-  /** Shares `props`; it must not be written by anyone afterwards. */
-  explicit LoomSharedProps(std::shared_ptr<const folly::dynamic> props)
-      : value_(std::move(props)) {}
-  LoomSharedProps& operator=(folly::dynamic props) {
-    value_ = std::make_shared<const folly::dynamic>(std::move(props));
-    return *this;
-  }
-
-  const folly::dynamic& get() const {
-    return *value_;
-  }
-  operator const folly::dynamic&() const {
-    return *value_;
-  }
-  const folly::dynamic* operator->() const {
-    return value_.get();
-  }
-  const folly::dynamic& operator*() const {
-    return *value_;
-  }
-
-  /** The props for writing: a private copy if the object is shared. */
-  folly::dynamic& mutate() {
-    if (value_.use_count() != 1) {
-      value_ = std::make_shared<const folly::dynamic>(*value_);
-    }
-    return const_cast<folly::dynamic&>(*value_);
-  }
-
- private:
-  static const std::shared_ptr<const folly::dynamic>& empty() {
-    static const auto kEmpty =
-        std::make_shared<const folly::dynamic>(folly::dynamic::object());
-    return kEmpty;
-  }
-  std::shared_ptr<const folly::dynamic> value_;
-};
-
 class LoomRenderer final {
  public:
   struct TextMeasurement {
