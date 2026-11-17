@@ -46,8 +46,9 @@
 
 #import "ObjCTimerRegistry.h"
 
-#if LOOM_RENDERER_IOS && LOOM_JS_ON_MAIN
+#if LOOM_RENDERER_IOS
 #import <QuartzCore/QuartzCore.h>
+#include <react/renderer/runtimescheduler/LoomJavaScriptThread.h>
 #include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
 #include <chrono>
 #endif
@@ -68,8 +69,16 @@ using namespace facebook::react;
 @interface RCTInstance () <RCTTurboModuleManagerDelegate>
 @end
 
-#if LOOM_RENDERER_IOS && LOOM_JS_ON_MAIN
-// Loom: feeds FrameClock, so the JS scheduler knows where the display's frames are (the iOS
+#if LOOM_RENDERER_IOS
+// Where JavaScript runs is a startup setting, not a build one: the app's generated `LoomRuntimeConfig`
+// pod (Podfile `loom.js`) calls this from its `+load`, before `main`. Without that pod the platform
+// default applies (background).
+extern "C" __attribute__((visibility("default"))) void LoomSetJavaScriptOnUIThread(BOOL onUIThread)
+{
+  facebook::react::LoomJavaScriptThread::set(onUIThread);
+}
+
+// Loom (main mode only): feeds FrameClock, so the JS scheduler knows where the display's frames are (the iOS
 // counterpart of ReactFrameClock on Android). React's time slicing uses it to stop deferrable
 // work early enough for the frame to finish. A display link on the main run loop (which is also
 // the JS thread) in common modes, so it keeps ticking while scrolling.
@@ -167,9 +176,14 @@ using namespace facebook::react;
     _delegate = delegate;
     _jsRuntimeFactory = jsRuntimeFactory;
     _appTMMDelegate = tmmDelegate;
-#if LOOM_RENDERER_IOS && LOOM_JS_ON_MAIN
-    _jsThreadManager = [[RCTJSThreadManager alloc] initWithUseMainThread:YES];
-    [RCTLoomFrameClockFeeder ensureStarted];
+#if LOOM_RENDERER_IOS
+    LoomJavaScriptThread::setDefault(false);
+    if (loomJavaScriptOnUIThread()) {
+      _jsThreadManager = [[RCTJSThreadManager alloc] initWithUseMainThread:YES];
+      [RCTLoomFrameClockFeeder ensureStarted];
+    } else {
+      _jsThreadManager = [RCTJSThreadManager new];
+    }
 #else
     _jsThreadManager = [RCTJSThreadManager new];
 #endif

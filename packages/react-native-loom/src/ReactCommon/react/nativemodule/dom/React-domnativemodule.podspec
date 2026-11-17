@@ -26,9 +26,6 @@ direct_renderer_worker_enabled = direct_renderer_enabled
 direct_renderer_definitions = ["$(inherited)"]
 direct_renderer_definitions << "LOOM_RENDERER=1" if direct_renderer_enabled
 direct_renderer_definitions << "LOOM_WORKER=1" if direct_renderer_worker_enabled
-loom_js = ENV["RCT_LOOM_JS_IOS"] || "background"
-abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
-direct_renderer_definitions << "LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if direct_renderer_enabled
 
 if ENV['USE_FRAMEWORKS']
   header_search_paths << "\"$(PODS_TARGET_SRCROOT)/../../..\"" # this is needed to allow the domnativemodule to access its own files

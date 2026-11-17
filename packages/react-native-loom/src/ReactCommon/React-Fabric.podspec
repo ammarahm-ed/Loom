@@ -31,12 +31,9 @@ Pod::Spec.new do |s|
   direct_renderer_enabled = ENV["RCT_LOOM_RENDERER_IOS"] == "1"
   # Loom's worker thread is part of the renderer: on exactly when the renderer is.
   direct_renderer_worker_enabled = direct_renderer_enabled
-  loom_js = ENV["RCT_LOOM_JS_IOS"] || "background"
-  abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
   fabric_definitions = ["$(inherited)"]
   fabric_definitions << "LOOM_RENDERER=1" if direct_renderer_enabled
   fabric_definitions << "LOOM_WORKER=1" if direct_renderer_worker_enabled
-  fabric_definitions << "LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if direct_renderer_enabled
   s.pod_target_xcconfig = { "USE_HEADERMAP" => "YES",
                             "CLANG_CXX_LANGUAGE_STANDARD" => rct_cxx_language_standard(),
                             "DEFINES_MODULE" => "YES",

@@ -23,9 +23,6 @@ loom_worker = ENV['RCT_LOOM_RENDERER_IOS'] == '1'
 if loom_worker
   direct_renderer_flags += ' LOOM_WORKER=1'
 end
-loom_js = ENV['RCT_LOOM_JS_IOS'] || "background"
-abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
-direct_renderer_flags += " LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if ENV['RCT_LOOM_RENDERER_IOS'] == '1'
 
 header_search_paths = [
   "\"$(PODS_TARGET_SRCROOT)/ReactCommon\"",
