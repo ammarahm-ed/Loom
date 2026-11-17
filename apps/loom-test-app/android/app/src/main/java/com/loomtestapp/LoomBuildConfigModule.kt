@@ -59,6 +59,12 @@ class LoomBuildConfigModule(reactContext: ReactApplicationContext) :
           }
           .getOrDefault(false)
 
+  /** Same contract as the iOS module: a line in logcat, tag LoomBench. */
+  @ReactMethod
+  fun log(line: String) {
+    android.util.Log.i("LoomBench", line)
+  }
+
   /** The thread JavaScript is running on right now (a blocking sync method runs on the JS thread). */
   @ReactMethod(isBlockingSynchronousMethod = true)
   fun jsThread(): String =
