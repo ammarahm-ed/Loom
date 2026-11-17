@@ -23,9 +23,6 @@ header_search_paths = [
 ]
 runtime_definitions = ["$(inherited)"]
 runtime_definitions << "LOOM_RENDERER_IOS=1" if ENV["RCT_LOOM_RENDERER_IOS"] == "1"
-loom_js = ENV["RCT_LOOM_JS_IOS"] || "background"
-abort 'RCT_LOOM_JS_IOS must be main or background' unless %w[main background].include?(loom_js)
-runtime_definitions << "LOOM_JS_ON_MAIN=#{loom_js == 'main' ? 1 : 0}" if ENV["RCT_LOOM_RENDERER_IOS"] == "1"
 
 Pod::Spec.new do |s|
   s.name                   = "React-RuntimeApple"
