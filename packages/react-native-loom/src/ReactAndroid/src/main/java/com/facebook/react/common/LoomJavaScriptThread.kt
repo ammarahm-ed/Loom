@@ -8,6 +8,7 @@
 package com.facebook.react.common
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import com.facebook.proguard.annotations.DoNotStrip
 
 /**
@@ -38,7 +39,20 @@ public object LoomJavaScriptThread {
       return
     }
     val id = context.resources.getIdentifier("loom_js_on_main", "bool", context.packageName)
-    val onUIThread = id != 0 && context.resources.getBoolean(id)
+    var onUIThread = id != 0 && context.resources.getBoolean(id)
+    // Development override so one installed binary can run both modes, for debuggable apps only:
+    // `adb shell setprop debug.loom.js main|background`, then restart the app.
+    if ((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+      val override =
+          try {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, "debug.loom.js", "") as String
+          } catch (e: Exception) {
+            ""
+          }
+      if (override == "main") onUIThread = true else if (override == "background") onUIThread = false
+    }
     fixed = onUIThread
     nativeSet(onUIThread)
   }
