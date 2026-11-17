@@ -687,6 +687,11 @@ class LoomRenderer final {
       return !(*this == other);
     }
   };
+  /** The style of a node whose props set no layout keys, shared by all of them. */
+  static const std::shared_ptr<const LayoutStyle>& emptyLayoutStyle() {
+    static const auto kEmpty = std::make_shared<const LayoutStyle>();
+    return kEmpty;
+  }
 
   /**
    * [LoomPerf item 2] Parsed layout inputs of a props shape: everything
@@ -699,7 +704,7 @@ class LoomRenderer final {
     std::vector<std::pair<std::string, folly::dynamic>> entries;
     std::string componentName;
     bool hasOtherKeys{false};
-    LayoutStyle style;
+    std::shared_ptr<const LayoutStyle> style;
     YGDirection direction{YGDirectionInherit};
     YGBoxSizing boxSizing{YGBoxSizingBorderBox};
     bool displayNone{false};
@@ -849,7 +854,12 @@ class LoomRenderer final {
       static const TextData kEmpty;
       return text ? *text : kEmpty;
     }
-    LayoutStyle style;
+    /**
+     * The parsed Yoga inputs, shared with the node's `LayoutShape` (rows with
+     * the same layout props share one). Never null: `kEmptyLayoutStyle` until
+     * the first parse. Replaced, never mutated in place.
+     */
+    std::shared_ptr<const LayoutStyle> style{emptyLayoutStyle()};
     YGDirection direction{YGDirectionInherit};
     YGBoxSizing boxSizing{YGBoxSizingBorderBox};
     bool textLike{false};
