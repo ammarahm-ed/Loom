@@ -1,18 +1,17 @@
 diff --git a/packages/react-native/Package.swift b/packages/react-native/Package.swift
 --- a/packages/react-native/Package.swift
 +++ b/packages/react-native/Package.swift
-@@ -18,6 +18,58 @@
+@@ -18,6 +18,57 @@
  let REMOVE_LEGACY_COMPONENT_INTEROP =
    ProcessInfo.processInfo.environment["RCT_REMOVE_LEGACY_COMPONENT_INTEROP"] == "1"
  
 +// Loom: compile-time switches of the published configuration, same names and meaning as the
 +// Loom podspecs (RCT_LOOM_*_IOS). The renderer is off unless RCT_LOOM_RENDERER_IOS=1; the worker
-+// is part of the renderer; JavaScript runs on `background` unless RCT_LOOM_JS_IOS=main.
++// is part of the renderer. Where JavaScript runs is a startup setting, not a build one.
 +let LOOM_RENDERER = ProcessInfo.processInfo.environment["RCT_LOOM_RENDERER_IOS"] == "1"
 +let LOOM_WORKER =
 +  // Loom's worker thread is part of the renderer: on exactly when the renderer is.
 +  LOOM_RENDERER
-+let LOOM_JS_ON_MAIN = (ProcessInfo.processInfo.environment["RCT_LOOM_JS_IOS"] ?? "background") == "main"
 +// Prebuild (tools/prebuild/ios.sh), every flavor: Fabric's renderer internals are not compiled under the Loom
 +// renderer, every export of React Native's own binary of the same flavor is still exported by a generated stub
 +// target (tools/prebuild/gen-export-stubs-ios.py): RCT_LOOM_STUBS_IOS=1. RCT_LOOM_STUBS_PASS1_IOS=1 is the first of
@@ -122,7 +121,7 @@ diff --git a/packages/react-native/Package.swift b/packages/react-native/Package
      let numOfSlash = path.count { $0 == "/" }
  
      let cxxCommonHeaderPaths: [CXXSetting] =
-@@ -966,6 +1033,18 @@
+@@ -966,6 +1033,17 @@
          CXXSetting.headerSearchPath(relativeSearchPath(numOfSlash + 1, ".build/headers")),
          CXXSetting.headerSearchPath(relativeSearchPath(numOfSlash + 1, ".build/headers/React")),
        ]
@@ -134,8 +133,7 @@ diff --git a/packages/react-native/Package.swift b/packages/react-native/Package
 +           .define("REACT_NATIVE_DEBUGGER_MODE_PROD", to: "1", .when(configuration: .release))]
 +        : [])
 +      + (LOOM_RENDERER
-+      ? [.define("LOOM_RENDERER", to: "1"), .define("LOOM_RENDERER_IOS", to: "1"),
-+         .define("LOOM_JS_ON_MAIN", to: LOOM_JS_ON_MAIN ? "1" : "0")]
++      ? [.define("LOOM_RENDERER", to: "1"), .define("LOOM_RENDERER_IOS", to: "1")]
 +        + (LOOM_WORKER ? [.define("LOOM_WORKER", to: "1")] : [])
 +      : [])
  

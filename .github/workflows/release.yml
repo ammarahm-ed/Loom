@@ -1,7 +1,7 @@
 # Release Loom: build every prebuilt variant, then publish them.
 #
-#   - Maven Central: io.github.ammarahm-ed:{react-android, react-android-jsmain, react-android-profiling,
-#     react-android-jsmain-profiling, react-native-artifacts}, one Central Portal deployment per artifact.
+#   - Maven Central: io.github.ammarahm-ed:{react-android, react-android-profiling,
+#     react-native-artifacts}, one Central Portal deployment per artifact.
 #   - GitHub release v<version>: every AAR, symbols zip and iOS tarball, plus SHASUMS256.txt.
 #   - npm: react-native-loom, as a STAGED publish (approve it on npmjs.com with 2FA).
 #
@@ -118,7 +118,7 @@ jobs:
           if [ "${#problems[@]}" -gt 0 ] && [ "$DRY_RUN" != true ]; then exit 1; fi
 
   android:
-    name: Android ${{ matrix.js }}${{ matrix.profiling == '1' && ' profiling' || '' }}
+    name: Android${{ matrix.profiling == '1' && ' profiling' || '' }}
     needs: meta
     runs-on: ubuntu-latest
     # Under GitHub's 6 h job cap, so an overrun fails with a clear timeout instead of a cancellation.
@@ -126,10 +126,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        js: [background, main]
         profiling: ['0', '1']
     env:
-      LOOM_JS: ${{ matrix.js }}
       LOOM_PROFILING: ${{ matrix.profiling }}
       LOOM_PUBLISH_VERSION: ${{ needs.meta.outputs.version }}
       LOOM_PREBUILD_DIR: /mnt/loom/work
@@ -164,7 +162,7 @@ jobs:
         run: |
           npm install -g yarn@1.22.22
           sudo apt-get install -y -qq ccache >/dev/null && ccache --version | head -1
-      # Compiler cache. Shared by both JS modes of a flavor (they differ in one define); only the
+      # Compiler cache. Only the
       # background job saves it, and each cache is capped, so the five flavors stay within GitHub's 10 GB.
       - name: Restore the compiler cache
         uses: actions/cache/restore@v4
@@ -202,36 +200,34 @@ jobs:
         if: always()
         run: df -h / /mnt
       - name: Trim the compiler cache for upload
-        if: always() && matrix.js == 'background'
+        if: always()
         run: |
           ccache --show-stats | grep -E "Hits|Cache size" || true
           ccache --max-size="$CCACHE_SAVE_SIZE" >/dev/null && ccache --cleanup >/dev/null
           ccache --show-stats | grep "Cache size" || true
       - name: Save the compiler cache
-        if: always() && matrix.js == 'background'
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: /mnt/loom/ccache
           key: ccache-android-${{ matrix.profiling }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         with:
-          name: maven-android-${{ matrix.js }}-${{ matrix.profiling }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          name: maven-android-${{ matrix.profiling }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
           path: /mnt/loom/maven/io/github/ammarahm-ed/
           if-no-files-found: error
           retention-days: 7
 
   ios:
-    name: iOS ${{ matrix.js }} ${{ matrix.flavor }}
+    name: iOS ${{ matrix.flavor }}
     needs: meta
     runs-on: macos-15
     timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
-        js: [background, main]
         flavor: [Debug, Release, ReleaseProfiling]
     env:
-      LOOM_JS: ${{ matrix.js }}
       LOOM_PREBUILD_DIR: ${{ github.workspace }}/../cs/work
       LOOM_IOS_OUT: ${{ github.workspace }}/../cs/ios-out
       LOOM_BASELINE_DIR: ${{ github.workspace }}/../baseline
@@ -293,21 +289,21 @@ jobs:
         if: always()
         run: df -h / "$GITHUB_WORKSPACE/../cs"
       - name: Trim the compiler cache for upload
-        if: always() && matrix.js == 'background'
+        if: always()
         run: |
           ccache --show-stats | grep -E "Hits|Cache size" || true
           ccache --max-size="$CCACHE_SAVE_SIZE" >/dev/null && ccache --cleanup >/dev/null
           ccache --show-stats | grep "Cache size" || true
       - name: Save the compiler cache
-        if: always() && matrix.js == 'background'
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/../ccache
           key: ccache-ios-${{ matrix.flavor }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ios-${{ matrix.js }}-${{ matrix.flavor }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
-          path: ${{ github.workspace }}/../cs/ios-out/${{ matrix.js }}/
+          name: ios-${{ matrix.flavor }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          path: ${{ github.workspace }}/../cs/ios-out/
           if-no-files-found: error
           retention-days: 7
 
@@ -344,13 +340,8 @@ jobs:
           fi
       - uses: actions/download-artifact@v4
         with:
-          pattern: ios-background-*-${{ needs.meta.outputs.version }}-${{ github.sha }}
-          path: /mnt/loom/ios-out/background
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ios-main-*-${{ needs.meta.outputs.version }}-${{ github.sha }}
-          path: /mnt/loom/ios-out/main
+          pattern: ios-*-${{ needs.meta.outputs.version }}-${{ github.sha }}
+          path: /mnt/loom/ios-out
           merge-multiple: true
       - name: Add the iOS artifacts to the repository
         env:
@@ -358,21 +349,18 @@ jobs:
           LOOM_IOS_OUT: /mnt/loom/ios-out
           LOOM_MAVEN_LOCAL: /mnt/loom/repo
         run: |
-          LOOM_JS=background tools/prebuild/ios-publish.sh
-          LOOM_JS=main tools/prebuild/ios-publish.sh
+          tools/prebuild/ios-publish.sh
       - name: Check every expected artifact is present
         run: |
           base="$REPO/io/github/ammarahm-ed"
           missing=0
-          for a in react-android react-android-jsmain react-android-profiling react-android-jsmain-profiling react-native-artifacts; do
+          for a in react-android react-android-profiling react-native-artifacts; do
             [ -f "$base/$a/$VERSION/$a-$VERSION.pom" ] || { echo "::error::missing $a $VERSION"; missing=1; }
           done
-          for js in "" "jsmain-"; do
-            for c in debug release release-profiling; do
-              for k in "reactnative-core-$js$c" "reactnative-core-${js}dSYM-$c" "reactnative-headers-$js$c"; do
-                [ -f "$base/react-native-artifacts/$VERSION/react-native-artifacts-$VERSION-$k.tar.gz" ] \
-                  || { echo "::error::missing iOS $k"; missing=1; }
-              done
+          for c in debug release release-profiling; do
+            for k in "reactnative-core-$c" "reactnative-core-dSYM-$c" "reactnative-headers-$c"; do
+              [ -f "$base/react-native-artifacts/$VERSION/react-native-artifacts-$VERSION-$k.tar.gz" ] \
+                || { echo "::error::missing iOS $k"; missing=1; }
             done
           done
           exit $missing
@@ -382,7 +370,7 @@ jobs:
         run: |
           cd "$REPO/io/github/ammarahm-ed"
           mkdir -p /tmp/empty-javadoc && echo "See https://github.com/ammarahm-ed/Loom" > /tmp/empty-javadoc/README
-          for a in react-android react-android-jsmain react-android-profiling react-android-jsmain-profiling; do
+          for a in react-android react-android-profiling; do
             d="$a/$VERSION"
             [ -f "$d/$a-$VERSION-javadoc.jar" ] || (cd /tmp/empty-javadoc && zip -q "$OLDPWD/$d/$a-$VERSION-javadoc.jar" README)
             ls "$d"/*-sources.jar >/dev/null 2>&1 || { echo "::error::$a has no sources jar"; exit 1; }

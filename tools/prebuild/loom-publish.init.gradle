@@ -50,13 +50,9 @@ gradle.allprojects { p ->
               developerConnection = "scm:git:git@github.com:ammarahm-ed/Loom.git"
             }
           }
-          // loom.js=main is published next to the default (background) build under its own artifactId.
-          if (p.path == ":packages:react-native:ReactAndroid" && System.getenv("LOOM_JS") == "main") {
-            artifactId = "react-android-jsmain"
-          }
           // loom.releaseProfiling=true is published beside the default release under its own artifactId.
           if (p.path == ":packages:react-native:ReactAndroid" && p.findProperty("loom.releaseProfiling") == "true") {
-            artifactId = (System.getenv("LOOM_JS") == "main" ? "react-android-jsmain" : "react-android") + "-profiling"
+            artifactId = "react-android-profiling"
           }
         }
         repositories { maven { name = "loomLocal"; url = uri(loomRepo) } }
