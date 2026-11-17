@@ -335,9 +335,9 @@ void LoomBinding::applyPublishedIdentities(
     // Delta: drop exactly the tags the renderer removed (when this surface
     // still owns them), then upsert the published versions below.
     for (const auto tag : *removedTags) {
-      const auto mountedToken = mountedTokens_.find(tag);
-      if (mountedToken != mountedTokens_.end() &&
-          mountedToken->second->surfaceId == token->surfaceId) {
+      const auto mounted = mounted_.find(tag);
+      if (mounted != mounted_.end() &&
+          mounted->second.token->surfaceId == token->surfaceId) {
         eraseMountedLocked(tag);
       }
     }
@@ -366,7 +366,7 @@ void LoomBinding::applyPublishedIdentities(
   }
   // [LoomMemory] These versions are mounted now (or gone), so they no longer
   // count as "submitted": `setWorkerNativeProps` finds them through
-  // `mountedIdentities_`. Entries were only ever dropped with the surface, i.e.
+  // `mounted_`. Entries were only ever dropped with the surface, i.e.
   // one per tag the surface ever published.
   if (auto surfaceSubmitted = submittedIdentities_.find(token->surfaceId);
       surfaceSubmitted != submittedIdentities_.end()) {
@@ -390,26 +390,22 @@ void LoomBinding::applyPublishedIdentities(
   // is then reported on UI, so this runs twice for one commit.
   // Sized once for the whole batch rather than rehashed as a large mount
   // grows them, on the UI thread, one view at a time.
-  mountedIdentities_.reserve(mountedIdentities_.size() + identities.size());
-  mountedTokens_.reserve(mountedTokens_.size() + identities.size());
+  mounted_.reserve(mounted_.size() + identities.size());
   {
     auto& mounted = mountedTagsBySurface_[token->surfaceId];
     mounted.reserve(mounted.size() + identities.size());
   }
   for (const auto& [tag, identity] : identities) {
-    const auto mounted = mountedIdentities_.find(tag);
-    if (mounted != mountedIdentities_.end() && mounted->second == identity) {
-      const auto mountedToken = mountedTokens_.find(tag);
-      if (mountedToken != mountedTokens_.end() && mountedToken->second == token) {
-        continue;
-      }
+    const auto mounted = mounted_.find(tag);
+    if (mounted != mounted_.end() && mounted->second.identity == identity &&
+        mounted->second.token == token) {
+      continue;
     }
     setMountedLocked(tag, identity, token);
   }
   // After a large unmount the tables would otherwise keep their peak bucket
   // arrays until the surface goes away.
-  mountedIdentities_.releaseSlack();
-  mountedTokens_.releaseSlack();
+  mounted_.releaseSlack();
   if (auto mounted = mountedTagsBySurface_.find(token->surfaceId);
       mounted != mountedTagsBySurface_.end()) {
     mounted->second.releaseSlack();
