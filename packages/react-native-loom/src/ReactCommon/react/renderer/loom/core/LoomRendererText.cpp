@@ -292,7 +292,7 @@ void LoomRenderer::buildTextContent(Node& root) {
   // below shares it.
   const std::shared_ptr<const AttributedString> built =
       std::make_shared<const AttributedString>(std::move(attributedString));
-  const bool measurementInputsChanged = !root.hasTextMeasurementCache ||
+  const bool measurementInputsChanged = !text.hasTextMeasurementCache ||
       !sameTextMeasurementContent(text.measuredAttributedString, built) ||
       text.measuredParagraphAttributes != text.paragraphAttributes;
   text.attributedString = built;
@@ -322,7 +322,7 @@ void LoomRenderer::buildTextContent(Node& root) {
   }
   if (measurementInputsChanged) {
     // Every cached measurement was taken for the previous content.
-    ++root.measurementContentGeneration;
+    ++text.measurementContentGeneration;
     if (root.yogaNode != nullptr) {
       YGNodeMarkDirty(root.yogaNode);
     }
@@ -339,8 +339,8 @@ LoomRenderer::TextMeasurement LoomRenderer::measureTextNode(
   // generation on a change; Yoga can call this several times per layout, so
   // each call checks one integer instead of comparing every fragment again.
   const auto& text = node.textOrEmpty();
-  const bool cacheableContent = node.hasTextMeasurementCache &&
-      node.measuredContentGeneration == node.measurementContentGeneration;
+  const bool cacheableContent = text.hasTextMeasurementCache &&
+      text.measuredContentGeneration == text.measurementContentGeneration;
   if (cacheableContent) {
     for (size_t index = 0; index < text.recentTextMeasurementCount_; ++index) {
       const auto& entry = text.recentTextMeasurements_[index];
@@ -451,8 +451,8 @@ void LoomRenderer::storeTextMeasurement(
   auto& text = *node.text;
   text.measuredAttributedString = text.measurementAttributedString;
   text.measuredParagraphAttributes = text.paragraphAttributes;
-  node.hasTextMeasurementCache = true;
-  node.measuredContentGeneration = node.measurementContentGeneration;
+  text.hasTextMeasurementCache = true;
+  text.measuredContentGeneration = text.measurementContentGeneration;
   text.preparedAttributedString = text.measurementAttributedString;
   text.preparedParagraphAttributes = text.paragraphAttributes;
   // Remember this constraint pair too, so the next pass that asks for it
@@ -476,7 +476,8 @@ YGSize LoomRenderer::measureText(
     float height,
     YGMeasureMode heightMode) {
   auto* node = static_cast<Node*>(YGNodeGetContext(yogaNode));
-  if (node == nullptr || node->owner == nullptr) {
+  auto* owner = node != nullptr ? rendererOf(yogaNode) : nullptr;
+  if (owner == nullptr) {
     return YGSize{0, 0};
   }
 
@@ -501,7 +502,7 @@ YGSize LoomRenderer::measureText(
   }
 
   auto measurement =
-      node->owner->measureTextNode(*node, minimumSize, maximumSize);
+      owner->measureTextNode(*node, minimumSize, maximumSize);
   if (!measurement.valid) {
     return YGSize{0, 0};
   }
