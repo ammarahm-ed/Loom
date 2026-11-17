@@ -1302,6 +1302,8 @@ class LoomRenderer final {
    * compare the stamp directly; this is for the ones that only have a tag.
    */
   bool wasVisitedThisCommit(Tag tag) const;
+  /** Whether `tag`'s parent chain reaches the surface root (it stays mounted). */
+  bool reachesRoot(Tag tag) const;
   /**
    * Recomputes the name- and props-derived role flags cached on `node`. Call it
    * only through `roleFlagsValid`; every write to `props` or `componentName`
