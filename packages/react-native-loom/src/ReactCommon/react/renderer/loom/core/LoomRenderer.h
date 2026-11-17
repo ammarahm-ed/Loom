@@ -481,6 +481,7 @@ class LoomRenderer final {
   void cloneNodeWithNewProps(Tag tag, const folly::dynamic& propsPatch);
   /** Sets whether an offscreen boundary hides the node (see `offscreenHidden`). */
   void setOffscreenHidden(Tag tag, bool hidden);
+  bool offscreenHidden(Tag tag) const;
   /**
    * Records the props a compat component's descriptor parsed for the props
    * this node holds now (call after the node's props are applied).

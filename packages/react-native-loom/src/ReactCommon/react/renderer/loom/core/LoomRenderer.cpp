@@ -223,6 +223,9 @@ void LoomRenderer::createNode(
   node->compat.reset();
   node->compatDescriptor = nullptr;
   node->compatChecked = false;
+  // Offscreen hiding belongs to a version of the node it replaces; a new
+  // version starts visible, and the refresh below recomputes displayNone.
+  node->offscreenHidden = false;
   refreshStyleCached(*node);
 
   node->instanceHandle = instanceHandle;
@@ -446,6 +449,11 @@ void LoomRenderer::cloneNodeWithNewProps(
   }
 }
 
+
+bool LoomRenderer::offscreenHidden(Tag tag) const {
+  const auto* node = find(tag);
+  return node != nullptr && node->offscreenHidden;
+}
 
 void LoomRenderer::setOffscreenHidden(Tag tag, bool hidden) {
   auto* node = find(tag);

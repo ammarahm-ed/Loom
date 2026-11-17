@@ -445,7 +445,10 @@ void LoomBinding::reconcileWorkerCommit(
         break;
       const auto& draft = *entry.draft;
       const bool rawText = draft.roles.isRawText();
+      // Hiding or showing a version is not a paint change: only the full
+      // reconcile applies `offscreenHidden`.
       if (liveRenderer.identityOf(draft.tag) != draft.identity ||
+          liveRenderer.offscreenHidden(draft.tag) != draft.offscreenHidden ||
           (entry.childrenChanged &&
            childrenDifferFrom(liveRenderer, draft.tag, entry.childTags)) ||
           (!rawText &&
@@ -898,6 +901,7 @@ void LoomBinding::publishRootCommit(
             (entry.childrenChanged &&
              childrenDifferFrom(liveRenderer, draft.tag, entry.childTags)) ||
             liveRenderer.identityOf(draft.tag) != draft.identity ||
+            liveRenderer.offscreenHidden(draft.tag) != draft.offscreenHidden ||
             !liveRenderer.hasSameInstanceHandle(
                 draft.tag, draft.instanceHandle)) {
           paintOnlyCandidate = false;
