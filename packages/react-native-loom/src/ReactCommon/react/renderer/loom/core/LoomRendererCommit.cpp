@@ -539,12 +539,10 @@ bool LoomRenderer::beginCommitLayout() {
     // starts above zero, and zero is what an untouched node still carries, so a
     // node that was reached in commit k is not mistaken for one reached in k+1.
     ++commitStamp_;
-    // Contents are dead here; release capacity a big commit left behind. No
-    // eager reserve: the vectors keep their capacity between commits, and
-    // reserving the whole tree would defeat the trim for small commits.
-    trimScratch(commitTraversal_);
-    trimScratch(commitNodes_);
-    trimScratch(commitLayoutParents_);
+    // No eager reserve: the vectors keep their capacity between commits, and
+    // reserving the whole tree would defeat the trim for small commits. The
+    // trim runs at the end of each commit (`releaseSlack`), so a large commit's
+    // capacity is not held until the next one.
     commitTraversal_.clear();
     commitNodes_.clear();
     commitLayoutParents_.clear();
@@ -944,7 +942,6 @@ void LoomRenderer::finishCommitAfterLayout() {
       emitDelete(tag);
     }
     collectUnreachable();
-    releaseSlack();
     // Keep captured edges alive through collectUnreachable(): dropping a
     // removed parent walks its old children too, but those edges were already
     // emitted above. dropSubtree uses this list to avoid duplicate native
@@ -953,6 +950,7 @@ void LoomRenderer::finishCommitAfterLayout() {
     removedMountedEdgeKeys_.clear();
     removedNodeTags_.clear();
     removedNodeTagSet_.clear();
+    releaseSlack();
 #if LOOM_PROFILE
     const auto profileAfterDiff = std::chrono::steady_clock::now();
     const auto profileOperationCount = pendingOperations_.operations.size();
@@ -1234,8 +1232,9 @@ void LoomRenderer::flush() {
     layoutEvents_.clear();
     return;
   }
-  stateUpdates_.clear();
+  stateUpdates_.clearAndTrim();
   initialInsertIndexes_.clear();
+  initialInsertIndexes_.releaseSlack();
   // Only nodes this commit's prepare walk reached can carry these marks: every
   // write that sets one also marks the node for that walk. A full commit
   // reached every live node, so this covers what the whole-map loop did.
@@ -1244,6 +1243,12 @@ void LoomRenderer::flush() {
     node->replacesHostTagThisCommit = false;
     node->childrenDirty = false;
   }
+  // The traversal is dead now. Trimmed against this commit's size, so a large
+  // commit followed by a small one (a mount, then an unmount) gives the memory
+  // back at the end of the small one instead of holding it until the next.
+  trimScratch(commitTraversal_);
+  trimScratch(commitNodes_);
+  trimScratch(commitLayoutParents_);
 
   // Batch, text state, and layout notifications form one synchronous UI-thread
   // commit boundary. No observable layout callback escapes before all three

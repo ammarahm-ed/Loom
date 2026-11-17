@@ -428,6 +428,8 @@ class LoomBinding final : public UIManagerBinding {
     InstanceHandle::Shared documentHandle;
     /** Made by requestAnimationFrame work (AnimationFrameWork). */
     bool animationFrame{false};
+    /** Versions this publish newly froze: sizes the commit's selection. */
+    size_t publishedDrafts{0};
   };
   void publishWorkerCommit(
       SurfaceId,
@@ -878,7 +880,8 @@ class LoomBinding final : public UIManagerBinding {
       LoomRenderer& liveRenderer,
       SurfaceId surfaceId,
       const SurfaceToken& surfaceToken,
-      const std::vector<std::shared_ptr<DraftNode>>& rootDrafts);
+      const std::vector<std::shared_ptr<DraftNode>>& rootDrafts,
+      size_t expectedDrafts = 0);
 
   /**
    * Applies a selection to the live renderer: captures the cleanup edges the
