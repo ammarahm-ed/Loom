@@ -154,3 +154,25 @@ On Android, *first content* is the first frame drawn with React content (a pre-d
 and *time to initial display* is what `am start -W` reports. On Android, the early view creation
 described above applies as well; parallel text measurement is off by default there
 (`adb shell setprop debug.loom.paralleltext 1` turns it on).
+
+### Use native marks, not JavaScript ones
+
+Compare renderers with two marks taken natively, on the thread that owns the views:
+
+- **Mounted:** the last startup mount batch has been applied to the native views.
+- **Displayed:** the first frame drawn after that batch (the Core Animation commit on iOS, the
+  next drawn frame on Android and desktop hosts).
+
+A JavaScript timestamp, whether from `useEffect`, `requestAnimationFrame` or a
+`performance.now()` in a component, measures when React finished, not when the user can see the
+screen. With stock React Native, layout runs during React's commit, so the gap between that
+timestamp and the mount is small. With Loom, React's commit hands the tree to the worker, which
+lays it out afterwards, and the UI thread then applies the batch. The JavaScript mark therefore
+fires before Loom has done its layout and mount work, and it can fire tens of milliseconds early.
+On a desktop host (react-native-gpui, 5k-cell grid, JavaScript on its own thread), a JavaScript
+first-frame mark made Loom's first frame look 27% earlier than it was. A JavaScript mark is still
+useful for comparing two Loom builds, but not for comparing Loom with stock React Native.
+
+When you port the harness to a new host, put the *mounted* mark at the end of the host's
+`applyBatch` for the startup surface's last startup batch, and the *displayed* mark in the
+host's frame-presented callback that follows it.
