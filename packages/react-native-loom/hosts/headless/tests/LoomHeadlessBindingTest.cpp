@@ -598,6 +598,76 @@ TEST_F(LoomHeadlessBindingTest, InsertsCarryInitialLayoutWhenTheHostOptsIn) {
   EXPECT_TRUE(host_->takeFailures().empty());
 }
 
+/** Mounts 2 > 3 > 4 > {5, 6} on `surface`, then commits 2 without children. */
+std::vector<std::pair<Tag, Tag>> removesOfSubtreeUnmount(
+    LoomHeadlessHost& host,
+    LoomBinding& binding,
+    UIManager& uiManager,
+    SurfaceId surface) {
+  using Access = LoomBindingTestAccess;
+  LoomBinding::setSurfaceConstraints(surface, 300, 300, 300, 300, false, 0, 0);
+  const auto token = Access::tokenFor(binding, surface);
+  const Tag base = surface * 100;
+  const auto view = [&](Tag tag) {
+    return Access::draft(
+        surface, token->generation, base + tag, base + tag, "View",
+        folly::dynamic::object("width", 10.0)("height", 10.0)("collapsable", false));
+  };
+  auto outer = view(2);
+  auto a = view(3);
+  auto b = view(4);
+  b->children->push_back(view(5));
+  b->children->push_back(view(6));
+  a->children->push_back(b);
+  outer->children->push_back(a);
+  Access::publishAsync(binding, surface, outer);
+  LoomBinding::synchronizeWorkerForUIManager(uiManager);
+  host.drainUIQueue();
+  host.takeBatches();
+
+  auto emptied = std::make_shared<Access::Draft>(*outer);
+  emptied->published = false;
+  emptied->workerCommitted = false;
+  emptied->frozenCommit = 0;
+  emptied->freezeFacts = {};
+  emptied->children =
+      std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+  emptied->childrenExplicit = true;
+  Access::publishAsync(binding, surface, emptied);
+  LoomBinding::synchronizeWorkerForUIManager(uiManager);
+  host.drainUIQueue();
+  std::vector<std::pair<Tag, Tag>> removes;
+  size_t deletes = 0;
+  for (const auto& recorded : host.takeBatches()) {
+    for (const auto& operation : recorded.batch.operations) {
+      if (const auto* remove = std::get_if<DirectRemoveOperation>(&operation)) {
+        removes.emplace_back(remove->parentTag - base, remove->tag - base);
+      } else if (std::holds_alternative<DirectDeleteOperation>(operation)) {
+        ++deletes;
+      }
+    }
+  }
+  EXPECT_EQ(deletes, 4u);
+  std::sort(removes.begin(), removes.end());
+  return removes;
+}
+
+// By default an unmount removes every edge of the subtree, as Fabric does.
+// `removesSubtreeRootOnly` keeps only the subtree root's remove.
+TEST_F(LoomHeadlessBindingTest, SubtreeRootOnlyRemovesAreOptIn) {
+  EXPECT_EQ(
+      removesOfSubtreeUnmount(*host_, *binding_, *uiManager_, 51),
+      (std::vector<std::pair<Tag, Tag>>{{2, 3}, {3, 4}, {4, 5}, {4, 6}}));
+  auto traits = host_->traits();
+  traits.removesSubtreeRootOnly = true;
+  LoomPlatformTraits::install(traits);
+  EXPECT_EQ(
+      removesOfSubtreeUnmount(*host_, *binding_, *uiManager_, 61),
+      (std::vector<std::pair<Tag, Tag>>{{2, 3}}));
+  LoomPlatformTraits::install(host_->traits());
+  EXPECT_TRUE(host_->takeFailures().empty());
+}
+
 /** Bytes the process has allocated, or 0 where it cannot be read. */
 size_t allocatedBytes() {
 #if defined(__APPLE__)

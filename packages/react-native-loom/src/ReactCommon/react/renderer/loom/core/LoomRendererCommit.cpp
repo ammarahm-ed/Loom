@@ -338,6 +338,16 @@ void LoomRenderer::sweepUnreachable() {
   orphanCandidates_.clear();
 }
 
+bool LoomRenderer::reachesRoot(Tag tag) const {
+  for (size_t steps = 0; tag != 0 && steps <= nodes_.size(); ++steps) {
+    if (tag == rootTag_) {
+      return true;
+    }
+    tag = parentOfAny(tag);
+  }
+  return false;
+}
+
 bool LoomRenderer::wasVisitedThisCommit(Tag tag) const {
   if (const auto* node = find(tag); node != nullptr) {
     return node->visitedStamp == commitStamp_;
@@ -776,7 +786,16 @@ void LoomRenderer::finishCommitAfterLayout() {
     // Edges owned by removed parents were captured from the previous live tree.
     // Emit descendant edges first, before removing an ancestor or inserting a
     // moved child elsewhere.
+    const bool rootRemovesOnly =
+        LoomPlatformTraits::current().removesSubtreeRootOnly;
     for (const auto& edge : removedMountedEdges_) {
+      // `removesSubtreeRootOnly`: an edge inside a subtree this commit
+      // unmounts goes with its parent. Both ends must be leaving the tree; a
+      // child that moves elsewhere is still reachable and keeps its remove.
+      if (rootRemovesOnly && !reachesRoot(edge.parentTag) &&
+          !reachesRoot(edge.childTag)) {
+        continue;
+      }
       pendingOperations_.append(
           DirectRemoveOperation{edge.parentTag, edge.childTag, edge.index});
     }
