@@ -193,8 +193,10 @@ void LoomBinding::publishWorkerCommit(
   // version is mounted or removed.
   {
     std::lock_guard state(stateMutex_);
+    auto& submitted = submittedIdentities_[surfaceId];
+    submitted.reserve(submitted.size() + identities->size());
     for (const auto& [tag, identity] : *identities)
-      submittedIdentities_[surfaceId][tag] = identity;
+      submitted[tag] = identity;
   }
   auto document = pendingDocumentInstanceHandles_.find(surfaceId);
   if (document != pendingDocumentInstanceHandles_.end()) {
@@ -386,6 +388,14 @@ void LoomBinding::applyPublishedIdentities(
   // rewrites a hash entry per node even when nothing about it changed.
   // Deliberately idempotent: a synchronous commit publishes from the worker and
   // is then reported on UI, so this runs twice for one commit.
+  // Sized once for the whole batch rather than rehashed as a large mount
+  // grows them, on the UI thread, one view at a time.
+  mountedIdentities_.reserve(mountedIdentities_.size() + identities.size());
+  mountedTokens_.reserve(mountedTokens_.size() + identities.size());
+  {
+    auto& mounted = mountedTagsBySurface_[token->surfaceId];
+    mounted.reserve(mounted.size() + identities.size());
+  }
   for (const auto& [tag, identity] : identities) {
     const auto mounted = mountedIdentities_.find(tag);
     if (mounted != mountedIdentities_.end() && mounted->second == identity) {
