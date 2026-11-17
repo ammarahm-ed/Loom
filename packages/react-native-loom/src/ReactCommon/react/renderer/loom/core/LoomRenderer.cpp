@@ -362,7 +362,7 @@ void LoomRenderer::setIdentity(Tag tag, uint64_t identity) {
 
 void LoomRenderer::captureRemovedMountedEdges(
     const TagMap<uint64_t>& selectedIdentities) {
-  std::unordered_set<Tag> visited;
+  TagHashSet visited;
   std::function<void(Tag)> visit = [&](Tag parentTag) {
     if (!visited.insert(parentTag).second) {
       return;
@@ -403,7 +403,7 @@ void LoomRenderer::captureRemovedMountedEdgesFrom(
   // restricted to the subtrees that can actually lose nodes. A kept node ends
   // the walk: its subtree is unchanged, or it is a selected draft whose own
   // removed children are listed as roots separately.
-  std::unordered_set<Tag> visited;
+  TagHashSet visited;
   const auto visit = [&](const auto& self, Tag parentTag) -> void {
     const auto* parent = find(parentTag);
     if (parent == nullptr || !visited.insert(parentTag).second) {
@@ -543,7 +543,7 @@ void LoomRenderer::setChildren(
   }
   std::vector<Tag> normalizedChildren;
   normalizedChildren.reserve(children.size());
-  std::unordered_set<Tag> selectedChildren;
+  TagHashSet selectedChildren;
   selectedChildren.reserve(children.size());
   for (const Tag childTag : children) {
     if (childTag == parentTag || !exists(childTag) ||
@@ -729,7 +729,7 @@ bool LoomRenderer::tryCommitPaintOnlyProps(
   }
 
   std::vector<Tag> changedTags;
-  std::unordered_set<Tag> seenChangedTags;
+  TagHashSet seenChangedTags;
   for (const auto& [tag, patch] : patches) {
     const auto* node = find(tag);
     if (node == nullptr || !node->hostCreated || node->hostOwned ||

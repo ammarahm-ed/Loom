@@ -664,7 +664,7 @@ LoomBinding::selectCommitDrafts(
     if (*live == next) {
       return;
     }
-    std::unordered_set<Tag> keep(next.begin(), next.end());
+    TagHashSet keep(next.begin(), next.end());
     for (const auto child : *live) {
       if (keep.count(child) == 0) {
         selection.removalRoots.push_back(child);
