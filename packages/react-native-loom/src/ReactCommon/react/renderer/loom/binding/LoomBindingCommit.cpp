@@ -184,6 +184,7 @@ void LoomBinding::publishWorkerCommit(
     retainsLiveSnapshot |= facts.retainsLiveSnapshot;
     packet->roots.push_back(ref->draft);
   }
+  packet->publishedDrafts = committedDrafts->size();
   // Insert only the tags this walk newly published. `freeze` skips unchanged
   // subtrees, so the map it produces is a delta rather than the whole graph, and
   // erasing the surface first would drop the entry for every skipped subtree.
@@ -395,6 +396,18 @@ void LoomBinding::applyPublishedIdentities(
     }
     setMountedLocked(tag, identity, token);
   }
+  // After a large unmount the tables would otherwise keep their peak bucket
+  // arrays until the surface goes away.
+  mountedIdentities_.releaseSlack();
+  mountedTokens_.releaseSlack();
+  if (auto mounted = mountedTagsBySurface_.find(token->surfaceId);
+      mounted != mountedTagsBySurface_.end()) {
+    mounted->second.releaseSlack();
+  }
+  if (auto submitted = submittedIdentities_.find(token->surfaceId);
+      submitted != submittedIdentities_.end()) {
+    submitted->second.releaseSlack();
+  }
   // The batch has been applied, so the live renderer now holds these versions and a
   // later reconcile may treat them as an untouched subtree. Marking has to happen
   // here rather than in `freeze`: publishes can be in flight, and a version frozen
@@ -424,8 +437,9 @@ void LoomBinding::reconcileWorkerCommit(
       }
       rootDrafts.push_back(draft);
     }
-    auto commitSelection =
-        selectCommitDrafts(liveRenderer, surfaceId, *surfaceToken, rootDrafts);
+    auto commitSelection = selectCommitDrafts(
+        liveRenderer, surfaceId, *surfaceToken, rootDrafts,
+        packet.publishedDrafts);
     auto& selected = commitSelection.selected;
     const auto rootTag = commitSelection.rootTag;
     const auto& rootChildren = commitSelection.rootChildren;
@@ -504,7 +518,8 @@ LoomBinding::selectCommitDrafts(
     LoomRenderer& liveRenderer,
     SurfaceId surfaceId,
     const SurfaceToken& surfaceToken,
-    const std::vector<std::shared_ptr<DraftNode>>& rootDrafts) {
+    const std::vector<std::shared_ptr<DraftNode>>& rootDrafts,
+    size_t expectedDrafts) {
   struct SelectionRecord {
     enum class Visit : uint8_t { Unseen, Active, Done };
     uint64_t identity{0};
@@ -518,6 +533,10 @@ LoomBinding::selectCommitDrafts(
   CommitSelection selection;
   auto& selected = selection.selected;
   TagMap<SelectionRecord> selectionByTag;
+  // Sized once from what the publish froze instead of growing by doubling
+  // through a large mount. Retained live children add records beyond it.
+  selected.reserve(expectedDrafts);
+  selectionByTag.reserve(expectedDrafts + rootDrafts.size() + 1);
 
   std::function<void(const std::shared_ptr<DraftNode>&)> selectDraft;
   std::function<void(Tag)> retainLiveSubtree;
@@ -571,6 +590,13 @@ LoomBinding::selectCommitDrafts(
          (draft->workerCommitted && draft->retainedLiveChildren == nullptr));
     record.selectedIndex = selected.size();
     selected.push_back({draft, {}, !useLiveChildren});
+    if (!useLiveChildren) {
+      selected.back().childTags.reserve(
+          draft->children->size() +
+          (draft->retainedLiveChildren != nullptr
+               ? draft->retainedLiveChildren->size()
+               : 0));
+    }
 
     if (useLiveChildren) {
       if (const auto* children = liveRenderer.childrenOfRef(draft->tag);
@@ -712,6 +738,8 @@ void LoomBinding::reconcileSelectedDrafts(
   liveRenderer.captureRemovedMountedEdgesFrom(
       selection.selectedIdentities, selection.removalRoots);
 
+  // One list for every draft's pending patches rather than one per draft.
+  std::vector<std::shared_ptr<const PropsPatch>> patches;
   for (const auto& entry : selected) {
     const auto& draft = *entry.draft;
     const auto currentIdentity = liveRenderer.identityOf(draft.tag);
@@ -736,7 +764,7 @@ void LoomBinding::reconcileSelectedDrafts(
       liveRenderer.setInstanceHandle(draft.tag, draft.instanceHandle);
     }
 
-    std::vector<std::shared_ptr<const PropsPatch>> patches;
+    patches.clear();
     for (auto patch = draft.propsTail; patch != nullptr;
          patch = patch->previous) {
       // Props patches form an append-only chronological chain (only `applied`

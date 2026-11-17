@@ -232,6 +232,18 @@ class TagMap : public std::unordered_map<
   TagMap& operator=(const TagMap&) = default;
   TagMap& operator=(TagMap&&) noexcept = default;
 
+  /**
+   * Gives back the bucket array a much larger past size left behind (after a
+   * large unmount, say): shrinks it when it is over 1024 buckets and more than
+   * 8 per entry. Nodes are returned as they are erased (`LoomNodeArena`).
+   */
+  void releaseSlack() {
+    const auto buckets = Base::bucket_count();
+    if (buckets > 1024 && Base::size() * 8 < buckets) {
+      Base::rehash(roundUpPow2(Base::size() * 2));
+    }
+  }
+
   /** Reserves a power-of-two bucket count so indexing stays on a mask. */
   void reserve(size_t count) {
     if (count == 0) {
@@ -1431,6 +1443,16 @@ class LoomRenderer final {
     void clear() {
       order_.clear();
       members_.clear();
+    }
+
+    /** Clears, and drops storage a much larger past use left behind. */
+    void clearAndTrim() {
+      const auto used = order_.size();
+      clear();
+      if (order_.capacity() > 1024 && used * 4 < order_.capacity()) {
+        std::vector<Tag>().swap(order_);
+        TagHashSet().swap(members_);
+      }
     }
 
     std::vector<Tag>::const_iterator begin() const {

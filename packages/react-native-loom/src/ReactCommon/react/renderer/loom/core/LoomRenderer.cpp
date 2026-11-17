@@ -543,11 +543,25 @@ void LoomRenderer::setChildren(
   }
   std::vector<Tag> normalizedChildren;
   normalizedChildren.reserve(children.size());
+  // Most lists are short: a scan of the kept children is cheaper than a hash
+  // set, which cost a bucket array and an entry per child per call.
+  constexpr size_t kScanLimit = 16;
+  const bool hashed = children.size() > kScanLimit;
   TagHashSet selectedChildren;
-  selectedChildren.reserve(children.size());
+  if (hashed) {
+    selectedChildren.reserve(children.size());
+  }
+  const auto isSelected = [&](Tag tag) {
+    return hashed ? selectedChildren.count(tag) != 0
+                  : std::find(
+                        normalizedChildren.begin(),
+                        normalizedChildren.end(),
+                        tag) != normalizedChildren.end();
+  };
   for (const Tag childTag : children) {
     if (childTag == parentTag || !exists(childTag) ||
-        !selectedChildren.insert(childTag).second) {
+        (hashed ? !selectedChildren.insert(childTag).second
+                : isSelected(childTag))) {
       continue;
     }
     normalizedChildren.push_back(childTag);
@@ -556,7 +570,7 @@ void LoomRenderer::setChildren(
     return;
   }
   for (const Tag childTag : parent->children) {
-    if (selectedChildren.count(childTag) == 0) {
+    if (!isSelected(childTag)) {
       if (parentOfAny(childTag) == parentTag) {
         if (auto* child = find(childTag); child != nullptr) {
           child->parent = 0;
@@ -569,6 +583,7 @@ void LoomRenderer::setChildren(
     }
   }
   parent->children.clear();
+  parent->children.reserve(normalizedChildren.size());
   parent->childrenDirty = true;
   markNeedsPrepare(*parent);
   for (const Tag childTag : normalizedChildren) {
@@ -828,6 +843,17 @@ Tag LoomRenderer::rootTag() const {
 // below it, so a long-lived app that returns to a small screen goes back to a
 // small footprint. The thresholds keep steady-state commits allocation free.
 void LoomRenderer::releaseSlack() {
+  trimScratch(orphanCandidates_);
+  // Removal scratch is empty here and only a large unmount makes it large; such
+  // a burst is rare, so its storage is not kept for the next one.
+  if (removedMountedEdges_.capacity() > 1024) {
+    std::vector<RemovedMountedEdge>().swap(removedMountedEdges_);
+    std::unordered_set<uint64_t>().swap(removedMountedEdgeKeys_);
+  }
+  if (removedNodeTags_.capacity() > 1024) {
+    std::vector<Tag>().swap(removedNodeTags_);
+    TagHashSet().swap(removedNodeTagSet_);
+  }
   trimScratch(scratchMounted_);
   if (scratchStationary_.bucket_count() > 512 &&
       scratchStationary_.size() * 8 < scratchStationary_.bucket_count()) {
