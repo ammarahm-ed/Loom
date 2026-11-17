@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <folly/dynamic.h>
 #include <react/renderer/attributedstring/AttributedString.h>
@@ -220,6 +221,21 @@ class LoomHost {
    */
   virtual void registerEventTarget(SurfaceId, Tag, InstanceHandle::Shared) {}
   virtual void unregisterEventTarget(SurfaceId, Tag) {}
+  /**
+   * Every event target an unmount (or a surface teardown) releases, in one
+   * call, in the order the per-tag calls would have come. The core uses this
+   * instead of `unregisterEventTarget` wherever a removal releases a subtree;
+   * the default loops over `unregisterEventTarget`, so a host that overrides
+   * only the per-tag method sees the calls it always did. A host that turns a
+   * release into work on another thread overrides this to do it once.
+   */
+  virtual void unregisterEventTargets(
+      SurfaceId surfaceId,
+      const std::vector<Tag>& tags) {
+    for (const auto tag : tags) {
+      unregisterEventTarget(surfaceId, tag);
+    }
+  }
 
   /**
    * An event the core raised for `tag` (layout events and similar). The host

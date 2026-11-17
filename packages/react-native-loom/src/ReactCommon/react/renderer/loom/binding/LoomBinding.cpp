@@ -637,6 +637,10 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   operations.unregisterEventTarget = [this](SurfaceId surface, Tag tag) {
     host_->unregisterEventTarget(surface, tag);
   };
+  operations.unregisterEventTargets =
+      [this](SurfaceId surface, std::vector<Tag> tags) {
+        host_->unregisterEventTargets(surface, tags);
+      };
   operations.dispatchEvent = [this](
                                  SurfaceId surface,
                                  Tag tag,
@@ -835,6 +839,8 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
       worker_->defer(std::move(operations.registerEventTarget));
   operations.unregisterEventTarget =
       worker_->defer(std::move(operations.unregisterEventTarget));
+  operations.unregisterEventTargets =
+      worker_->defer(std::move(operations.unregisterEventTargets));
   operations.dispatchEvent =
       worker_->defer(std::move(operations.dispatchEvent));
   operations.reportUnsupportedInlineAttachment =

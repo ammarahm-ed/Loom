@@ -1630,6 +1630,63 @@ struct LoomRendererTestAccess {
   }
 };
 
+namespace {
+/** A handle the renderer only stores and passes on; never dereferenced. */
+InstanceHandle::Shared fakeInstanceHandle() {
+  static int storage = 0;
+  return InstanceHandle::Shared(
+      std::shared_ptr<void>{}, reinterpret_cast<const InstanceHandle*>(&storage));
+}
+
+/** Mounts 1 > 2 > 3 > {4, 5} (all host views with event targets), then unmounts 2. */
+struct SubtreeUnmount {
+  folly::dynamic batch = folly::dynamic::array();
+  std::vector<Tag> singleReleases;
+  std::vector<std::vector<Tag>> batchedReleases;
+
+  void run(bool batchedHost) {
+    auto operations = testOperations();
+    operations.applyBatch = [this](SurfaceId, LoomMountBatch next) {
+      batch = encodeForTest(next);
+    };
+    operations.unregisterEventTarget = [this](SurfaceId, Tag tag) {
+      singleReleases.push_back(tag);
+    };
+    if (batchedHost) {
+      operations.unregisterEventTargets = [this](SurfaceId, std::vector<Tag> tags) {
+        batchedReleases.push_back(std::move(tags));
+      };
+    }
+    LoomRenderer renderer(1, std::move(operations));
+    makeRoot(renderer);
+    for (Tag tag = 2; tag <= 5; ++tag) {
+      renderer.createNode(tag, "RCTView", sizedProps(10), fakeInstanceHandle());
+    }
+    renderer.setChildren(3, {4, 5});
+    renderer.setChildren(2, {3});
+    renderer.completeRoot(1, {2});
+    renderer.completeRoot(1, {});
+  }
+};
+} // namespace
+
+// An unmount releases its subtree's event targets in one call when the host
+// takes them batched, and one call per node (as before) when it does not.
+TEST(LoomRendererTest, UnmountReleasesEventTargetsInOneBatch) {
+  SubtreeUnmount perNode;
+  perNode.run(/*batchedHost*/ false);
+  std::sort(perNode.singleReleases.begin(), perNode.singleReleases.end());
+  EXPECT_EQ(perNode.singleReleases, (std::vector<Tag>{2, 3, 4, 5}));
+
+  SubtreeUnmount batched;
+  batched.run(/*batchedHost*/ true);
+  EXPECT_TRUE(batched.singleReleases.empty());
+  ASSERT_EQ(batched.batchedReleases.size(), 1u);
+  auto released = batched.batchedReleases[0];
+  std::sort(released.begin(), released.end());
+  EXPECT_EQ(released, (std::vector<Tag>{2, 3, 4, 5}));
+}
+
 TEST(LoomRendererTest, NodeSizeProbe) {
   LoomRendererTestAccess::printSizes();
 }
