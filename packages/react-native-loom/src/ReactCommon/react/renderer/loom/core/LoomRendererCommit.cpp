@@ -230,7 +230,7 @@ Tag LoomRenderer::findUnsupportedInlineAttachment(
     const std::vector<Tag>& rootChildren,
     const std::function<LoomComponentTable::Roles(Tag)>& rolesFor,
     const std::function<const std::vector<Tag>* (Tag)>& childrenFor) {
-  std::unordered_set<Tag> visited;
+  TagHashSet visited;
   std::function<Tag(Tag, bool)> visit;
   visit = [&](Tag tag, bool insideText) -> Tag {
     if (!visited.insert(tag).second) {

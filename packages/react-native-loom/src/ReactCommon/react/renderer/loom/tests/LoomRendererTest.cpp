@@ -1691,6 +1691,48 @@ TEST(LoomRendererTest, NodeSizeProbe) {
   LoomRendererTestAccess::printSizes();
 }
 
+// TagMap's nodes come from an arena; it must still behave as a std::unordered_map.
+TEST(LoomRendererTest, TagMapKeepsMapSemanticsOnArenaNodes) {
+  TagMap<int> map;
+  int* first = nullptr;
+  for (Tag tag = 1; tag <= 2000; ++tag) {
+    map[tag] = static_cast<int>(tag) * 2;
+    if (tag == 1) {
+      first = &map[1];
+    }
+  }
+  // References survive growth.
+  EXPECT_EQ(first, &map[1]);
+  EXPECT_EQ(map.size(), 2000u);
+  for (Tag tag = 1; tag <= 2000; tag += 2) {
+    map.erase(tag);
+  }
+  EXPECT_EQ(map.size(), 1000u);
+  EXPECT_EQ(map.count(3), 0u);
+  EXPECT_EQ(map.at(4), 8);
+
+  TagMap<int> copy = map;
+  copy[4] = 1;
+  EXPECT_EQ(map.at(4), 8);
+  TagMap<int> moved = std::move(copy);
+  EXPECT_EQ(moved.at(4), 1);
+  TagMap<int> assigned;
+  assigned[7] = 7;
+  assigned = moved;
+  EXPECT_EQ(assigned.size(), 1000u);
+  assigned = std::move(map);
+  EXPECT_EQ(assigned.at(2000), 4000);
+  std::swap(assigned, moved);
+  EXPECT_EQ(assigned.at(4), 1);
+  EXPECT_EQ(moved.at(4), 8);
+  for (Tag tag = 2; tag <= 2000; tag += 2) {
+    moved.erase(tag);
+  }
+  EXPECT_TRUE(moved.empty());
+  moved[5] = 5;
+  EXPECT_EQ(moved.at(5), 5);
+}
+
 TEST(LoomRendererTest, EmptyTextInputMeasuresItsPlaceholderButPublishesNothing) {
   // G4: an empty TextInput measured an empty attributed string, so an
   // auto-height input collapsed to zero while Fabric sizes it from the

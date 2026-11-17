@@ -32,6 +32,7 @@
 #include <react/renderer/graphics/Size.h>
 #include <react/renderer/mounting/ShadowView.h>
 #include <react/renderer/loom/compat/LoomCompat.h>
+#include <react/renderer/loom/core/LoomNodeArena.h>
 #include <react/renderer/loom/mounting/LoomMountBatch.h>
 #include <react/renderer/loom/binding/LoomEventManager.h>
 #include <react/renderer/loom/host/LoomPlatformTraits.h>
@@ -179,10 +180,24 @@ struct LoomTagHash {
  * `std::unordered_map<Tag, V>` with `LoomTagHash` and a power-of-two initial
  * bucket count, so libc++ keeps indexing by mask as the table grows (see
  * LoomTagHash). Use it for any map keyed by a React tag on a commit path.
+ *
+ * Its nodes come from the map's own `LoomNodeArena` rather than one allocation
+ * per insert; everything else, references and iterators included, behaves as
+ * `std::unordered_map`.
  */
 template <class V>
-class TagMap : public std::unordered_map<Tag, V, LoomTagHash> {
-  using Base = std::unordered_map<Tag, V, LoomTagHash>;
+class TagMap : public std::unordered_map<
+                   Tag,
+                   V,
+                   LoomTagHash,
+                   std::equal_to<Tag>,
+                   LoomNodeAllocator<std::pair<const Tag, V>>> {
+  using Base = std::unordered_map<
+      Tag,
+      V,
+      LoomTagHash,
+      std::equal_to<Tag>,
+      LoomNodeAllocator<std::pair<const Tag, V>>>;
 
   // Construction allocates nothing: most per-commit maps stay empty or small,
   // and an eager bucket array cost a malloc plus zeroing per map. The first
@@ -269,6 +284,13 @@ class TagMap : public std::unordered_map<Tag, V, LoomTagHash> {
   }
 };
 
+
+/** A set of React tags whose nodes come from its own `LoomNodeArena`. */
+using TagHashSet = std::unordered_set<
+    Tag,
+    LoomTagHash,
+    std::equal_to<Tag>,
+    LoomNodeAllocator<Tag>>;
 
 /**
  * A node's merged props, shareable with the immutable object they came from.
@@ -1329,7 +1351,7 @@ class LoomRenderer final {
   /** Strict `experimental_LayoutConformance` subtrees (Fabric's resolveErrata). */
   YGConfigRef strictYogaConfig_{nullptr};
   float pointScaleFactor_{1.0f};
-  std::unordered_map<Tag, std::unique_ptr<Node>, LoomTagHash> nodes_;
+  TagMap<std::unique_ptr<Node>> nodes_;
   /**
    * Direct-mapped cache in front of `nodes_` for the non-const `find`: a commit
    * resolves the same few tags (a node, its parent, its children) over and
@@ -1353,7 +1375,7 @@ class LoomRenderer final {
       entry.node = nullptr;
     }
   }
-  std::unordered_map<Tag, RawTextLeaf, LoomTagHash> rawTextLeaves_;
+  TagMap<RawTextLeaf> rawTextLeaves_;
   /** Component names a `ShadowView` points at; kept alive as long as this. */
   mutable std::unordered_set<std::string> internedComponentNames_;
   /**
@@ -1421,7 +1443,7 @@ class LoomRenderer final {
 
    private:
     std::vector<Tag> order_;
-    std::unordered_set<Tag> members_;
+    TagHashSet members_;
   };
 
   /** Text roots whose state has to be published after the batch. */
@@ -1471,7 +1493,7 @@ class LoomRenderer final {
    */
   std::unordered_set<uint64_t> removedMountedEdgeKeys_;
   std::vector<Tag> removedNodeTags_;
-  std::unordered_set<Tag> removedNodeTagSet_;
+  TagHashSet removedNodeTagSet_;
   std::vector<Tag> commitTraversal_;
   /**
    * The `Node` for each entry in `commitTraversal_`, in the same order.
