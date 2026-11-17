@@ -18,6 +18,7 @@
 #include <react/renderer/attributedstring/ParagraphAttributes.h>
 #include <react/renderer/attributedstring/TextAttributes.h>
 #include <react/renderer/core/InstanceHandle.h>
+#include <react/renderer/runtimescheduler/LoomJavaScriptThread.h>
 #include <react/renderer/core/RawEvent.h>
 #include <react/renderer/core/ReactPrimitives.h>
 #include <react/renderer/core/State.h>
@@ -92,6 +93,19 @@ class LoomHost {
    * Registers `host` and installs its `traits()` process-wide. Call before the
    * first surface starts.
    */
+  /**
+   * Where JavaScript runs for this process: on the thread that owns native views
+   * (true) or on a thread of its own (false). Decided once, at startup, before the
+   * JS thread, the runtime scheduler or any binding exists, and fixed from then on
+   * (see `LoomJavaScriptThread`; changing it after it was read is a debug assert).
+   * Platform hosts that cannot take it from the platform's own build configuration
+   * (the desktop and headless hosts, `react-native-gpui-loom`) call this from their
+   * own config. Nothing set means the UI thread.
+   */
+  static void setJavaScriptOnUIThread(bool javaScriptOnUIThread) {
+    LoomJavaScriptThread::set(javaScriptOnUIThread);
+  }
+
   static void registerIn(
       const ContextContainer& container,
       std::shared_ptr<LoomHost> host) {

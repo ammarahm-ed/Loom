@@ -17,21 +17,11 @@
 #include <unordered_map>
 #include <utility>
 
+#include <react/renderer/runtimescheduler/LoomJavaScriptThread.h>
 #include <react/renderer/runtimescheduler/LoomRuntimeHooks.h>
 #include <react/renderer/loom/text/LoomTextMeasurement.h>
 
 namespace facebook::react {
-
-/**
- * Whether the JavaScript runtime runs on the thread that owns native views
- * (the `LOOM_JS_ON_MAIN` build switch). When it does not, JS-thread callers may
- * wait for the UI thread but the UI thread must never wait for JS.
- */
-#if defined(LOOM_JS_ON_MAIN) && !LOOM_JS_ON_MAIN
-inline constexpr bool kLoomJavaScriptOnUIThread = false;
-#else
-inline constexpr bool kLoomJavaScriptOnUIThread = true;
-#endif
 
 enum class LoomLogLevel : uint8_t {
   Info,

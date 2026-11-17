@@ -100,7 +100,7 @@ ShadowNodeFamily::Shared LoomBinding::fabricFamilyLocked(
   hasFabricFamilies_.store(true, std::memory_order_relaxed);
   // Released families are destroyed here when this runs on the JS thread (see
   // header); Reanimated also calls in from the UI thread, which must not.
-  if (LoomWorker::kJavaScriptOnUIThread || !worker_->onUIThread()) {
+  if (LoomWorker::javaScriptOnUIThread() || !worker_->onUIThread()) {
     releasedFabricFamilies_.clear();
   }
   auto& entry = fabricFamilies_[surfaceId][tag];

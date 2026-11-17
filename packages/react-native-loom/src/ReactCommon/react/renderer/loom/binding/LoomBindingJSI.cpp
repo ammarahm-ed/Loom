@@ -29,7 +29,7 @@ jsi::Value LoomBinding::get(
   // Read once at module load by the Lists override: JavaScript shares the main
   // thread with the UI, so long synchronous render passes block frames.
   if (method == "loomJsOnMain") {
-    return jsi::Value(LoomWorker::kJavaScriptOnUIThread);
+    return jsi::Value(LoomWorker::javaScriptOnUIThread());
   }
 
   // `Loom` (react-native-loom): the runtime settings registry. The wrapper reads
@@ -39,7 +39,7 @@ jsi::Value LoomBinding::get(
     return jsi::Object::createFromHostObject(
         runtime,
         std::make_shared<LoomSettingsHostObject>(
-            LoomWorker::kJavaScriptOnUIThread, kWorker));
+            LoomWorker::javaScriptOnUIThread(), kWorker));
   }
 
   // Read once at module load by the React renderer override: lets it use the
