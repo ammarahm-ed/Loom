@@ -203,6 +203,16 @@ struct LoomPlatformTraits {
   bool hasPreparedTextLayout{false};
 
   /**
+   * `LoomHost::getScrollOffset` and `getViewLocationInSurface` are safe to call
+   * from any thread (the host keeps that state under its own lock). A
+   * JavaScript-thread read, such as Pressability measuring the pressed view,
+   * then calls the host directly instead of posting to the UI thread and
+   * waiting for it, which may be busy drawing a frame. iOS and Android keep the
+   * default: their live view state belongs to the main thread.
+   */
+  bool liveReadsOnAnyThread{false};
+
+  /**
    * Runs `body(0..count-1)`, possibly in parallel, and returns when every call
    * has. Null: text is not measured speculatively.
    */
