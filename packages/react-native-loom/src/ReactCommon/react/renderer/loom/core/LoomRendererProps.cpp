@@ -5,6 +5,13 @@
 
 #include "LoomRendererShared.h"
 
+#include <react/renderer/components/view/HostPlatformViewTraitsInitializer.h>
+#include <react/renderer/components/view/ViewProps.h>
+#include <react/renderer/core/PropsParserContext.h>
+#include <react/renderer/core/RawProps.h>
+#include <react/renderer/core/RawPropsParser.h>
+#include <react/utils/ContextContainer.h>
+
 #if LOOM_RENDERER
 namespace facebook::react {
 
@@ -278,7 +285,21 @@ bool isLayoutOnlyView(bool isBox, const folly::dynamic& props) {
     // represented by a real Android View.
     return false;
   }
-  return true;
+  // The platform's own say, as ViewShadowNode asks it: a platform whose
+  // HostPlatformViewTraitsInitializer makes these props form a view or a
+  // stacking context keeps the view, whatever the props above allow.
+  static const RawPropsParser parser = [] {
+    RawPropsParser prepared;
+    prepared.prepare<ViewProps>();
+    return prepared;
+  }();
+  static const ContextContainer contextContainer;
+  RawProps rawProps(props);
+  rawProps.parse(parser);
+  const ViewProps viewProps(
+      PropsParserContext{-1, contextContainer}, ViewProps{}, rawProps);
+  return !HostPlatformViewTraitsInitializer::formsStackingContext(viewProps) &&
+      !HostPlatformViewTraitsInitializer::formsView(viewProps);
 }
 
 } // namespace
