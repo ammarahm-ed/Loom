@@ -269,6 +269,22 @@ Tag LoomRenderer::findUnsupportedInlineAttachment(
 }
 
 void LoomRenderer::collectUnreachable() {
+  // An unmount releases every event target in the removed subtrees; the host
+  // gets them in one call after the sweep instead of one call per node.
+  std::vector<Tag> released;
+  releasedEventTargets_ = &released;
+  try {
+    sweepUnreachable();
+  } catch (...) {
+    releasedEventTargets_ = nullptr;
+    unregisterEventTargets(std::move(released));
+    throw;
+  }
+  releasedEventTargets_ = nullptr;
+  unregisterEventTargets(std::move(released));
+}
+
+void LoomRenderer::sweepUnreachable() {
   auto* root = find(rootTag_);
   if (root == nullptr) {
     return;
