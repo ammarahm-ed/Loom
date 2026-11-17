@@ -526,6 +526,32 @@ static float absoluteChildLeft(const char* mode) {
   return left;
 }
 
+// A tag React reuses for a new node starts a new version: an offscreen hiding
+// of the node it replaces must not hide the new one.
+TEST(LoomRendererTest, RecreatingAHiddenTagShowsTheNewNode) {
+  int displayType = -1;
+  auto operations = testOperations();
+  operations.applyBatch = [&displayType](SurfaceId, LoomMountBatch next) {
+    for (const auto& operation : next.operations) {
+      if (const auto* layout = std::get_if<DirectLayoutOperation>(&operation);
+          layout != nullptr && layout->tag == 2) {
+        displayType = layout->displayType;
+      }
+    }
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer);
+  renderer.createNode(2, "RCTView", sizedProps(100));
+  renderer.setOffscreenHidden(2, true);
+  renderer.completeRoot(1, {2});
+  ASSERT_EQ(displayType, 0);
+
+  renderer.createNode(2, "RCTView", sizedProps(80));
+  renderer.completeRoot(1, {2});
+  EXPECT_FALSE(renderer.offscreenHidden(2));
+  EXPECT_EQ(displayType, 1);
+}
+
 TEST(LoomRendererTest, LayoutConformanceModeSelectsTheYogaErrata) {
   EXPECT_EQ(absoluteChildLeft("compatibility"), 0);
   EXPECT_EQ(absoluteChildLeft("strict"), 10);
