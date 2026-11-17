@@ -1082,7 +1082,7 @@ void LoomRenderer::flush() {
 #endif
       LoomTextMeasurement preparedState;
       const auto& text = node->textOrEmpty();
-      const auto& candidate = text.measuredText.prepared;
+      const auto candidate = text.latestMeasurement().prepared();
       if (node->textRoot && node->yogaNode != nullptr) {
         const auto expectedWidth = YGNodeLayoutGetRawWidth(node->yogaNode) -
             node->mountedContentInsets[0] - node->mountedContentInsets[2];
@@ -1094,7 +1094,8 @@ void LoomRenderer::flush() {
             sameTextMeasurementContent(
                 text.measuredAttributedString, text.attributedString) &&
             text.measuredParagraphAttributes == text.paragraphAttributes &&
-            std::abs(text.measuredPointScaleFactor - pointScaleFactor_) <=
+            std::abs(
+                text.latestMeasurement().pointScaleFactor - pointScaleFactor_) <=
                 0.0001f;
         const bool preparedMatchesCurrentText = candidate.valid &&
             candidate.preparedLayout &&
@@ -1150,7 +1151,7 @@ void LoomRenderer::flush() {
           }
           if (preparedState.valid && preparedState.preparedLayout) {
             auto& textMutable = node->ensureText();
-            textMutable.measuredText.prepared = preparedState;
+            textMutable.latestMeasurement().setPrepared(preparedState);
             textMutable.preparedAttributedString = text.attributedString;
             textMutable.preparedParagraphAttributes = text.paragraphAttributes;
 #if LOOM_PROFILE

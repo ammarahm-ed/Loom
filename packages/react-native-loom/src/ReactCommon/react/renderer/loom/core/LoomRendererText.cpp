@@ -184,9 +184,6 @@ std::shared_ptr<const TextAttributes> LoomRenderer::attributesFor(
   // whose props did not change.
   if (cached.valid && cached.propsGeneration == node.propsGeneration &&
       cached.textRoot == isParagraph && *cached.inherited == inherited) {
-    if (isParagraph) {
-      text.paragraphAttributes = cached.paragraphAttributes;
-    }
     return cached.attributes;
   }
 
@@ -207,7 +204,6 @@ std::shared_ptr<const TextAttributes> LoomRenderer::attributesFor(
   cached.textRoot = isParagraph;
   cached.inherited = internTextAttributes(inherited);
   cached.attributes = internTextAttributes(attributes);
-  cached.paragraphAttributes = text.paragraphAttributes;
   return cached.attributes;
 }
 
@@ -354,18 +350,9 @@ LoomRenderer::TextMeasurement LoomRenderer::measureTextNode(
 #if LOOM_PROFILE
         ++profileTextMeasureCacheHits_;
 #endif
-        return entry.measurement;
+        return entry.measurement();
       }
     }
-  }
-  if (cacheableContent &&
-      text.measuredMinimumSize == minimumSize &&
-      text.measuredMaximumSize == maximumSize &&
-      std::abs(text.measuredPointScaleFactor - pointScaleFactor_) <= 0.0001f) {
-#if LOOM_PROFILE
-    ++profileTextMeasureCacheHits_;
-#endif
-    return text.measuredText;
   }
   if (speculativeTextRequests_ != nullptr) {
     // Estimating pass of `speculateTextMeasurements`: remember what Yoga asks
@@ -464,10 +451,6 @@ void LoomRenderer::storeTextMeasurement(
   auto& text = *node.text;
   text.measuredAttributedString = text.measurementAttributedString;
   text.measuredParagraphAttributes = text.paragraphAttributes;
-  text.measuredMinimumSize = minimumSize;
-  text.measuredMaximumSize = maximumSize;
-  text.measuredPointScaleFactor = pointScaleFactor_;
-  text.measuredText = measurement;
   node.hasTextMeasurementCache = true;
   node.measuredContentGeneration = node.measurementContentGeneration;
   text.preparedAttributedString = text.measurementAttributedString;
@@ -482,7 +465,8 @@ void LoomRenderer::storeTextMeasurement(
   entry.minimumSize = minimumSize;
   entry.maximumSize = maximumSize;
   entry.pointScaleFactor = pointScaleFactor_;
-  entry.measurement = measurement;
+  entry.setMeasurement(measurement);
+  text.latestTextMeasurement_ = static_cast<uint8_t>(slot);
 }
 
 YGSize LoomRenderer::measureText(
