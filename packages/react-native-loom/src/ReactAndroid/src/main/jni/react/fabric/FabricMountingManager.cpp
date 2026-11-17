@@ -287,12 +287,15 @@ void FabricMountingManager::directApplyBatch(
                  static_cast<jint>(typed.layoutable)});
             auto name = jni::make_jstring(typed.componentName);
             objects->setElement(objectIndex++, name.get());
-            auto props = std::move(typed.props);
-            if (!props.isObject()) props = folly::dynamic::object();
+            // Shared with the renderer: read in place, copied only for the
+            // ReadableNativeMap fallback.
+            static const folly::dynamic kNoProps = folly::dynamic::object();
+            const folly::dynamic& props =
+                typed.props.isObject() ? typed.props.get() : kNoProps;
             if (propsEncoder.encode(props, objectIndex)) {
               objectIndex++;
             } else {
-              auto map = ReadableNativeMap::newObjectCxxArgs(std::move(props));
+              auto map = ReadableNativeMap::newObjectCxxArgs(props);
               objects->setElement(objectIndex++, map.get());
             }
           } else if constexpr (std::is_same_v<T, DirectUpdatePropsOperation>) {

@@ -9,8 +9,10 @@
 
 #include <array>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -40,11 +42,150 @@ static_assert(static_cast<int>(LoomOpcode::Delete) == 5);
 static_assert(static_cast<int>(LoomOpcode::Padding) == 6);
 static_assert(static_cast<int>(LoomOpcode::OverflowInset) == 7);
 
+/**
+ * Merged props, shareable with the immutable object they came from.
+ *
+ * A node holds its props in one of these, and a create operation shares the
+ * same object instead of copying it. Reads go through `get()`, the implicit
+ * conversion to `const folly::dynamic&`, `->`, `*`, or the forwarded read
+ * methods below, so host code written against a plain `folly::dynamic` field
+ * (`op.props.isObject()`, `op.props.find(...)`, `RawProps(op.props)`,
+ * `folly::dynamic copy = op.props`) keeps compiling. Assigning or
+ * constructing from a `folly::dynamic` replaces the object. The first write
+ * through `mutate()` copies when anyone else still holds the object, so a
+ * version JavaScript or a pending batch retains is never changed under it.
+ */
+class LoomSharedProps {
+ public:
+  LoomSharedProps() : value_(emptyProps()) {}
+  /** Shares `props`; it must not be written by anyone afterwards. */
+  explicit LoomSharedProps(std::shared_ptr<const folly::dynamic> props)
+      : value_(props ? std::move(props) : emptyProps()) {}
+  /** Owns a new object made from anything a `folly::dynamic` is made from. */
+  template <
+      typename T,
+      typename = std::enable_if_t<
+          !std::is_same_v<std::decay_t<T>, LoomSharedProps> &&
+          std::is_constructible_v<folly::dynamic, T&&>>>
+  // NOLINTNEXTLINE(google-explicit-constructor): stands in for a dynamic field
+  LoomSharedProps(T&& props)
+      : value_(std::make_shared<const folly::dynamic>(std::forward<T>(props))) {}
+  template <
+      typename T,
+      typename = std::enable_if_t<
+          !std::is_same_v<std::decay_t<T>, LoomSharedProps> &&
+          std::is_constructible_v<folly::dynamic, T&&>>>
+  LoomSharedProps& operator=(T&& props) {
+    value_ = std::make_shared<const folly::dynamic>(std::forward<T>(props));
+    return *this;
+  }
+
+  const folly::dynamic& get() const {
+    return *value_;
+  }
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  operator const folly::dynamic&() const {
+    return *value_;
+  }
+  const folly::dynamic* operator->() const {
+    return value_.get();
+  }
+  const folly::dynamic& operator*() const {
+    return *value_;
+  }
+  /** The shared object itself, to hold the props without copying them. */
+  const std::shared_ptr<const folly::dynamic>& shared() const {
+    return value_;
+  }
+
+  // Read access as on a `folly::dynamic`.
+  bool isObject() const {
+    return value_->isObject();
+  }
+  bool isNull() const {
+    return value_->isNull();
+  }
+  bool isArray() const {
+    return value_->isArray();
+  }
+  bool isString() const {
+    return value_->isString();
+  }
+  folly::dynamic::Type type() const {
+    return value_->type();
+  }
+  bool empty() const {
+    return value_->empty();
+  }
+  std::size_t size() const {
+    return value_->size();
+  }
+  auto items() const {
+    return value_->items();
+  }
+  auto keys() const {
+    return value_->keys();
+  }
+  auto values() const {
+    return value_->values();
+  }
+  template <typename K>
+  auto find(K&& key) const {
+    return value_->find(std::forward<K>(key));
+  }
+  template <typename K>
+  std::size_t count(K&& key) const {
+    return value_->count(std::forward<K>(key));
+  }
+  template <typename K>
+  const folly::dynamic& at(K&& key) const {
+    return value_->at(std::forward<K>(key));
+  }
+  template <typename K>
+  const folly::dynamic& operator[](K&& key) const {
+    return (*value_)[std::forward<K>(key)];
+  }
+  template <typename K>
+  const folly::dynamic* get_ptr(K&& key) const {
+    return value_->get_ptr(std::forward<K>(key));
+  }
+  template <typename K, typename D>
+  folly::dynamic getDefault(K&& key, D&& fallback) const {
+    return value_->getDefault(std::forward<K>(key), std::forward<D>(fallback));
+  }
+  friend bool operator==(const LoomSharedProps& a, const folly::dynamic& b) {
+    return a.get() == b;
+  }
+  friend bool operator==(const folly::dynamic& a, const LoomSharedProps& b) {
+    return a == b.get();
+  }
+
+  /** The props for writing: a private copy if the object is shared. */
+  folly::dynamic& mutate() {
+    if (value_.use_count() != 1) {
+      value_ = std::make_shared<const folly::dynamic>(*value_);
+    }
+    return const_cast<folly::dynamic&>(*value_);
+  }
+
+ private:
+  static const std::shared_ptr<const folly::dynamic>& emptyProps() {
+    static const auto kEmpty =
+        std::make_shared<const folly::dynamic>(folly::dynamic::object());
+    return kEmpty;
+  }
+  std::shared_ptr<const folly::dynamic> value_;
+};
+
 struct DirectCreateOperation {
   Tag tag;
   bool layoutable;
   std::string componentName;
-  folly::dynamic props;
+  /**
+   * The node's full merged props, shared with the renderer rather than copied
+   * (read it as a `const folly::dynamic&`; see `LoomSharedProps`).
+   */
+  LoomSharedProps props;
   /**
    * For a component with its own descriptor: the props that descriptor parsed
    * from the JSI value. A host that builds Props objects uses these instead of
