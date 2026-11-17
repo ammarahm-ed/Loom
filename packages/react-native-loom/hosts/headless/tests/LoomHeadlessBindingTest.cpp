@@ -8,6 +8,8 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <cmath>
 #include <map>
 #include <thread>
@@ -27,6 +29,7 @@
 #include <react/renderer/uimanager/UIManager.h>
 
 #include "../LoomHeadlessHost.h"
+#include "LoomAllocationCounter.h"
 
 namespace facebook::react {
 
@@ -90,6 +93,11 @@ struct LoomBindingTestAccess {
         {std::make_shared<LoomBinding::NodeRef>(
             surfaceId, root->tag, binding.tokenFor(surfaceId), root)},
         /*forceSync*/ false);
+  }
+
+  /** Publishes a root without children: unmounts everything (worker path). */
+  static void publishEmptyAsync(LoomBinding& binding, SurfaceId surfaceId) {
+    binding.publishWorkerCommit(surfaceId, {}, /*forceSync*/ false);
   }
 
   static void publish(
@@ -799,6 +807,159 @@ TEST_F(LoomHeadlessBindingTest, GridMountProbe) {
   }
   LoomPlatformTraits::install(host_->traits());
   LoomSettings::resetForTesting();
+}
+
+/**
+ * A probe, not a check: three cycles of mounting a grid of cells (View >
+ * Paragraph > RawText, LOOM_PROBE_CELLS of them, 5000 by default), relaying
+ * out every cell and unmounting the grid. Prints, per node, the allocations and
+ * the bytes each phase leaves allocated, the bytes still held after the unmount
+ * while the JavaScript side still holds its handles and after it drops them
+ * (a GC), and the commit times. The held bytes must not grow across cycles.
+ */
+TEST_F(LoomHeadlessBindingTest, GridLifecycleProbe) {
+  using Access = LoomBindingTestAccess;
+  using loomtest::allocationCount;
+  int cells = 5000;
+  if (const char* value = std::getenv("LOOM_PROBE_CELLS")) {
+    cells = std::max(1, std::atoi(value));
+  }
+  const SurfaceId surface = 91;
+  LoomBinding::setSurfaceConstraints(surface, 1000, 1000000, 1000, 1000000, false, 0, 0);
+  const auto token = Access::tokenFor(*binding_, surface);
+  // The headless host records what it is sent; drop the records so they are
+  // not counted as held by the core.
+  const auto settle = [&] {
+    LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+    host_->drainUIQueue();
+    host_->takeBatches();
+    host_->takeTextStates();
+    host_->takeViewProps();
+  };
+  const auto clone = [](const std::shared_ptr<Access::Draft>& source) {
+    auto next = std::make_shared<Access::Draft>(*source);
+    next->published = false;
+    next->workerCommitted = false;
+    next->frozenCommit = 0;
+    next->freezeFacts = {};
+    return next;
+  };
+  const auto microsSince = [](auto start) {
+    return static_cast<long long>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count());
+  };
+  const auto perNode = [](long long bytes, size_t nodes) {
+    return static_cast<double>(bytes) / static_cast<double>(nodes);
+  };
+  // Warm the process (first-use statics, the worker) on a small mount.
+  {
+    auto warm = Access::draft(
+        surface, token->generation, 1, 2, "View",
+        folly::dynamic::object("width", 10.0)("collapsable", false));
+    Access::publishAsync(*binding_, surface, warm);
+    settle();
+    Access::publishEmptyAsync(*binding_, surface);
+    settle();
+  }
+  const auto baseline = static_cast<long long>(allocatedBytes());
+  Tag nextTag = 10;
+  uint64_t identity = 1000;
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    const auto cycleStart = static_cast<long long>(allocatedBytes());
+    auto grid = Access::draft(
+        surface, token->generation, ++identity, nextTag++, "View",
+        folly::dynamic::object("flexDirection", "row")("flexWrap", "wrap")(
+            "collapsable", false));
+    for (int cell = 0; cell < cells; ++cell) {
+      auto view = Access::draft(
+          surface, token->generation, ++identity, nextTag++, "View",
+          folly::dynamic::object("width", 48.0)("height", 24.0)(
+              "margin", 1.0)("borderWidth", 1.0)("backgroundColor", 0xffeeeeee)(
+              "collapsable", false));
+      auto paragraph = Access::draft(
+          surface, token->generation, ++identity, nextTag++, "Paragraph",
+          folly::dynamic::object("fontSize", 12.0)("color", 0xff000000)(
+              "numberOfLines", 1));
+      auto text = std::make_shared<Access::Draft>();
+      text->surfaceId = surface;
+      text->surfaceGeneration = token->generation;
+      text->identity = ++identity;
+      text->tag = nextTag++;
+      text->componentName = std::make_shared<const std::string>("RawText");
+      text->roles = LoomPlatformTraits::current().components.classify("RawText");
+      text->initialRawText =
+          std::make_shared<const std::string>("cell " + std::to_string(cell));
+      text->hasInitialProps = true;
+      paragraph->children->push_back(text);
+      view->children->push_back(paragraph);
+      grid->children->push_back(view);
+    }
+    const size_t nodes = 1 + static_cast<size_t>(cells) * 3;
+    const auto afterDrafts = static_cast<long long>(allocatedBytes());
+
+    auto allocations = allocationCount();
+    loomtest::startAllocationSites();
+    auto start = std::chrono::steady_clock::now();
+    Access::publishAsync(*binding_, surface, grid);
+    settle();
+    const auto mountMicros = microsSince(start);
+    loomtest::printAllocationSites("mount");
+    const auto mountAllocations = allocationCount() - allocations;
+    const auto afterMount = static_cast<long long>(allocatedBytes());
+
+    auto nextGrid = clone(grid);
+    nextGrid->children =
+        std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+    for (const auto& view : *grid->children) {
+      auto next = clone(view);
+      auto patch = std::make_shared<Access::Patch>();
+      patch->previous = view->propsTail;
+      patch->props = folly::dynamic::object("width", 46.0);
+      next->propsTail = patch;
+      nextGrid->children->push_back(next);
+    }
+    allocations = allocationCount();
+    start = std::chrono::steady_clock::now();
+    Access::publishAsync(*binding_, surface, nextGrid);
+    settle();
+    const auto relayoutMicros = microsSince(start);
+    const auto relayoutAllocations = allocationCount() - allocations;
+
+    allocations = allocationCount();
+    start = std::chrono::steady_clock::now();
+    Access::publishEmptyAsync(*binding_, surface);
+    settle();
+    const auto unmountMicros = microsSince(start);
+    const auto unmountAllocations = allocationCount() - allocations;
+    // JavaScript still holds its handles here: only what the core holds for
+    // them, beyond the drafts the test built, is a cost of the core.
+    const auto heldWithHandles =
+        static_cast<long long>(allocatedBytes()) - afterDrafts;
+    grid.reset();
+    nextGrid.reset();
+    const auto heldAfterGC =
+        static_cast<long long>(allocatedBytes()) - cycleStart;
+    loomtest::stopAllocationSites();
+    loomtest::printAllocationSites("cycle, after unmount and GC", true);
+
+    printf(
+        "[probe] lifecycle cycle %d, %d cells, %zu nodes: "
+        "mount %lld us %.1f allocs/node %.0f B/node held; "
+        "relayout %lld us %.1f allocs/node; "
+        "unmount %lld us %.1f allocs/node; "
+        "after unmount %.0f B/node held with JS handles, %.0f B/node after GC, "
+        "%lld B above the first cycle's start\n",
+        cycle, cells, nodes, mountMicros,
+        static_cast<double>(mountAllocations) / nodes,
+        perNode(afterMount - afterDrafts, nodes), relayoutMicros,
+        static_cast<double>(relayoutAllocations) / nodes, unmountMicros,
+        static_cast<double>(unmountAllocations) / nodes,
+        perNode(heldWithHandles, nodes), perNode(heldAfterGC, nodes),
+        static_cast<long long>(allocatedBytes()) - baseline);
+    EXPECT_TRUE(host_->takeFailures().empty());
+  }
 }
 
 } // namespace
