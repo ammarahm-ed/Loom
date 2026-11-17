@@ -6,7 +6,7 @@ const path = require('path');
 const {loadManifest, saveManifest, sha256File, SRC_DIR} = require('../lib/manifest');
 const {classify} = require('../lib/areas');
 const {materialize} = require('../lib/materialize');
-const {validate} = require('../lib/validate');
+const {validate, unlistedFiles} = require('../lib/validate');
 const {upgrade} = require('../lib/upgrade');
 const {importFork} = require('../lib/importFork');
 const {status, diff, divergence} = require('../lib/inspect');
@@ -18,6 +18,8 @@ const USAGE = `loom <command> [options]
 App commands (run from the app root):
   materialize [--force] [--out <dir>]   build node_modules/.loom/react-native
   validate                              check overrides against installed react-native
+  validate --listing                    only check every file in src/ is in overrides.json
+                                        (no react-native needed)
 
 Maintainer commands (run inside the react-native-loom repo):
   status [--files]                      overrides by area, lines carried
@@ -69,6 +71,15 @@ function main() {
       materialize({projectRoot: process.cwd(), force: !!args.force, out: args.out});
       break;
     case 'validate': {
+      if (args.listing) {
+        const unlisted = unlistedFiles();
+        if (unlisted.length) {
+          console.error(`loom: ${unlisted.length} problem(s):\n  ` + unlisted.join('\n  '));
+          process.exit(1);
+        }
+        console.log('loom: every file in src/ and android-tests/ is listed in overrides.json');
+        break;
+      }
       let upstreamDir, upstreamVersion;
       if (args.upstream) upstreamDir = path.resolve(args.upstream);
       else {
