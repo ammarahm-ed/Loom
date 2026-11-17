@@ -1616,7 +1616,23 @@ struct LoomRendererTestAccess {
     }
     return renderer.measureTextNode(*node, minimum, maximum);
   }
+
+  static void printSizes() {
+    printf(
+        "[probe] sizeof Node=%zu TextData=%zu LayoutStyle=%zu TextAttributes=%zu "
+        "ParagraphAttributes=%zu TextMeasurement=%zu\n",
+        sizeof(LoomRenderer::Node),
+        sizeof(LoomRenderer::Node::TextData),
+        sizeof(LoomRenderer::LayoutStyle),
+        sizeof(TextAttributes),
+        sizeof(ParagraphAttributes),
+        sizeof(LoomRenderer::TextMeasurement));
+  }
 };
+
+TEST(LoomRendererTest, NodeSizeProbe) {
+  LoomRendererTestAccess::printSizes();
+}
 
 TEST(LoomRendererTest, EmptyTextInputMeasuresItsPlaceholderButPublishesNothing) {
   // G4: an empty TextInput measured an empty attributed string, so an

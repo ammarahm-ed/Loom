@@ -458,8 +458,10 @@ void LoomRenderer::refreshStyle(Node& node) {
     next.values[size_t(entry.key)] = styleValue;
     next.autoFlags[size_t(entry.key)] = parsed.isAuto;
   }
-  if (node.style != next) {
-    node.style = std::move(next);
+  if (*node.style != next) {
+    node.style = next == *emptyLayoutStyle()
+        ? emptyLayoutStyle()
+        : std::make_shared<const LayoutStyle>(std::move(next));
     node.styleDirty = true;
   }
   auto nextDirection = YGDirectionInherit;
@@ -620,7 +622,7 @@ void LoomRenderer::applyYogaProps(Node& node) {
   if (yogaNode == nullptr) {
     return;
   }
-  const auto& style = node.style;
+  const auto& style = *node.style;
 
   const auto at = [&style](LoomStyleKey key) {
     const auto index = size_t(key);
