@@ -885,7 +885,8 @@ class LoomRenderer final {
         /** Interned (`LoomRenderer::internTextAttributes`); null until parsed. */
         std::shared_ptr<const TextAttributes> inherited;
         std::shared_ptr<const TextAttributes> attributes;
-        ParagraphAttributes paragraphAttributes{};
+        // A paragraph's parsed `paragraphAttributes` are the field below: only
+        // this parse writes it, so a cache hit finds it already current.
       };
       ParsedTextAttributes parsedTextAttributes;
       /**
@@ -926,11 +927,7 @@ class LoomRenderer final {
        * ignored. */
       SharedString measuredAttributedString;
       ParagraphAttributes measuredParagraphAttributes{};
-      Size measuredMinimumSize{};
-      Size measuredMaximumSize{};
-      float measuredPointScaleFactor{1.0f};
-      TextMeasurement measuredText{};
-      /** Full attributes represented by measuredText.prepared for mounting. */
+      /** Full attributes represented by the latest entry's prepared layout. */
       SharedString preparedAttributedString;
       ParagraphAttributes preparedParagraphAttributes{};
       /**
@@ -940,19 +937,72 @@ class LoomRenderer final {
        * layout pass — a bounded measure and then an exact one, for instance — so a
        * single slot misses on nearly every call and each miss rebuilds the
        * platform text layout. These entries are consulted before the bridge call;
-       * `measuredText` above stays the most recent one because mounting reads
-       * `preparedAttributedString`, which describes exactly that measurement.
+       * the one stored last (`latestMeasurement`) is what mounting reads, with
+       * `preparedAttributedString` describing exactly that measurement.
+       *
+       * One measurement, keyed by its constraints. Stores a `TextMeasurement`
+       * without the host's profiling counters, which are consumed when the
+       * measurement is taken and were most of each entry's size.
        */
       struct TextMeasurementEntry {
         Size minimumSize{};
         Size maximumSize{};
         float pointScaleFactor{1.0f};
-        TextMeasurement measurement{};
+        float width{0};
+        float height{0};
+        bool valid{false};
+        bool preparedValid{false};
+        float preparedPointScaleFactor{1.0f};
+        Size preparedSize{};
+        Size preparedMinimumSize{};
+        Size preparedMaximumSize{};
+        std::shared_ptr<void> preparedLayout;
+
+        void setMeasurement(const TextMeasurement& measurement) {
+          width = measurement.width;
+          height = measurement.height;
+          valid = measurement.valid;
+          setPrepared(measurement.prepared);
+        }
+        void setPrepared(const LoomTextMeasurement& prepared) {
+          preparedValid = prepared.valid;
+          preparedPointScaleFactor = prepared.pointScaleFactor;
+          preparedSize = prepared.size;
+          preparedMinimumSize = prepared.minimumSize;
+          preparedMaximumSize = prepared.maximumSize;
+          preparedLayout = prepared.preparedLayout;
+        }
+        LoomTextMeasurement prepared() const {
+          LoomTextMeasurement result;
+          result.size = preparedSize;
+          result.minimumSize = preparedMinimumSize;
+          result.maximumSize = preparedMaximumSize;
+          result.pointScaleFactor = preparedPointScaleFactor;
+          result.valid = preparedValid;
+          result.preparedLayout = preparedLayout;
+          return result;
+        }
+        TextMeasurement measurement() const {
+          TextMeasurement result;
+          result.width = width;
+          result.height = height;
+          result.valid = valid;
+          result.prepared = prepared();
+          return result;
+        }
       };
       static constexpr size_t kTextMeasurementCacheEntries = 4;
       std::array<TextMeasurementEntry, kTextMeasurementCacheEntries>
           recentTextMeasurements_{};
-      size_t recentTextMeasurementCount_{0};
+      uint8_t recentTextMeasurementCount_{0};
+      /** The entry stored last: what mounting reads (`prepared`). */
+      uint8_t latestTextMeasurement_{0};
+      const TextMeasurementEntry& latestMeasurement() const {
+        return recentTextMeasurements_[latestTextMeasurement_];
+      }
+      TextMeasurementEntry& latestMeasurement() {
+        return recentTextMeasurements_[latestTextMeasurement_];
+      }
     };
     std::unique_ptr<TextData> text;
     TextData& ensureText() {
