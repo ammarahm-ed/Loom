@@ -8,7 +8,7 @@
 #pragma once
 
 // Loom: main-thread jank reporter. Debug builds only: with
-// JavaScript on the UI thread (LOOM_JS_ON_MAIN) a slow task drops frames, and in
+// JavaScript on the UI thread (main mode) a slow task drops frames, and in
 // development the app author needs to know what the slow task was. This header
 // compiles to nothing in release builds (NDEBUG), so release carries no
 // watchdog thread, no per-task bookkeeping and no JS bindings. The platform
@@ -28,6 +28,7 @@
 #include <functional>
 #include <string>
 
+#include "LoomJavaScriptThread.h"
 #include "LoomSettings.h"
 
 namespace facebook::react::jank {
@@ -61,8 +62,10 @@ class Reporter {
   int budgetMs() const noexcept {
     return LoomSettings::get(LoomSettingId::JankBudgetMs);
   }
+  /** Main mode only: with JavaScript on its own thread a slow task does not drop frames. */
   bool enabled() const noexcept {
-    return LoomSettings::enabled(LoomSettingId::JankReporter);
+    return loomJavaScriptOnUIThread() &&
+        LoomSettings::enabled(LoomSettingId::JankReporter);
   }
 
   /**

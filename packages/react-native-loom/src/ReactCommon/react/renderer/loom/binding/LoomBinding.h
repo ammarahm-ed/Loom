@@ -474,7 +474,7 @@ class LoomBinding final : public UIManagerBinding {
   std::atomic<float> smallCommitMs_{0.0f};
   static constexpr double kInlineBudgetMs = 3.0;
   static constexpr double kInlineMaxUnits = 64.0;
-  /** Longest the pre-traversal drain waits for the worker (LOOM_JS_ON_MAIN). */
+  /** Longest the pre-traversal drain waits for the worker (main mode only). */
   static constexpr std::chrono::microseconds kFrameDrainBudget{8000};
   /**
    * Whether text can be measured on the worker. Java answers on the UI thread

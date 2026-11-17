@@ -34,11 +34,12 @@ SET(reactnative_FLAGS
 # Each is a CMake cache variable supplied by the build (on Android, ReactAndroid's Gradle
 # properties of the same name) and is mirrored here as a preprocessor macro of the same name, so
 # that code can branch on it with `#if`. They are always defined, as `1` or `0`, rather than only
-# defined when set, so that `#if LOOM_JS_ON_MAIN` is unambiguous and cannot silently take the wrong
+# defined when set, so that `#if LOOM_RENDERER` is unambiguous and cannot silently take the wrong
 # branch under -Wundef.
 #
-#   LOOM_JS_ON_MAIN       React Native's JavaScript runtime and native modules queue run on the
-#                      Android UI thread instead of on the background queues upstream uses.
+# Where JavaScript runs (UI thread or its own thread) is not a build switch: it is a runtime setting
+# fixed at startup (LoomJavaScriptThread.h), so one build serves both.
+#
 #   LOOM_RENDERER Selects the independent direct JS-host-to-Yoga-to-Android-view renderer.
 #                      Legacy Fabric remains on its normal path and synchronization model.
 #   LOOM_WORKER Loom's worker thread (commit preparation off the JS thread; mounting stays on
@@ -68,9 +69,9 @@ function(target_compile_reactnative_options target_name scope)
   endif()
   target_compile_definitions(${target_name} ${scope} HERMES_V1_ENABLED=1)
 
-  loom_compile_switch(${target_name} ${scope} LOOM_JS_ON_MAIN)
-  # The main-thread jank reporter (debug builds only; see JankReporter.h).
-  if(ANDROID AND LOOM_JS_ON_MAIN)
+  # The main-thread jank reporter (debug builds only; see JankReporter.h). Compiled in for debug
+  # builds in either mode; it only reports while JavaScript runs on the UI thread.
+  if(ANDROID)
     target_compile_definitions(${target_name} ${scope} RN_JANK_REPORTER=1)
   endif()
   loom_compile_switch(${target_name} ${scope} LOOM_RENDERER)

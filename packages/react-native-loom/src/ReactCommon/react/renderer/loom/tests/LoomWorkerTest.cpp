@@ -414,7 +414,7 @@ TEST(LoomWorkerTest, LatestReadNeverWaitsForACompute) {
   EXPECT_FALSE(ran);
   // With JavaScript off the UI thread, a synced read never waits on the UI thread. (With JavaScript
   // on it, the UI thread is the JS thread and would drain this blocked compute: not testable here.)
-  if (!LoomWorker::kJavaScriptOnUIThread) {
+  if (!LoomWorker::javaScriptOnUIThread()) {
     EXPECT_FALSE(worker.readSynced([&] { ran = true; }));
     EXPECT_FALSE(ran);
   }

@@ -35,7 +35,7 @@ export interface LoomSettings {
 export interface LoomBuildInfo {
   /** 'loom' under the Loom renderer, 'fabric' under stock React Native. */
   readonly renderer: 'loom' | 'fabric';
-  /** JavaScript runs on the thread that owns native views (LOOM_JS_ON_MAIN). */
+  /** JavaScript runs on the thread that owns native views (the app's `loom.js` startup setting is `main`). */
   readonly jsOnMainThread: boolean;
   /** Layout runs on a worker thread (LOOM_WORKER). */
   readonly worker: boolean;

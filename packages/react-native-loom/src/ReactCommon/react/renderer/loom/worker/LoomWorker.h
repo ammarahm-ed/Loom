@@ -191,12 +191,14 @@ class LoomWorker final {
   };
 
   /**
-   * Whether the JavaScript runtime is hosted by the UI thread (see
-   * `kLoomJavaScriptOnUIThread`). When it is not, JS-thread callers may wait
+   * Whether the JavaScript runtime is hosted by the UI thread (the startup
+   * setting `LoomJavaScriptThread`). When it is not, JS-thread callers may wait
    * for the UI thread but the UI thread must never wait for JS, and result
    * application is confined to the UI thread.
    */
-  static constexpr bool kJavaScriptOnUIThread = kLoomJavaScriptOnUIThread;
+  static bool javaScriptOnUIThread() noexcept {
+    return loomJavaScriptOnUIThread();
+  }
 
   /** The platform's notion of the thread that applies results. */
   static bool isPlatformUIThread() {
@@ -303,7 +305,7 @@ class LoomWorker final {
       return true;
     }
     if (onUIThread()) {
-      if (!kJavaScriptOnUIThread) {
+      if (!javaScriptOnUIThread()) {
         return false;
       }
       synchronize();
@@ -544,6 +546,7 @@ class LoomWorker final {
     if (!onUIThread()) {
       return;
     }
+    LOOM_MODE_COUNT(frameDrains);
     if (applying_)
       return;
     const auto deadline = std::chrono::steady_clock::now() + budget;
@@ -593,6 +596,7 @@ class LoomWorker final {
     using namespace std::chrono_literals;
     constexpr auto kSlice = 2000ms;
     constexpr int kMaxSlices = 3;
+    LOOM_MODE_COUNT(jsToUIWaits);
     std::unique_lock lock(mutex_);
     const auto target = submitted_;
     for (int slice = 0; slice < kMaxSlices; ++slice) {

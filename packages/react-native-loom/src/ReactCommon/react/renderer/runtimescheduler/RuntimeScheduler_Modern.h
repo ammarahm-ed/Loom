@@ -262,6 +262,18 @@ class RuntimeScheduler_Modern final : public RuntimeSchedulerBase {
   RuntimeSchedulerIntersectionObserverDelegate *intersectionObserverDelegate_{nullptr};
 
   RuntimeSchedulerTaskErrorHandler onTaskError_;
+
+  // Loom: JavaScript runs on the UI thread (read once from `LoomJavaScriptThread` when the
+  // scheduler is created; fixed for the process). Main mode only: the tick runtime scope, time
+  // slicing and the frame-callback kick. Background mode runs upstream's scheduler.
+  const bool jsOnUIThread_;
+
+ public:
+#if defined(LOOM_TEST_HOOKS) && LOOM_TEST_HOOKS
+  bool jsOnUIThreadForTesting() const noexcept {
+    return jsOnUIThread_;
+  }
+#endif
 };
 
 } // namespace facebook::react

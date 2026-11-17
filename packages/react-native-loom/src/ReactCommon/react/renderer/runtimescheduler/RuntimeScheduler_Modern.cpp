@@ -15,9 +15,11 @@
 #include <react/timing/primitives.h>
 #include <react/utils/OnScopeExit.h>
 #include "JankReporter.h"
+#include "LoomJavaScriptThread.h"
 #include "RuntimeSchedulerFrameCallbackScope.h"
 
 #include <atomic>
+#include <optional>
 #include <thread>
 
 namespace facebook::react {
@@ -35,7 +37,7 @@ int64_t durationToMilliseconds(HighResDuration duration) {
   return duration.toNanoseconds() / static_cast<int64_t>(1e6);
 }
 
-#if LOOM_JS_ON_MAIN
+// Main mode (JavaScript on the UI thread) only; see `jsOnUIThread_`.
 // How long non-urgent work may run in one UI-thread message before React is asked to yield.
 // A 60 Hz frame is 16.7 ms.
 constexpr HighResDuration kLoopSliceYield = HighResDuration::fromMilliseconds(5);
@@ -91,6 +93,9 @@ bool isOnRuntimeThread() noexcept {
  */
 thread_local jsi::Runtime* runtimeForThread = nullptr;
 
+/** Background mode: the runtime a synchronous request is running on this thread, if any. */
+constinit thread_local jsi::Runtime* backgroundRuntimeOnThread = nullptr;
+
 /** Publishes `runtime` as the current thread's runtime, restoring the previous one. */
 class CurrentRuntimeScope final {
  public:
@@ -111,7 +116,6 @@ class CurrentRuntimeScope final {
  private:
   jsi::Runtime* previous_;
 };
-#endif // LOOM_JS_ON_MAIN
 
 } // namespace
 
@@ -123,7 +127,8 @@ RuntimeScheduler_Modern::RuntimeScheduler_Modern(
     RuntimeSchedulerTaskErrorHandler onTaskError)
     : runtimeExecutor_(std::move(runtimeExecutor)),
       now_(std::move(now)),
-      onTaskError_(std::move(onTaskError)) {}
+      onTaskError_(std::move(onTaskError)),
+      jsOnUIThread_(loomJavaScriptOnUIThread()) {}
 
 void RuntimeScheduler_Modern::scheduleWork(RawCallback&& callback) noexcept {
   TraceSection s("RuntimeScheduler::scheduleWork");
@@ -219,15 +224,15 @@ bool RuntimeScheduler_Modern::getShouldYield() noexcept {
       (!taskQueue_.empty() && taskQueue_.top().get() != currentTask_)) {
     return true;
   }
-#if LOOM_JS_ON_MAIN
   // Loom: RN gives React the native scheduler, which until now only
   // asked a transition render to yield for a higher-priority task, never for
   // time. With JavaScript on the UI thread, a large transition then holds the
   // message queue (and so the next frame) until it is finished. Ask non-urgent work to
   // yield once it has used its slice. Urgent work (immediate and user-blocking
   // priorities, synchronous requests) is never asked to.
-  if (currentTask_ != nullptr &&
+  if (jsOnUIThread_ && currentTask_ != nullptr &&
       currentPriority_ >= SchedulerPriority::NormalPriority) {
+    LOOM_MODE_COUNT(schedulerMainPaths);
     if ((now_() - loopSliceStart_) >= kLoopSliceYield) {
       timeSliceYielded_ = true;
       return true;
@@ -241,7 +246,6 @@ bool RuntimeScheduler_Modern::getShouldYield() noexcept {
       return true;
     }
   }
-#endif // LOOM_JS_ON_MAIN
   return false;
 }
 
@@ -267,7 +271,7 @@ void RuntimeScheduler_Modern::executeNowOnTheSameThread(
   auto expirationTime = currentTime + timeoutForSchedulerPriority(priority);
   Task task{priority, std::move(callback), expirationTime};
 
-#if LOOM_JS_ON_MAIN
+  if (jsOnUIThread_) {
   if (currentRuntimeOnThread != nullptr) {
     // Protecting against re-entry into `executeNowOnTheSameThread` from within
     // `executeNowOnTheSameThread`. Without accounting for re-rentry, a deadlock
@@ -311,16 +315,14 @@ void RuntimeScheduler_Modern::executeNowOnTheSameThread(
       return;
     }
   }
-#else
-  static constinit thread_local jsi::Runtime* runtimePtr = nullptr;
-
-  if (runtimePtr != nullptr) {
-    // Protecting against re-entry into `executeNowOnTheSameThread` from within
-    // `executeNowOnTheSameThread`. Without accounting for re-rentry, a deadlock
-    // will occur when trying to gain access to the runtime.
-    return executeTask(*runtimePtr, task, true);
+  } else {
+    if (backgroundRuntimeOnThread != nullptr) {
+      // Protecting against re-entry into `executeNowOnTheSameThread` from within
+      // `executeNowOnTheSameThread`. Without accounting for re-rentry, a deadlock
+      // will occur when trying to gain access to the runtime.
+      return executeTask(*backgroundRuntimeOnThread, task, true);
+    }
   }
-#endif // LOOM_JS_ON_MAIN
 
   syncTaskRequests_++;
   executeSynchronouslyOnSameThread_CAN_DEADLOCK(
@@ -328,14 +330,14 @@ void RuntimeScheduler_Modern::executeNowOnTheSameThread(
         TraceSection s2("RuntimeScheduler::executeNowOnTheSameThread callback");
 
         syncTaskRequests_--;
-#if LOOM_JS_ON_MAIN
-        CurrentRuntimeScope currentRuntimeScope(runtime);
-        runEventLoopTick(runtime, task);
-#else
-        runtimePtr = &runtime;
-        runEventLoopTick(runtime, task);
-        runtimePtr = nullptr;
-#endif // LOOM_JS_ON_MAIN
+        if (jsOnUIThread_) {
+          CurrentRuntimeScope currentRuntimeScope(runtime);
+          runEventLoopTick(runtime, task);
+        } else {
+          backgroundRuntimeOnThread = &runtime;
+          runEventLoopTick(runtime, task);
+          backgroundRuntimeOnThread = nullptr;
+        }
       });
 
   bool shouldScheduleEventLoop = false;
@@ -434,19 +436,17 @@ void RuntimeScheduler_Modern::scheduleTask(std::shared_ptr<Task> task) {
 }
 
 void RuntimeScheduler_Modern::scheduleEventLoop() {
-#if LOOM_JS_ON_MAIN
-  // Loom: during the host's animation phase the loop is run by
+  // Loom (main mode only): during the host's animation phase the loop is run by
   // the FrameCallbackScope when it closes (still before this frame is
   // drawn) instead of through a posted message, which can queue behind the
   // frame and push the resulting commit a frame later.
-  if (auto* scope = FrameCallbackScope::current();
+  if (auto* scope = jsOnUIThread_ ? FrameCallbackScope::current() : nullptr;
       scope != nullptr && currentRuntimeOnThread == nullptr &&
       runtimeForThread != nullptr) {
     auto* runtime = runtimeForThread;
     scope->kick = [this, runtime] { runEventLoop(*runtime); };
     return;
   }
-#endif // LOOM_JS_ON_MAIN
   runtimeExecutor_([this](jsi::Runtime& runtime) { runEventLoop(runtime); });
 }
 
@@ -460,20 +460,20 @@ void RuntimeScheduler_Modern::runEventLoop(jsi::Runtime& runtime) {
   // correctly if a synchronous task is scheduled.
   // Unit test normalTaskYieldsToSynchronousAccessAndResumes covers this
   // scenario.
-#if LOOM_JS_ON_MAIN
-  loopSliceStart_ = now_();
-  timeSliceYielded_ = false;
-  yieldedForFrame_ = false;
-  const bool isContinuation = continuationPending_;
-  continuationPending_ = false;
-#endif // LOOM_JS_ON_MAIN
+  bool isContinuation = false;
+  if (jsOnUIThread_) {
+    loopSliceStart_ = now_();
+    timeSliceYielded_ = false;
+    yieldedForFrame_ = false;
+    isContinuation = continuationPending_;
+    continuationPending_ = false;
+  }
   auto topPriorityTask = selectTask();
-#if LOOM_JS_ON_MAIN
   // A continuation that would start inside the frame's reserved time does not start: it would
   // only run a millisecond and yield again, holding the UI thread in front of the frame callback.
   // Only when continuations are held past the vsync: with an immediate re-post this check would
   // spin, re-posting itself until the vsync passes whenever nothing holds it behind the frame.
-  if (FrameClock::kDeferContinuationPastVsync && isContinuation && topPriorityTask &&
+  if (jsOnUIThread_ && FrameClock::kDeferContinuationPastVsync && isContinuation && topPriorityTask &&
       topPriorityTask->priority >= SchedulerPriority::NormalPriority &&
       FrameClock::nextVsyncIsNear()) {
     {
@@ -489,18 +489,16 @@ void RuntimeScheduler_Modern::runEventLoop(jsi::Runtime& runtime) {
     }
     return;
   }
-#endif // LOOM_JS_ON_MAIN
   while (topPriorityTask && syncTaskRequests_ == 0) {
     runEventLoopTick(runtime, *topPriorityTask);
     topPriorityTask = selectTask();
-#if LOOM_JS_ON_MAIN
-    // Loom: upstream drains the whole queue inside one message, which
+    // Loom (main mode only): upstream drains the whole queue inside one message, which
     // was fine on a dedicated JS thread. Here it keeps a pending frame waiting
     // until every queued task (a React render split into continuations, say) is
     // done. After a slice, hand the UI thread back by re-posting the loop; the frame
     // callback or input then runs before the next slice. Only non-urgent tasks
     // are deferred, and a task is never split.
-    if (topPriorityTask && timeSliceYielded_ &&
+    if (jsOnUIThread_ && topPriorityTask && timeSliceYielded_ &&
         topPriorityTask->priority >= SchedulerPriority::NormalPriority) {
       timeSliceYielded_ = false;
       {
@@ -519,7 +517,6 @@ void RuntimeScheduler_Modern::runEventLoop(jsi::Runtime& runtime) {
       }
       break;
     }
-#endif // LOOM_JS_ON_MAIN
   }
   currentPriority_ = previousPriority;
 }
@@ -559,12 +556,14 @@ void RuntimeScheduler_Modern::runEventLoopTick(
   ScopedShadowTreeRevisionLock revisionLock(
       shadowTreeRevisionConsistencyManager_);
 
-#if LOOM_JS_ON_MAIN
-  // Loom: publish the runtime for the duration of the tick so that synchronous
+  // Loom (main mode only): publish the runtime for the duration of the tick so that synchronous
   // access requested by user code running on this thread executes directly,
   // instead of posting to the very queue this thread is already running.
-  CurrentRuntimeScope currentRuntimeScope(runtime);
-#endif // LOOM_JS_ON_MAIN
+  std::optional<CurrentRuntimeScope> currentRuntimeScope;
+  if (jsOnUIThread_) {
+    LOOM_MODE_COUNT(schedulerMainPaths);
+    currentRuntimeScope.emplace(runtime);
+  }
 
   currentTask_ = &task;
   currentPriority_ = task.priority;
