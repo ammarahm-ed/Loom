@@ -42,6 +42,13 @@ TEST_F(LoomSettingsTest, PlatformDefaults) {
   LoomSettings::configurePlatform(kLoomPlatformAndroid);
   EXPECT_TRUE(LoomSettings::enabled(Id::EarlyCreate));
   EXPECT_FALSE(LoomSettings::enabled(Id::ParallelText));
+  LoomSettings::configurePlatform(kLoomPlatformDesktop);
+  EXPECT_TRUE(LoomSettings::enabled(Id::EarlyCreate));
+  EXPECT_TRUE(LoomSettings::enabled(Id::ParallelText));
+  EXPECT_EQ(LoomSettings::write(Id::ParallelText, 0), Result::Ok);
+  EXPECT_FALSE(LoomSettings::enabled(Id::ParallelText));
+  // iOS text-drawing switches are not the desktop's.
+  EXPECT_EQ(LoomSettings::write(Id::AsyncText, 0), Result::NotApplicable);
 }
 
 TEST_F(LoomSettingsTest, WriteThenRead) {
