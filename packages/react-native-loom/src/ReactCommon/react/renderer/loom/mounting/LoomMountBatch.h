@@ -63,6 +63,19 @@ struct DirectInsertOperation {
   Tag parentTag;
   Tag tag;
   size_t index;
+  /**
+   * Only for a host with `LoomPlatformTraits::insertsCarryInitialLayout`: the
+   * inserted view was created in this batch and this is its first frame, as a
+   * `DirectLayoutOperation` would carry it (relative to `parentTag`). No Layout
+   * operation follows for the tag in this batch. Always false otherwise.
+   */
+  bool hasLayout{false};
+  int displayType{1};
+  int layoutDirection{1};
+  float x{0};
+  float y{0};
+  float width{0};
+  float height{0};
 };
 
 struct DirectRemoveOperation {

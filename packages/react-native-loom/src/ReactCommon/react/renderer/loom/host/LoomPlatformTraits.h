@@ -219,6 +219,21 @@ struct LoomPlatformTraits {
   bool liveReadsOnAnyThread{false};
 
   /**
+   * Opt-in, for hosts that would rather receive a new view's first frame with
+   * its insert, as Fabric's Insert mutation carries the view's layout metrics.
+   * For a node created in the batch (in this commit, or in its early-create
+   * batch):
+   *   - its insert carries the frame (`DirectInsertOperation::hasLayout`) and
+   *     no `DirectLayoutOperation` is emitted for it in that batch;
+   *   - `DirectPaddingOperation` and `DirectOverflowInsetOperation` are emitted
+   *     only when non-zero: a new view starts with zero insets.
+   * A mount then costs two operations per view (create, insert) instead of
+   * five. Default false: every host receives exactly the operations it always
+   * has. Retained views are unaffected either way.
+   */
+  bool insertsCarryInitialLayout{false};
+
+  /**
    * Runs `body(0..count-1)`, possibly in parallel, and returns when every call
    * has. Null: text is not measured speculatively, and the `parallelText`
    * setting has no effect. Required for `parallelText`.

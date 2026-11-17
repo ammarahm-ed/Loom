@@ -585,6 +585,9 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
           touched.push_back(update->tag);
         } else if (const auto* layout = std::get_if<DirectLayoutOperation>(&operation)) {
           touched.push_back(layout->tag);
+        } else if (const auto* insert = std::get_if<DirectInsertOperation>(&operation);
+                   insert != nullptr && insert->hasLayout) {
+          touched.push_back(insert->tag);
         }
       }
     }
