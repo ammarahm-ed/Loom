@@ -756,6 +756,7 @@ void LoomRenderer::finishCommitAfterLayout() {
       }
     }
 
+    initialInsertIndexes_.clear();
     // Edges owned by removed parents were captured from the previous live tree.
     // Emit descendant edges first, before removing an ancestor or inserting a
     // moved child elsewhere.
@@ -1199,6 +1200,7 @@ void LoomRenderer::flush() {
     return;
   }
   stateUpdates_.clear();
+  initialInsertIndexes_.clear();
   // Only nodes this commit's prepare walk reached can carry these marks: every
   // write that sets one also marks the node for that walk. A full commit
   // reached every live node, so this covers what the whole-map loop did.

@@ -1354,6 +1354,11 @@ class LoomRenderer final {
   LoomMountBatch pendingOperations_;
   std::vector<RemovedMountedEdge> removedMountedEdges_;
   /**
+   * `insertsCarryInitialLayout` only: the index in `pendingOperations_` of this
+   * commit's insert of each node created in it. Empty otherwise.
+   */
+  TagMap<size_t> initialInsertIndexes_;
+  /**
    * Membership for `removedMountedEdges_`, keyed by the pair the list is
    * deduplicated on. Kept next to the list and cleared with it, like
    * `removedNodeTagSet_` below; the alternative was an `any_of` scan before
