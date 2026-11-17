@@ -25,6 +25,7 @@ namespace facebook::react {
 // Reaches the binding's publication path, which the host API normally drives.
 struct LoomBindingTestAccess {
   using Draft = LoomBinding::DraftNode;
+  using Patch = LoomBinding::PropsPatch;
 
   static std::shared_ptr<Draft> draft(
       SurfaceId surfaceId,
@@ -223,6 +224,48 @@ TEST_F(LoomHeadlessBindingTest, CommittingTheSourceVersionAgainShowsAHiddenClone
   EXPECT_EQ(lastDisplayType(*host_, 2), 0);
 
   Access::publish(*binding_, 1, visible, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  EXPECT_EQ(lastDisplayType(*host_, 2), 1);
+  EXPECT_TRUE(host_->takeFailures().empty());
+}
+
+// Showing a hidden clone again by committing its source version is not a
+// paint change, even when the version carries only a paint patch: the
+// paint-only shortcut must not keep the node hidden.
+TEST_F(LoomHeadlessBindingTest, ShowingAHiddenCloneWithAPaintPatchShowsIt) {
+  using Access = LoomBindingTestAccess;
+  LoomBinding::setSurfaceConstraints(1, 200, 200, 200, 200, false, 0, 0);
+  const auto token = Access::tokenFor(*binding_, 1);
+  auto visible = Access::draft(
+      1, token->generation, 11, 2, "View",
+      folly::dynamic::object("width", 100.0)("height", 50.0)(
+          "backgroundColor", "red")("collapsable", false));
+  visible->children =
+      std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>();
+  Access::publish(*binding_, 1, visible, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  EXPECT_EQ(lastDisplayType(*host_, 2), 1);
+
+  auto hidden = std::make_shared<Access::Draft>(*visible);
+  hidden->published = false;
+  hidden->workerCommitted = false;
+  hidden->frozenCommit = 0;
+  hidden->freezeFacts = {};
+  hidden->offscreenHidden = true;
+  Access::publish(*binding_, 1, hidden, token->generation);
+  LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+  EXPECT_EQ(lastDisplayType(*host_, 2), 0);
+
+  auto shown = std::make_shared<Access::Draft>(*visible);
+  shown->published = false;
+  shown->workerCommitted = false;
+  shown->frozenCommit = 0;
+  shown->freezeFacts = {};
+  auto patch = std::make_shared<Access::Patch>();
+  patch->previous = visible->propsTail;
+  patch->props = folly::dynamic::object("backgroundColor", "blue");
+  shown->propsTail = patch;
+  Access::publish(*binding_, 1, shown, token->generation);
   LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
   EXPECT_EQ(lastDisplayType(*host_, 2), 1);
   EXPECT_TRUE(host_->takeFailures().empty());
