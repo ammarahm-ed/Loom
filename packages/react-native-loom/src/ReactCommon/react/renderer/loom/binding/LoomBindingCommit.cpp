@@ -303,10 +303,15 @@ void LoomBinding::publishWorkerCommit(
     if (forceSync)
       publishIdentities();
   });
+  // A synchronous job runs `applied` before it computes, and its compute
+  // publishes the identities itself once the commit is reconciled. Publishing
+  // them early as well marks this commit's versions committed before the live
+  // tree holds them, so the reconcile reuses stale live children and drops the
+  // new ones.
   submitWorkerOperation(
       token,
       std::move(compute),
-      std::move(applied),
+      forceSync ? std::function<void()>{} : std::move(applied),
       forceSync,
       true,
       inlineEligible);
