@@ -173,6 +173,7 @@ endforeach()
 add_executable(loom-core-headless-tests
     tests/LoomHeadlessHostTest.cpp
     tests/LoomHeadlessBindingTest.cpp
+    tests/LoomAllocationCounter.cpp
     tests/LoomSettingsTest.cpp
     tests/LoomModeTest.cpp)
 target_compile_reactnative_options(loom-core-headless-tests PRIVATE)
