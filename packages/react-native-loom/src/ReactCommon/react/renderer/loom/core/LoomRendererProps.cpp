@@ -381,9 +381,11 @@ ClassifiedAnimatedProps classifyAnimatedProps(const folly::dynamic& props) {
 }
 
 void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
-  if (!patch.isObject() || !node.props.isObject()) {
+  if (!patch.isObject() || !node.props->isObject()) {
     return;
   }
+  // Copies props still shared with the version that created the node.
+  auto& props = node.props.mutate();
   for (const auto& item : patch.items()) {
     const auto& key = item.first;
     if (!key.isString()) {
@@ -395,7 +397,7 @@ void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
       node.propsDelta = folly::dynamic::object();
     }
     if (key.getString() == "style") {
-      mergeStyleInto(node.props, item.second);
+      mergeStyleInto(props, item.second);
       if (node.collectPropsDelta) {
         mergeStyleInto(node.propsDelta, item.second);
       }
@@ -409,7 +411,7 @@ void LoomRenderer::mergeProps(Node& node, const folly::dynamic& patch) {
     // This is coupled to updates carrying the whole merged map: the null is the
     // only thing that tells the host to clear the previous value, so pruning
     // applied null keys is safe only once updates carry a diff instead.
-    node.props[key] = item.second;
+    props[key] = item.second;
     if (node.collectPropsDelta) {
       node.propsDelta[key] = item.second;
     }
@@ -519,7 +521,7 @@ constexpr size_t kLayoutShapeCacheLimit = 256;
  * props cannot be summarised cheaply falls back to the plain path.
  */
 void LoomRenderer::refreshStyleCached(Node& node) {
-  if (node.hostOwned || !node.props.isObject()) {
+  if (node.hostOwned || !node.props->isObject()) {
     refreshStyle(node);
     return;
   }
@@ -527,7 +529,7 @@ void LoomRenderer::refreshStyleCached(Node& node) {
   picked.reserve(16);
   bool hasOtherKeys = false;
   uint64_t entriesHash = 0;
-  for (const auto& item : node.props.items()) {
+  for (const auto& item : node.props->items()) {
     if (!item.first.isString()) {
       refreshStyle(node);
       return;
