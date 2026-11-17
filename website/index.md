@@ -23,7 +23,7 @@ features:
     details: Loom presents Fabric's C++ contracts on its own tree, so libraries work without changes, Reanimated's layout animations and shared element transitions included.
     link: /guide/compatibility
   - title: Your choice of thread
-    details: Run JavaScript on the main thread like a native app, or on its own thread so heavy JavaScript never blocks a frame. One build switch.
+    details: Run JavaScript on the main thread like a native app, or on its own thread so heavy JavaScript never blocks a frame. One setting, one build.
   - title: Faster startup
     details: Ships a baseline profile for React Native's own code, cutting time to first content by about 70 ms on a mid-range Android phone.
   - title: Debug-time jank reports
