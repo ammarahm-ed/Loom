@@ -11,7 +11,7 @@ import android.view.Choreographer
 import androidx.annotation.GuardedBy
 import com.facebook.common.logging.FLog
 import com.facebook.infer.annotation.Assertions
-import com.facebook.react.BuildConfig
+import com.facebook.react.common.LoomJavaScriptThread
 import com.facebook.react.bridge.UiThreadUtil
 import com.facebook.react.common.ReactConstants
 import com.facebook.react.common.annotations.VisibleForTesting
@@ -49,7 +49,7 @@ public class ReactChoreographer private constructor(choreographerProvider: Chore
     // Loom: tell the JS scheduler where this frame started, so that with JavaScript
     // on the UI thread it can stop non-urgent work before the next vsync instead of running
     // into it. One JNI call per frame that has any React callback.
-    if (BuildConfig.LOOM_JS_ON_MAIN) {
+    if (LoomJavaScriptThread.isOnUIThread()) {
       ReactFrameClock.onFrame(frameTimeNanos)
     }
     synchronized(callbackQueues) {
