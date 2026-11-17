@@ -523,7 +523,8 @@ class LoomBinding final : public UIManagerBinding {
   /**
    * Runs `read` on the UI thread and returns its answer. On the UI thread it is
    * a direct call; elsewhere the caller waits for the UI thread (JS to UI only),
-   * and a stalled UI thread yields `fallback` after a logged timeout.
+   * and a stalled UI thread yields `fallback` after a logged timeout. With
+   * `LoomPlatformTraits::liveReadsOnAnyThread` it is a direct call everywhere.
    */
   std::optional<std::pair<float, float>> readOnUIThread(
       std::function<std::optional<std::pair<float, float>>(LoomHost&)> read,

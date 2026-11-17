@@ -7,7 +7,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cmath>
+#include <thread>
 #include <limits>
 
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
@@ -53,6 +55,19 @@ struct LoomBindingTestAccess {
   static void recordNativeProps(Tag tag, folly::dynamic props) {
     LoomBinding::recordNativePropsImpl(
         tag, std::move(props), /*knownPaint*/ false, /*viewApplied*/ false);
+  }
+
+  /** The binding's live scroll-offset read, as the renderer's DOM path calls it. */
+  static std::optional<std::pair<float, float>> readScrollOffset(
+      LoomBinding& binding,
+      SurfaceId surfaceId,
+      Tag tag) {
+    return binding.readOnUIThread(
+        [surfaceId, tag](LoomHost& host)
+            -> std::optional<std::pair<float, float>> {
+          return host.getScrollOffset(surfaceId, tag);
+        },
+        std::nullopt);
   }
 
   static auto tokenFor(LoomBinding& binding, SurfaceId surfaceId) {
@@ -451,6 +466,44 @@ TEST_F(LoomHeadlessBindingTest, LibraryAnimatedPaintReachesTheViewAndReportsAFra
   }
   EXPECT_TRUE(written);
   EXPECT_GE(frames, 1);
+}
+
+// A host that keeps live view state under its own lock (liveReadsOnAnyThread)
+// answers a read from another thread directly: nothing is posted to the UI
+// thread, so a busy UI thread cannot delay it.
+TEST_F(LoomHeadlessBindingTest, LiveReadsOnAnyThreadCallTheHostDirectly) {
+  auto traits = host_->traits();
+  traits.liveReadsOnAnyThread = true;
+  LoomPlatformTraits::install(traits);
+  host_->setScrollOffset(5, 3, 40);
+  const auto postsBefore = host_->uiPostCount();
+  std::optional<std::pair<float, float>> value;
+  std::thread reader([&] {
+    value = LoomBindingTestAccess::readScrollOffset(*binding_, 1, 5);
+  });
+  reader.join();
+  EXPECT_EQ(host_->uiPostCount(), postsBefore);
+  EXPECT_EQ(value, (std::optional<std::pair<float, float>>{{3, 40}}));
+  LoomPlatformTraits::install(host_->traits());
+}
+
+// The default: a read from another thread is answered on the UI thread.
+TEST_F(LoomHeadlessBindingTest, LiveReadsGoThroughTheUIThreadByDefault) {
+  host_->setScrollOffset(5, 3, 40);
+  const auto postsBefore = host_->uiPostCount();
+  std::optional<std::pair<float, float>> value;
+  std::atomic<bool> done{false};
+  std::thread reader([&] {
+    value = LoomBindingTestAccess::readScrollOffset(*binding_, 1, 5);
+    done = true;
+  });
+  while (!done) {
+    host_->drainUIQueue();
+    std::this_thread::yield();
+  }
+  reader.join();
+  EXPECT_EQ(host_->uiPostCount(), postsBefore + 1);
+  EXPECT_EQ(value, (std::optional<std::pair<float, float>>{{3, 40}}));
 }
 
 } // namespace

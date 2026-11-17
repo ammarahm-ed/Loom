@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -149,6 +150,11 @@ class LoomHeadlessHost final : public LoomHost {
   /** The scroll position `getScrollOffset` reports for a view. */
   void setScrollOffset(Tag, float x, float y);
 
+  /** How many tasks were posted through `uiExecutor()` so far. */
+  size_t uiPostCount() const {
+    return uiPosts_.load();
+  }
+
   /** `Executor::Queued` only: runs queued work, in order, on the calling thread. */
   void drainUIQueue();
 
@@ -165,6 +171,7 @@ class LoomHeadlessHost final : public LoomHost {
   std::vector<LoomTextStateUpdate> textStates_;
   std::unordered_map<Tag, std::pair<float, float>> scrollOffsets_;
 
+  std::atomic<size_t> uiPosts_{0};
   std::mutex queueMutex_;
   std::deque<std::function<void()>> queue_;
 };
