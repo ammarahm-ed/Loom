@@ -16,6 +16,8 @@
 
 #include "LoomBindingInternals.h"
 
+#include <cmath>
+
 #if LOOM_RENDERER
 namespace facebook::react {
 
@@ -196,10 +198,14 @@ void LoomBinding::setSurfaceConstraints(
     float viewportOffsetX,
     float viewportOffsetY) {
   SurfaceConstraints constraints;
-  constraints.minWidth = minWidth > 0 ? minWidth : 0;
-  constraints.minHeight = minHeight > 0 ? minHeight : 0;
-  constraints.maxWidth = maxWidth > 0 ? maxWidth : 0;
-  constraints.maxHeight = maxHeight > 0 ? maxHeight : 0;
+  // A non-finite or non-positive bound is unbounded (0), as in setConstraints.
+  const auto bound = [](float value) {
+    return std::isfinite(value) && value > 0 ? value : 0.f;
+  };
+  constraints.minWidth = bound(minWidth);
+  constraints.minHeight = bound(minHeight);
+  constraints.maxWidth = bound(maxWidth);
+  constraints.maxHeight = bound(maxHeight);
   constraints.isRTL = isRTL;
   constraints.viewportOffsetX = viewportOffsetX;
   constraints.viewportOffsetY = viewportOffsetY;

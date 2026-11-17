@@ -13,6 +13,8 @@
 
 #include "../../../loom/Loom.h"
 
+#include <cmath>
+
 #include <react/renderer/animationbackend/AnimatedPropsSerializer.h>
 #include <react/renderer/loom/binding/LoomBinding.h>
 #include <react/renderer/loom/host/LoomHost.h>
@@ -228,7 +230,16 @@ std::optional<SurfaceId> Reads::surfaceOf(Tag tag) const {
 
 std::optional<Size> Reads::surfaceSize(SurfaceId surfaceId) const {
   std::optional<Size> size;
-  readSurface(*instance_, synced_, surfaceId, [&](const LoomRenderer&, const LoomBinding::SurfaceConstraints& constraints) {
+  readSurface(*instance_, synced_, surfaceId, [&](const LoomRenderer& renderer, const LoomBinding::SurfaceConstraints& constraints) {
+    // The root's laid-out size, as Fabric reports a surface's layout size: a
+    // surface sized to its content has no bounded maximum to report.
+    LoomRenderer::Metrics root;
+    if (const auto rootTag = renderer.rootTag(); rootTag != 0 &&
+        renderer.metricsRelativeTo(rootTag, 0, root, /*includeTransform*/ false, /*includeScroll*/ false) &&
+        std::isfinite(root.width) && std::isfinite(root.height)) {
+      size = Size{root.width, root.height};
+      return;
+    }
     size = Size{constraints.maxWidth, constraints.maxHeight};
   });
   return size;
