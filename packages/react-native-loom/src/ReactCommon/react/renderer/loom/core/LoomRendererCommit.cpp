@@ -88,7 +88,6 @@ void LoomRenderer::prepare(
   if (node.text && !text && !paragraph && !textInput) {
     // The node stopped being text (its component changed); drop the block.
     node.text.reset();
-    node.hasTextMeasurementCache = false;
   }
   node.inlineAttachment = insideText && !node.hostOwned && !text;
   node.textRoot = !node.hostOwned && (paragraph || textInput) && !insideText;
@@ -158,7 +157,7 @@ void LoomRenderer::prepare(
   }
   if (!node.hostOwned && !node.textRoot &&
       node.roleRequiresIntrinsicMeasurement &&
-      !(node.compat != nullptr && node.compat->measurable()) &&
+      !(node.compatNode() != nullptr && node.compatNode()->measurable()) &&
       findProp(node.props, "width") == nullptr &&
       findProp(node.props, "height") == nullptr &&
       !node.intrinsicMeasurementReported) {
@@ -172,7 +171,7 @@ void LoomRenderer::prepare(
     buildTextContent(node);
   }
   if (!node.hostOwned && !node.textRoot &&
-      node.roleRequiresGenericStateWrapper && node.compat == nullptr &&
+      node.roleRequiresGenericStateWrapper && node.compatNode() == nullptr &&
       !node.genericStateInitialized) {
     node.needsState = true;
     // Deduplicated by the set itself.
@@ -429,9 +428,9 @@ void LoomRenderer::speculateTextMeasurements() {
   for (const auto* node : commitNodes_) {
     if (node->textRoot && node->yogaNode != nullptr &&
         (node->createdThisCommit || !node->hostCreated) &&
-        !(node->hasTextMeasurementCache &&
-          node->measuredContentGeneration ==
-              node->measurementContentGeneration)) {
+        !(node->textOrEmpty().hasTextMeasurementCache &&
+          node->textOrEmpty().measuredContentGeneration ==
+              node->textOrEmpty().measurementContentGeneration)) {
       ++unmeasured;
     }
   }
@@ -925,14 +924,15 @@ void LoomRenderer::finishCommitAfterLayout() {
           contentBounds.unionInPlace(childBounds);
         }
       }
-      if (!node->hasScrollContentBounds ||
-          node->mountedScrollContentBounds != contentBounds) {
+      if (node->cold == nullptr || !node->cold->hasScrollContentBounds ||
+          node->cold->mountedScrollContentBounds != contentBounds) {
         if (operations_.updateScrollContentBounds) {
           operations_.updateScrollContentBounds(
               surfaceId_, node->tag, node->props, contentBounds);
         }
-        node->mountedScrollContentBounds = contentBounds;
-        node->hasScrollContentBounds = true;
+        auto& cold = node->ensureCold();
+        cold.mountedScrollContentBounds = contentBounds;
+        cold.hasScrollContentBounds = true;
       }
     }
     // Old nodes were intentionally not copied into the speculative revision.
@@ -1065,14 +1065,14 @@ void LoomRenderer::flush() {
     }
     hasPendingState = true;
     node->needsState = false;
-    if (node->compat != nullptr) {
+    if (node->compatNode() != nullptr) {
       // The component's own state object, so the host view and the library's
       // native code see exactly what Fabric would have mounted.
-      if (operations_.updateComponentState && node->compat->state()) {
+      if (operations_.updateComponentState && node->compatNode()->state()) {
         operations_.updateComponentState(
-            surfaceId_, tag, node->compat->state());
+            surfaceId_, tag, node->compatNode()->state());
       }
-      node->compat->stateDirty = false;
+      node->compatNode()->stateDirty = false;
       node->genericStateInitialized = true;
       continue;
     }
@@ -1090,7 +1090,7 @@ void LoomRenderer::flush() {
             node->mountedContentInsets[1] - node->mountedContentInsets[3];
         constexpr float layoutEpsilon = 0.01f;
         const bool measurementMatchesCurrentText =
-            node->hasTextMeasurementCache &&
+            text.hasTextMeasurementCache &&
             sameTextMeasurementContent(
                 text.measuredAttributedString, text.attributedString) &&
             text.measuredParagraphAttributes == text.paragraphAttributes &&
@@ -1316,7 +1316,9 @@ bool LoomRenderer::setPointScaleFactor(float pointScaleFactor) {
   laidOutMaxWidth_ = -1;
   laidOutMaxHeight_ = -1;
   for (auto& entry : nodes_) {
-    entry.second->hasTextMeasurementCache = false;
+    if (entry.second->text) {
+      entry.second->text->hasTextMeasurementCache = false;
+    }
   }
   fullPrepare_ = true;
   return true;

@@ -304,6 +304,46 @@ using TagHashSet = std::unordered_set<
     std::equal_to<Tag>,
     LoomNodeAllocator<Tag>>;
 
+/**
+ * A component name held by reference to the renderer's interned copy
+ * (`LoomRenderer::internComponentName`), so a node stores one pointer
+ * instead of a string. Reads as a `const std::string&`.
+ */
+class LoomComponentName {
+ public:
+  LoomComponentName() : value_(&emptyName()) {}
+  explicit LoomComponentName(const std::string& interned) : value_(&interned) {}
+  const std::string& str() const {
+    return *value_;
+  }
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  operator const std::string&() const {
+    return *value_;
+  }
+  const char* c_str() const {
+    return value_->c_str();
+  }
+  bool empty() const {
+    return value_->empty();
+  }
+  friend bool operator==(const LoomComponentName& a, const std::string& b) {
+    return *a.value_ == b;
+  }
+  friend bool operator==(const LoomComponentName& a, const char* b) {
+    return *a.value_ == b;
+  }
+  friend std::ostream& operator<<(std::ostream& out, const LoomComponentName& name) {
+    return out << *name.value_;
+  }
+
+ private:
+  static const std::string& emptyName() {
+    static const std::string kEmpty;
+    return kEmpty;
+  }
+  const std::string* value_;
+};
+
 class LoomRenderer final {
  public:
   struct TextMeasurement {
@@ -780,13 +820,13 @@ class LoomRenderer final {
 
   struct Node {
     Tag tag{0};
+    Tag parent{0};
     uint64_t identity{0};
     /** Valid only while `shapeGeneration == propsGeneration`. */
     std::shared_ptr<const LayoutShape> shape;
     uint64_t shapeGeneration{0};
-    Tag parent{0};
-    /** Component name as JS sent it (`RCTText`, `RCTView`, ...). */
-    std::string componentName;
+    /** Component name as JS sent it (`RCTText`, `RCTView`, ...), interned. */
+    LoomComponentName componentName;
     /** Resolved from `componentName` once, in `createNode`. */
     LoomComponentTable::Roles componentRoles;
     /**
@@ -795,20 +835,6 @@ class LoomRenderer final {
      * copied on the first write (`LoomSharedProps`).
      */
     LoomSharedProps props;
-    /**
-     * Props changed since the host last saw them. The host is always sent the
-     * whole merged set, which is what the shadow-tree path mounts too, so a
-     * prop that a patch removed is reset instead of lingering.
-     */
-    bool propsDirty{false};
-    /**
-     * The keys merged since the host last saw this node (null when none). For
-     * the core view managers in `roleSendsPropDiffs` an update ships this
-     * instead of the whole merged set; reset values arrive as explicit nulls.
-     */
-    folly::dynamic propsDelta{nullptr};
-    /** `componentSendsPropDiffs(componentName)`: whether `mergeProps` records `propsDelta`. */
-    bool collectPropsDelta{false};
     /**
      * Bumped whenever `props` changes. Two funnels mutate props — `mergeProps`
      * for a patch and `createNode` for the initial set — so this is a reliable
@@ -842,6 +868,16 @@ class LoomRenderer final {
         // this parse writes it, so a cache hit finds it already current.
       };
       ParsedTextAttributes parsedTextAttributes;
+      /** Last successful measure; avoids repeated bridge calls during one
+       * tree layout. */
+      bool hasTextMeasurementCache{false};
+      /**
+       * Bumped when `measurementAttributedString` or the paragraph attributes
+       * change what a measurement depends on; a cached measurement is valid
+       * only for the generation it was taken at.
+       */
+      uint64_t measurementContentGeneration{1};
+      uint64_t measuredContentGeneration{0};
       /**
        * Text attributes with the inherited chain already applied. Interned:
        * identically styled paragraphs share one object. Never null.
@@ -976,66 +1012,17 @@ class LoomRenderer final {
     std::shared_ptr<const LayoutStyle> style{emptyLayoutStyle()};
     YGDirection direction{YGDirectionInherit};
     YGBoxSizing boxSizing{YGBoxSizingBorderBox};
-    bool textLike{false};
-    bool inlineAttachment{false};
-    bool inlineAttachmentReported{false};
-    /**
-     * No Yoga node, no host view, no operations. A text node nested in another
-     * text node is rendered by the enclosing paragraph and must not create a
-     * second TextView; the same is true of raw text and of the non-text
-     * children of a paragraph, which the platform cannot lay out inline.
-     */
-    bool virtualNode{false};
-    /** Yoga-only View whose children mount under its nearest native ancestor.
-     */
-    bool layoutOnlyNode{false};
-    /** Outermost text node: owns the host view, the measure function, state. */
-    bool textRoot{false};
-    /** Surface root: host-owned, never created, laid out or deleted here. */
-    bool hostOwned{false};
-    /** Content changed since the attributed string was last built. */
-    bool textDirty{false};
-    /** The host still needs the paragraph state for this text root. */
-    bool needsState{false};
-    /** The host has received the initial generic StateWrapper, if required. */
-    bool genericStateInitialized{false};
-    bool hasScrollContentBounds{false};
-    Rect mountedScrollContentBounds{};
-    bool intrinsicMeasurementReported{false};
-    /** Last successful measure; avoids repeated bridge calls during one tree
-     * layout. */
-    mutable bool hasTextMeasurementCache{false};
-    /**
-     * Bumped when `measurementAttributedString` or the paragraph attributes
-     * change what a measurement depends on; a cached measurement is valid only
-     * for the generation it was taken at.
-     */
-    uint64_t measurementContentGeneration{1};
-    mutable uint64_t measuredContentGeneration{0};
 
     YGNodeRef yogaNode{nullptr};
-    /** Yoga children currently attached, so they are only touched on change. */
-    std::vector<Tag> yogaChildren;
     std::vector<Tag> children;
     /** Children the host currently has (its own, view-forming ones). */
     std::vector<Tag> mountedChildren;
-    /** The selected child order or host-child representation changed. */
-    bool childrenDirty{true};
-    bool styleDirty{true};
-    bool hasEventTarget{false};
     /**
      * The handle React registered with `createNode`. Kept because a hit test
      * has to hand the target's handle back to JS, and a node that React never
      * gave a handle for is not a valid hit-test answer.
      */
     InstanceHandle::Shared instanceHandle;
-    bool hostCreated{false};
-    bool hostLayoutable{false};
-    /** A StateWrapper emitted before this node's first direct create. */
-    bool createdThisCommit{false};
-    /** This identity replaces an older Java ViewState with the same tag. */
-    bool replacesHostTagThisCommit{false};
-    bool hasMountedLayout{false};
     float mountedLeft{0};
     float mountedTop{0};
     float mountedNativeLeft{0};
@@ -1043,18 +1030,11 @@ class LoomRenderer final {
     float mountedWidth{0};
     float mountedHeight{0};
     Tag mountedParentTag{0};
-    bool displayNone{false};
-    /**
-     * Hidden by an offscreen boundary (Activity, Suspense, react-freeze): React
-     * commits a hidden clone of the version rather than new props, and shows
-     * the node again by committing the version itself. It is version state,
-     * not a prop, so showing again needs no props to be undone.
-     */
-    bool offscreenHidden{false};
+    /** The parent view this node was last prepared under (see the prepare marks). */
+    Tag lastParentViewTag{0};
     /** Last values handed to the host, so only real changes are re-emitted. */
     int mountedDisplayType{1};
     int mountedDirection{1};
-    bool hasMountedInsets{false};
     std::array<float, 4> mountedContentInsets{};
     std::array<float, 4> mountedOverflowInsets{};
     /**
@@ -1067,6 +1047,67 @@ class LoomRenderer final {
      */
     uint64_t visitedStamp{0};
     uint64_t overflowStamp{0};
+    /** Reached by the post-layout walk in the commit with this stamp. */
+    uint64_t layoutVisitStamp{0};
+    /** Cached `calculateOverflow` result for the stamping commit. */
+    std::array<float, 4> commitOverflow{};
+    /** `zIndex` as the mount order sees it (0 when absent), cached with the role flags. */
+    float roleZIndex{0};
+    /** What the host builds a state for; set with the other role flags. */
+    LoomTextStateKind roleStateKind{LoomTextStateKind::Other};
+    // Flags, packed one bit each. Only the renderer thread writes a node.
+    /**
+     * Props changed since the host last saw them. The host is always sent the
+     * whole merged set, which is what the shadow-tree path mounts too, so a
+     * prop that a patch removed is reset instead of lingering.
+     */
+    bool propsDirty : 1 {false};
+    /** `componentSendsPropDiffs(componentName)`: whether `mergeProps` records a delta in `propsDeltas_`. */
+    bool collectPropsDelta : 1 {false};
+    bool textLike : 1 {false};
+    bool inlineAttachment : 1 {false};
+    bool inlineAttachmentReported : 1 {false};
+    /**
+     * No Yoga node, no host view, no operations. A text node nested in another
+     * text node is rendered by the enclosing paragraph and must not create a
+     * second TextView; the same is true of raw text and of the non-text
+     * children of a paragraph, which the platform cannot lay out inline.
+     */
+    bool virtualNode : 1 {false};
+    /** Yoga-only View whose children mount under its nearest native ancestor.
+     */
+    bool layoutOnlyNode : 1 {false};
+    /** Outermost text node: owns the host view, the measure function, state. */
+    bool textRoot : 1 {false};
+    /** Surface root: host-owned, never created, laid out or deleted here. */
+    bool hostOwned : 1 {false};
+    /** Content changed since the attributed string was last built. */
+    bool textDirty : 1 {false};
+    /** The host still needs the paragraph state for this text root. */
+    bool needsState : 1 {false};
+    /** The host has received the initial generic StateWrapper, if required. */
+    bool genericStateInitialized : 1 {false};
+    bool intrinsicMeasurementReported : 1 {false};
+    /** The selected child order or host-child representation changed. */
+    bool childrenDirty : 1 {true};
+    bool styleDirty : 1 {true};
+    bool hasEventTarget : 1 {false};
+    bool hostCreated : 1 {false};
+    bool hostLayoutable : 1 {false};
+    /** A StateWrapper emitted before this node's first direct create. */
+    bool createdThisCommit : 1 {false};
+    /** This identity replaces an older Java ViewState with the same tag. */
+    bool replacesHostTagThisCommit : 1 {false};
+    bool hasMountedLayout : 1 {false};
+    bool displayNone : 1 {false};
+    /**
+     * Hidden by an offscreen boundary (Activity, Suspense, react-freeze): React
+     * commits a hidden clone of the version rather than new props, and shows
+     * the node again by committing the version itself. It is version state,
+     * not a prop, so showing again needs no props to be undone.
+     */
+    bool offscreenHidden : 1 {false};
+    bool hasMountedInsets : 1 {false};
     /**
      * Incremental commit. A change marks its node (`prepareSelf`) and every
      * ancestor (`prepareDescendant`), so a commit follows only those paths and
@@ -1074,24 +1115,19 @@ class LoomRenderer final {
      * `lastParentViewTag` are the context the node was last prepared in; a
      * different context (a move, or an ancestor changing role) re-prepares it.
      */
-    bool prepareSelf{true};
-    bool prepareDescendant{true};
-    bool preparedOnce{false};
-    bool lastInsideText{false};
-    Tag lastParentViewTag{0};
+    bool prepareSelf : 1 {true};
+    bool prepareDescendant : 1 {true};
+    bool preparedOnce : 1 {false};
+    bool lastInsideText : 1 {false};
     /**
      * `experimental_LayoutConformance`: whether the nearest LayoutConformance
      * ancestor asked for strict layout (`inheritedStrictLayout`, part of the
      * prepare context like `lastInsideText`), and what this node resolved to
      * (its own mode when it is a LayoutConformance node).
      */
-    bool inheritedStrictLayout{false};
-    bool layoutConformance{false};
-    bool strictLayout{false};
-    /** Reached by the post-layout walk in the commit with this stamp. */
-    uint64_t layoutVisitStamp{0};
-    /** Cached `calculateOverflow` result for the stamping commit. */
-    std::array<float, 4> commitOverflow{};
+    bool inheritedStrictLayout : 1 {false};
+    bool layoutConformance : 1 {false};
+    bool strictLayout : 1 {false};
     /**
      * Role flags derived from `componentName` and `props`, cached across commits.
      *
@@ -1103,42 +1139,64 @@ class LoomRenderer final {
      * `componentName` does. Both writes go through `createNode` and `mergeProps`,
      * which clear `roleFlagsValid`.
      */
-    bool roleFlagsValid{false};
-    /** `zIndex` as the mount order sees it (0 when absent), cached with the role flags. */
-    float roleZIndex{0};
-    bool roleIsText{false};
-    bool roleIsParagraph{false};
-    bool roleIsTextInput{false};
-    /** What the host builds a state for; set with the other role flags. */
-    LoomTextStateKind roleStateKind{LoomTextStateKind::Other};
-    bool roleRequiresIntrinsicMeasurement{false};
-    bool roleRequiresGenericStateWrapper{false};
-    bool roleIsLayoutOnlyView{false};
+    bool roleFlagsValid : 1 {false};
+    bool roleIsText : 1 {false};
+    bool roleIsParagraph : 1 {false};
+    bool roleIsTextInput : 1 {false};
+    bool roleRequiresIntrinsicMeasurement : 1 {false};
+    bool roleRequiresGenericStateWrapper : 1 {false};
+    bool roleIsLayoutOnlyView : 1 {false};
     /** `overflow` is "hidden" or "scroll": the node's own bounds clip. */
-    bool roleClipsOverflow{false};
+    bool roleClipsOverflow : 1 {false};
     /**
      * Android core view manager known to apply props incrementally (it did so
      * for the legacy architecture's diff updates), so updates can carry only
      * the changed keys. Every other component gets the full merged set, which
      * is what Fabric sends.
      */
-    bool roleSendsPropDiffs{false};
+    bool roleSendsPropDiffs : 1 {false};
+    bool compatChecked : 1 {false};
+
     /**
-     * Fabric compatibility layer: the component's own ShadowNode, for
-     * components whose descriptor carries C++ logic (LoomCompat.h). Null for
-     * everything else, which is nearly every node.
+     * What few nodes use, kept out of line so a plain View does not carry it:
+     * the Fabric compatibility layer (components whose descriptor carries C++
+     * logic, LoomCompat.h) and a ScrollView's mounted content bounds.
+     * Allocated by the first write (`ensureCold`); readers go through the
+     * accessors below, which see the defaults when it is absent.
      */
-    std::unique_ptr<LoomCompatNode> compat;
-    const ComponentDescriptor* compatDescriptor{nullptr};
-    /**
-     * Props the component's own descriptor parsed from the JSI value on the JS
-     * thread, current while `compatPropsGeneration == propsGeneration`. Set
-     * only for components with a compat descriptor.
-     */
-    std::shared_ptr<const Props> compatProps;
-    uint64_t compatPropsGeneration{0};
-    bool compatChecked{false};
-    LoomRenderer* owner{nullptr};
+    struct ColdData {
+      /** The component's own ShadowNode. */
+      std::unique_ptr<LoomCompatNode> compat;
+      const ComponentDescriptor* compatDescriptor{nullptr};
+      /**
+       * Props the component's own descriptor parsed from the JSI value on the
+       * JS thread, current while `compatPropsGeneration == propsGeneration`.
+       */
+      std::shared_ptr<const Props> compatProps;
+      uint64_t compatPropsGeneration{0};
+      bool hasScrollContentBounds{false};
+      Rect mountedScrollContentBounds{};
+    };
+    std::unique_ptr<ColdData> cold;
+    ColdData& ensureCold() {
+      if (!cold) {
+        cold = std::make_unique<ColdData>();
+      }
+      return *cold;
+    }
+    LoomCompatNode* compatNode() const {
+      return cold ? cold->compat.get() : nullptr;
+    }
+    const ComponentDescriptor* compatDescriptor() const {
+      return cold ? cold->compatDescriptor : nullptr;
+    }
+    /** Drops the compat ShadowNode and descriptor. */
+    void resetCompat() {
+      if (cold) {
+        cold->compat.reset();
+        cold->compatDescriptor = nullptr;
+      }
+    }
   };
 
   /** Raw text is a paragraph-owned string leaf, not a mounted renderer node. */
@@ -1207,6 +1265,10 @@ class LoomRenderer final {
 
   /** A stable `const char*` view of a component name. */
   const char* internComponentName(const std::string& name) const;
+  /** The same, as the interned string itself (stable for the renderer's life). */
+  const std::string& internComponentNameString(const std::string& name) const;
+  /** The renderer that owns a Yoga node (its config's context). */
+  static LoomRenderer* rendererOf(YGNodeConstRef yogaNode);
   /** A fragment's identity: the tag React gave it, and where it lives. */
   ShadowView shadowView(Tag tag) const;
 
@@ -1504,6 +1566,14 @@ class LoomRenderer final {
   // text measure calls record their constraints here and return an estimate.
   mutable std::vector<SpeculativeTextRequest>* speculativeTextRequests_{nullptr};
   LoomMountBatch pendingOperations_;
+  /**
+   * Per node, the keys merged since the host last saw it, for the core view
+   * managers in `roleSendsPropDiffs`: an update ships these instead of the
+   * whole merged set, and reset values arrive as explicit nulls. Only nodes
+   * patched since their last emit have an entry, so the delta is not a field
+   * every node carries.
+   */
+  TagMap<folly::dynamic> propsDeltas_;
   std::vector<RemovedMountedEdge> removedMountedEdges_;
   /**
    * `insertsCarryInitialLayout` only: the index in `pendingOperations_` of this

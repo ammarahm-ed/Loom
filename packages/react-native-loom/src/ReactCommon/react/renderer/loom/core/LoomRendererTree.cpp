@@ -106,14 +106,14 @@ std::optional<LoomRenderer::FabricNodeInfo> LoomRenderer::fabricNodeInfo(
     return std::nullopt;
   }
   FabricNodeInfo info;
-  info.componentName = &node->componentName;
+  info.componentName = &node->componentName.str();
   info.props = &node->props.get();
   info.propsGeneration = node->propsGeneration;
   info.identity = node->identity;
   info.parent = node->parent;
   info.layoutOnly = node->layoutOnlyNode;
   info.virtualNode = node->virtualNode;
-  info.compat = node->compat.get();
+  info.compat = node->compatNode();
   return info;
 }
 
@@ -281,7 +281,17 @@ Tag LoomRenderer::parentOf(Tag tag) const {
 const char* LoomRenderer::internComponentName(
     const std::string& name) const {
   // A text fragment's parent view may outlive its renderer node.
-  return internedComponentNames_.insert(name).first->c_str();
+  return internComponentNameString(name).c_str();
+}
+
+const std::string& LoomRenderer::internComponentNameString(
+    const std::string& name) const {
+  return *internedComponentNames_.insert(name).first;
+}
+
+LoomRenderer* LoomRenderer::rendererOf(YGNodeConstRef yogaNode) {
+  return static_cast<LoomRenderer*>(
+      YGConfigGetContext(YGNodeGetConfig(const_cast<YGNodeRef>(yogaNode))));
 }
 
 ShadowView LoomRenderer::shadowView(Tag tag) const {
