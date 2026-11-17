@@ -218,9 +218,14 @@ lays out, and workers do the rest.
 
 ## Switching
 
-`loom.js` is a build-time switch on both platforms; see
-[Configuration](/reference/configuration). Prebuilt binaries exist for both modes, so switching
-needs no source build. The same JavaScript runs in both modes.
+`loom.js` is read at startup, before the JavaScript thread is created, and stays fixed for the
+app's lifetime; see [Configuration](/reference/configuration). One prebuilt Loom serves both
+modes, so switching recompiles no React Native or Loom code: change `loom.js` in
+`ios/Podfile.properties.json` or `android/gradle.properties`, then run `pod install` or rebuild
+the app. Debug builds can also switch at launch without a rebuild (`-LoomJSThread main` on
+iOS, `adb shell setprop debug.loom.js main` on Android). Desktop and custom hosts call
+`LoomHost::setJavaScriptOnUIThread()` once before the first surface starts. The same
+JavaScript runs in both modes.
 
 Measured on a low-end Android phone and on an iPhone, background mode is faster for large
 updates and keeps scrolling smooth; main-thread mode gives the fastest taps. See
