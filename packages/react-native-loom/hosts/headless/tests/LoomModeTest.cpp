@@ -19,6 +19,7 @@
 #include <react/renderer/core/EventDispatcher.h>
 #include <react/renderer/loom/binding/LoomBinding.h>
 #include <react/renderer/loom/tests/LoomTestMode.h>
+#include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
 #include <react/renderer/runtimescheduler/RuntimeScheduler_Modern.h>
 #include <react/renderer/uimanager/UIManager.h>
 
