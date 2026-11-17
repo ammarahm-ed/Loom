@@ -2827,17 +2827,17 @@ struct LoomBindingTestAccess {
   }
 
   static size_t mountedCount(const Binding& binding) {
-    return binding.mountedIdentities_.size();
+    return binding.mounted_.size();
   }
 
   static uint64_t mountedIdentity(const Binding& binding, Tag tag) {
-    const auto found = binding.mountedIdentities_.find(tag);
-    return found == binding.mountedIdentities_.end() ? 0 : found->second;
+    const auto found = binding.mounted_.find(tag);
+    return found == binding.mounted_.end() ? 0 : found->second.identity;
   }
 
   static std::shared_ptr<Token> mountedToken(const Binding& binding, Tag tag) {
-    const auto found = binding.mountedTokens_.find(tag);
-    return found == binding.mountedTokens_.end() ? nullptr : found->second;
+    const auto found = binding.mounted_.find(tag);
+    return found == binding.mounted_.end() ? nullptr : found->second.token;
   }
 
   /** Drives the reconcile the commit result normally performs on UI. */

@@ -53,8 +53,7 @@ LoomBinding::LoomBinding(
   text_ = host_->textServices();
   installLoomFabricBridge();
   // Power-of-two bucket counts keep these on mask indexing (see LoomTagHash).
-  mountedIdentities_.reserve(1024);
-  mountedTokens_.reserve(1024);
+  mounted_.reserve(1024);
   const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
   // The host's UI executor is resolved on first use, not here: it can need
   // platform state that exists only once the first surface runs. Every use of it
@@ -353,9 +352,9 @@ void LoomBinding::apiForEachSurface(
 std::optional<SurfaceId> LoomBinding::apiSurfaceOf(Tag tag) {
   std::lock_guard state(stateMutex_);
   // The mounted map is the UI's view of the tree; a token names its surface.
-  if (auto token = mountedTokens_.find(tag);
-      token != mountedTokens_.end() && token->second->active) {
-    return token->second->surfaceId;
+  if (auto mounted = mounted_.find(tag);
+      mounted != mounted_.end() && mounted->second.token->active) {
+    return mounted->second.token->surfaceId;
   }
   return std::nullopt;
 }
@@ -452,8 +451,7 @@ void LoomBinding::releaseSurfaceInternal(SurfaceId surfaceId) {
   if (auto mounted = mountedTagsBySurface_.find(surfaceId);
       mounted != mountedTagsBySurface_.end()) {
     for (const auto& entry : mounted->second) {
-      mountedIdentities_.erase(entry.first);
-      mountedTokens_.erase(entry.first);
+      mounted_.erase(entry.first);
     }
     mountedTagsBySurface_.erase(mounted);
   }
@@ -483,25 +481,25 @@ void LoomBinding::setMountedLocked(
     Tag tag,
     uint64_t identity,
     const std::shared_ptr<SurfaceToken>& token) {
-  auto& mountedToken = mountedTokens_[tag];
-  if (mountedToken != nullptr && mountedToken->surfaceId != token->surfaceId) {
+  auto& mounted = mounted_[tag];
+  if (mounted.token != nullptr && mounted.token->surfaceId != token->surfaceId) {
     // The tag moved to another surface (a surface restarted under a new id).
-    if (auto previous = mountedTagsBySurface_.find(mountedToken->surfaceId);
+    if (auto previous = mountedTagsBySurface_.find(mounted.token->surfaceId);
         previous != mountedTagsBySurface_.end()) {
       previous->second.erase(tag);
     }
   }
-  mountedToken = token;
-  mountedIdentities_[tag] = identity;
+  mounted.token = token;
+  mounted.identity = identity;
   mountedTagsBySurface_[token->surfaceId][tag] = true;
 }
 
 void LoomBinding::eraseMountedLocked(Tag tag) {
-  auto mountedToken = mountedTokens_.find(tag);
-  if (mountedToken == mountedTokens_.end()) {
+  auto mountedEntry = mounted_.find(tag);
+  if (mountedEntry == mounted_.end()) {
     return;
   }
-  const auto surfaceId = mountedToken->second->surfaceId;
+  const auto surfaceId = mountedEntry->second.token->surfaceId;
   if (auto mounted = mountedTagsBySurface_.find(surfaceId);
       mounted != mountedTagsBySurface_.end()) {
     mounted->second.erase(tag);
@@ -510,8 +508,7 @@ void LoomBinding::eraseMountedLocked(Tag tag) {
       overlays != nativePropsOverlays_.end()) {
     overlays->second.erase(tag);
   }
-  mountedTokens_.erase(mountedToken);
-  mountedIdentities_.erase(tag);
+  mounted_.erase(mountedEntry);
 }
 
 LoomBinding::SurfaceConstraints
@@ -607,9 +604,9 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
           continue;
         }
         // `find`, not `operator[]`: a lookup must never insert an entry.
-        auto mounted = mountedIdentities_.find(tag);
-        if (mounted == mountedIdentities_.end() ||
-            mounted->second != it->second.identity) {
+        auto mounted = mounted_.find(tag);
+        if (mounted == mounted_.end() ||
+            mounted->second.identity != it->second.identity) {
           continue;
         }
         props = it->second.props;
