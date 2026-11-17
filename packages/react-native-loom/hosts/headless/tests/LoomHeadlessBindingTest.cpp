@@ -906,6 +906,7 @@ TEST_F(LoomHeadlessBindingTest, GridLifecycleProbe) {
     settle();
     const auto mountMicros = microsSince(start);
     loomtest::printAllocationSites("mount");
+    loomtest::printAllocationSites("mounted tree", true);
     const auto mountAllocations = allocationCount() - allocations;
     const auto afterMount = static_cast<long long>(allocatedBytes());
 
