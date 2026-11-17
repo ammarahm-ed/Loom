@@ -39,6 +39,7 @@ import com.facebook.react.bridge.queue.QueueThreadExceptionHandler
 import com.facebook.react.bridge.queue.ReactQueueConfiguration
 import com.facebook.react.bridge.queue.ReactQueueConfigurationImpl
 import com.facebook.react.bridge.queue.ReactQueueConfigurationSpec
+import com.facebook.react.common.LoomJavaScriptThread
 import com.facebook.react.common.annotations.FrameworkAPI
 import com.facebook.react.common.annotations.UnstableReactNativeAPI
 import com.facebook.react.devsupport.InspectorFlags.getIsProfilingBuild
@@ -119,20 +120,20 @@ internal class ReactInstance(
      * Prepare the ReactInstance by installing JSI bindings, initializing Fabric + TurboModules, and
      * loading the JS bundle.
      */
-    // Loom: when LOOM_JS_ON_MAIN is set, React Native runs JavaScript and native modules on
-    // the UI thread rather than on the two background queues upstream uses. The standalone
-    // LOOM_RENDERER also requires this mode so direct host operations update views on their
-    // owning thread. Both specs then resolve to the main Looper, eliminating the
-    // JS/native-modules thread split.
+    // Loom: when the app's `loom.js` setting is `main` (read by LoomJavaScriptThread, fixed for the
+    // process, one build serves both), React Native runs JavaScript and native modules on the UI
+    // thread rather than on the two background queues upstream uses. Both specs then resolve to the
+    // main Looper, eliminating the JS/native-modules thread split.
     //
-    // With the switch off this is upstream's configuration verbatim, and the two thread models stay
-    // side by side in the source, selected at build time.
+    // With `background` this is upstream's configuration verbatim. The setting has to be fixed
+    // before the queues, the scheduler or any binding exists, so it is read first.
     //
     // Note that ReactQueueConfigurationImpl always builds a separate UI queue thread, and
     // destroy() already skips quitSynchronous() for any queue whose Looper is the main Looper, so
     // tearing either configuration down does not try to quit the main Looper.
+    LoomJavaScriptThread.initialize(context)
     val spec =
-        if (BuildConfig.LOOM_JS_ON_MAIN) {
+        if (LoomJavaScriptThread.isOnUIThread()) {
           ReactQueueConfigurationSpec(
               MessageQueueThreadSpec.mainThreadSpec(),
               MessageQueueThreadSpec.mainThreadSpec(),

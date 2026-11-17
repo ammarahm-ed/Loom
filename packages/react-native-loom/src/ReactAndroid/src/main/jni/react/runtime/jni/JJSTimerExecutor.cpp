@@ -12,6 +12,7 @@
 #include <jni.h>
 #include <cstdlib>
 #include <react/renderer/runtimescheduler/JankReporter.h>
+#include <react/renderer/runtimescheduler/LoomJavaScriptThread.h>
 #include <react/renderer/runtimescheduler/RuntimeSchedulerFrameCallbackScope.h>
 
 namespace facebook::react {
@@ -29,7 +30,7 @@ void JJSTimerExecutor::setTimerManager(
 void JJSTimerExecutor::callTimers(WritableNativeArray* timerIDs) {
   if (auto timerManager = timerManager_.lock()) {
     const auto ids = timerIDs->consume();
-#if LOOM_JS_ON_MAIN
+    if (loomJavaScriptOnUIThread()) {
     // Loom: called from Choreographer's animation phase on the UI
     // thread, which is also the JS thread. requestAnimationFrame callbacks, and
     // whatever React renders in response, run before this frame's traversal
@@ -57,24 +58,31 @@ void JJSTimerExecutor::callTimers(WritableNativeArray* timerIDs) {
         }
       }
     }
-#else
-    for (const auto& timerID : ids) {
-      timerManager->callTimer((uint32_t)timerID.asInt());
+    } else {
+      for (const auto& timerID : ids) {
+        timerManager->callTimer((uint32_t)timerID.asInt());
+      }
     }
-#endif
   }
 }
 
 namespace {
-#if LOOM_JS_ON_MAIN
+// Only called (from ReactChoreographer) when JavaScript runs on the UI thread.
 void reactFrameClockOnFrame(jni::alias_ref<jclass>, jlong frameTimeNanos) {
   FrameClock::onFrame(frameTimeNanos);
 }
-#endif
+
+// The app's startup setting (LoomJavaScriptThread.kt), before the JS thread or scheduler exist.
+void loomJavaScriptThreadSet(jni::alias_ref<jclass>, jboolean onUIThread) {
+  LoomJavaScriptThread::set(onUIThread == JNI_TRUE);
+}
 } // namespace
 
 void JJSTimerExecutor::registerNatives() {
-#if LOOM_JS_ON_MAIN
+  jni::registerNatives(
+      "com/facebook/react/common/LoomJavaScriptThread",
+      {makeNativeMethod("nativeSet", loomJavaScriptThreadSet)});
+  // Registration is harmless in either mode; the hooks below are only reached from main-mode code.
   jni::registerNatives(
       "com/facebook/react/modules/core/ReactFrameClock",
       {makeNativeMethod("onFrame", reactFrameClockOnFrame)});
@@ -87,7 +95,6 @@ void JJSTimerExecutor::registerNatives() {
     post(cls, jni::JNativeRunnable::newObjectCxxArgs(std::move(task)).get(), delayNanos / 1000000);
   };
   LoomRuntimeHooks::install(hooks);
-#endif
 #if RN_JANK_REPORTER
   // Loom (debug): the watchdog samples the main thread's Java stack
   // through this while a JS task is over budget.

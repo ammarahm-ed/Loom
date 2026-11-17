@@ -25,13 +25,13 @@ class LoomBuildConfigModule(reactContext: ReactApplicationContext) :
   @ReactMethod
   fun getSwitches(promise: Promise) {
     val switches = Arguments.createMap()
-    switches.putBoolean("rnUiThread", flag("LOOM_JS_ON_MAIN"))
+    switches.putBoolean("rnUiThread", jsOnUiThread())
     switches.putBoolean("loom", flag("LOOM_RENDERER"))
     switches.putBoolean("loomWorker", flag("LOOM_WORKER"))
     switches.putBoolean("profile", flag("LOOM_PROFILE"))
     // Stock react-android has none of these fields: that is how the benchmark's baseline build,
     // which uses the prebuilt artifacts from Maven, tells itself apart from an all-off Loom build.
-    switches.putBoolean("stock", !hasFlag("LOOM_JS_ON_MAIN"))
+    switches.putBoolean("stock", !hasFlag("LOOM_RENDERER"))
     promise.resolve(switches)
   }
 
@@ -48,6 +48,22 @@ class LoomBuildConfigModule(reactContext: ReactApplicationContext) :
     map.putDouble("javaKb", ((rt.totalMemory() - rt.freeMemory()) / 1024).toDouble())
     return map
   }
+
+  // Where JavaScript runs is the app's startup setting (`loom.js`), read by Loom's ReactInstance; the
+  // class is absent from stock React Native.
+  private fun jsOnUiThread(): Boolean =
+      runCatching {
+            Class.forName("com.facebook.react.common.LoomJavaScriptThread")
+                .getMethod("isOnUIThread")
+                .invoke(null) as Boolean
+          }
+          .getOrDefault(false)
+
+  /** The thread JavaScript is running on right now (a blocking sync method runs on the JS thread). */
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun jsThread(): String =
+      "main=" + (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) +
+          " name=" + Thread.currentThread().name
 
   // Read reflectively so the same app source compiles against stock React Native too.
   private fun field(name: String) =
