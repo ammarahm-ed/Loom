@@ -140,7 +140,7 @@ bool LoomRenderer::isConnected(Tag tag) const {
   if (!exists(tag)) {
     return false;
   }
-  std::unordered_set<Tag> visited;
+  TagHashSet visited;
   auto current = tag;
   while (current != 0 && visited.insert(current).second) {
     if (current == rootTag_) {
