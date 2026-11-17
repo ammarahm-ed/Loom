@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Build the rncore xcframeworks the way RN's .github/workflows/prebuild-ios-core.yml does (slices ios,
 # ios-simulator, mac-catalyst) for the published Loom configuration: loom.renderer=true, worker on,
-# JavaScript on LOOM_JS=background|main. Tarballs land in $OUT/<js>/ in RN's naming:
+# JavaScript thread chosen at app startup (not a build axis). Tarballs land in $OUT/ in RN's naming:
 #   ReactCore{Debug,Release}.xcframework.tar.gz, ReactCore{..}.framework.dSYM.tar.gz,
 #   ReactNativeHeaders{..}.xcframework.tar.gz
 # ReactNativeDependencies and Hermes are RN's own (the prebuild setup step downloads them from
 # com.facebook.react:react-native-artifacts and com.facebook.hermes:hermes-ios): Loom does not change them.
 # Flavors: Debug, Release (lean), ReleaseProfiling (Release with DevTools/tracing). Every flavor compiles Fabric's
 # renderer out and keeps all of RN's exports of the same flavor (two passes, export stubs).
-# Usage: LOOM_JS=background ios.sh [Debug] [Release] [ReleaseProfiling]   (default: all three)
+# Usage: ios.sh [Debug] [Release] [ReleaseProfiling]   (default: all three)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT/tools/prebuild/casefs.sh"
@@ -16,11 +16,10 @@ WORK="${LOOM_PREBUILD_DIR:-$ROOT/.local/cs}"; loom_require_case_sensitive "$WORK
 . "$ROOT/tools/prebuild/ccache.sh"; loom_ccache_setup "$WORK"
 trap 'command -v ccache >/dev/null && [ "${LOOM_CCACHE:-1}" = 1 ] && ccache --show-stats || true' EXIT
 SRC="$WORK/rn-src/packages/react-native"
-JS="${LOOM_JS:-background}"
-OUT="${LOOM_IOS_OUT:-$WORK/ios-out}/$JS"
+OUT="${LOOM_IOS_OUT:-$WORK/ios-out}"
 export HERMES_VERSION="$(sed -n 's/^HERMES_VERSION_NAME=//p' "$SRC/sdks/hermes-engine/version.properties")"
 # Read by the patched Package.swift (tools/prebuild/package-swift-loom.patch).
-export RCT_LOOM_RENDERER_IOS=1 RCT_LOOM_JS_IOS="$JS"
+export RCT_LOOM_RENDERER_IOS=1
 mkdir -p "$OUT"
 cd "$SRC"
 if [ $# -gt 0 ]; then FLAVORS=("$@"); else FLAVORS=(Debug Release ReleaseProfiling); fi

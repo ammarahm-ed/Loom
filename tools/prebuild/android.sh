@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build the Android variants (debug, debugOptimized, release; 4 ABIs) the way RN's release does
 # (.github/actions/build-android: publishAllToMavenTempLocal with stable Hermes) and publish
-# io.github.ammarahm-ed:react-android (LOOM_JS=background, default) or react-android-jsmain (LOOM_JS=main)
+# io.github.ammarahm-ed:react-android (one build serves both JavaScript-thread modes)
 # to the LOCAL Maven repo. LOOM_PROFILING=1 builds and publishes the release-profiling variant instead
-# (react-android[-jsmain]-profiling; release only). Published config: loom.renderer=true,.
+# (react-android-profiling; release only). Published config: loom.renderer=true,.
 # Nothing is uploaded anywhere.
 #
 # Every flavor compiles Fabric's renderer out and keeps every export of React Native's library of the same
@@ -19,7 +19,6 @@ trap 'command -v ccache >/dev/null && [ "${LOOM_CCACHE:-1}" = 1 ] && ccache --sh
 SRC="$WORK/rn-src"
 REPO="${LOOM_MAVEN_LOCAL:-$ROOT/.local/maven-local}"
 export LOOM_MAVEN_REPO="$REPO"
-export LOOM_JS="${LOOM_JS:-background}"
 # The NDK React Native pins (libs.versions.toml ndkVersion), never a copy of the number: a React Native
 # upgrade that moves it must not silently build with the old one.
 NDK_VERSION="$(sed -n 's/^ndkVersion = "\(.*\)"/\1/p' "$SRC/packages/react-native/gradle/libs.versions.toml")"
@@ -29,7 +28,7 @@ export ANDROID_NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
 BASE="${LOOM_BASELINE_DIR:-$ROOT/.local/rn-baseline/android}"
 VER="$(node -p "require('$ROOT/packages/react-native-loom/overrides.json').upstream.version")"
 cd "$SRC"
-GRADLE=(./gradlew --init-script "$ROOT/tools/prebuild/loom-publish.init.gradle" -Preact.internal.useHermesStable=true -Ploom.renderer=true -Ploom.js="$LOOM_JS")
+GRADLE=(./gradlew --init-script "$ROOT/tools/prebuild/loom-publish.init.gradle" -Preact.internal.useHermesStable=true -Ploom.renderer=true)
 SUFFIX=""
 if [ "${LOOM_PROFILING:-0}" = 1 ]; then
   GRADLE+=(-Ploom.releaseProfiling=true -Ploom.publishVariants=release)
@@ -60,7 +59,7 @@ for v in "${VARIANTS[@]}"; do
 done
 LOOM_SKIP_NATIVE=1 "${GRADLE[@]}" :packages:react-native:ReactAndroid:publishAllPublicationsToLoomLocalRepository "$@"
 # Verify the published AARs: prefab header paths must equal RN's baseline (case-sensitively), plus Loom's own.
-AID=react-android; [ "$LOOM_JS" = main ] && AID=react-android-jsmain; AID="$AID$SUFFIX"
+AID="react-android$SUFFIX"
 V="${LOOM_PUBLISH_VERSION:-$VER}"   # published version; the baseline is React Native's own ($VER)
 # A publication with a single variant (release profiling) has no classifier on its AAR.
 aar_of() { local f="$REPO/io/github/ammarahm-ed/$AID/$V/$AID-$V-$1.aar"; [ -f "$f" ] || f="$REPO/io/github/ammarahm-ed/$AID/$V/$AID-$V.aar"; echo "$f"; }
