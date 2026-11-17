@@ -234,6 +234,18 @@ struct LoomPlatformTraits {
   bool insertsCarryInitialLayout{false};
 
   /**
+   * Opt-in. When a subtree is unmounted, Loom (like Fabric) emits a
+   * `DirectRemoveOperation` for every edge inside it before the deletes. With
+   * this set, only the subtree root's remove (from its surviving parent) is
+   * emitted: a host that sets it detaches a deleted view's children itself
+   * when it deletes the view. A descendant that moves out of the removed
+   * subtree in the same batch still gets its remove. Default false: every
+   * edge's remove is emitted, as Fabric does and as hosts and libraries may
+   * rely on.
+   */
+  bool removesSubtreeRootOnly{false};
+
+  /**
    * Runs `body(0..count-1)`, possibly in parallel, and returns when every call
    * has. Null: text is not measured speculatively, and the `parallelText`
    * setting has no effect. Required for `parallelText`.
