@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -25,6 +26,7 @@
 #include <react/renderer/components/view/ViewComponentDescriptor.h>
 #include <react/renderer/core/EventDispatcher.h>
 #include <react/loom/Loom.h>
+#include <yoga/event/event.h>
 #include <react/renderer/loom/binding/LoomBinding.h>
 #include <react/renderer/uimanager/UIManager.h>
 
@@ -807,6 +809,171 @@ TEST_F(LoomHeadlessBindingTest, GridMountProbe) {
   }
   LoomPlatformTraits::install(host_->traits());
   LoomSettings::resetForTesting();
+}
+
+/**
+ * A probe, not a check: what one small change costs on a mounted grid. Mounts
+ * LOOM_PROBE_CELLS (5000 by default) cells, then republishes the grid with one
+ * cell changed (text, paint only, width) and with nothing changed. For each it
+ * prints the commit time, the mount operations produced and Yoga's own counts:
+ * nodes laid out, nodes whose cached layout was reused, measure callbacks.
+ */
+TEST_F(LoomHeadlessBindingTest, UpdateCostProbe) {
+  using Access = LoomBindingTestAccess;
+  int cells = 5000;
+  if (const char* value = std::getenv("LOOM_PROBE_CELLS")) {
+    cells = std::max(1, std::atoi(value));
+  }
+  static std::atomic<int> nodeLayouts{0}, layoutPasses{0}, layouts{0},
+      cachedLayouts{0}, measureCallbacks{0}, measureEnds{0};
+  facebook::yoga::Event::subscribe(
+      [](YGNodeConstRef, facebook::yoga::Event::Type type,
+         facebook::yoga::Event::Data data) {
+        using E = facebook::yoga::Event;
+        if (type == E::NodeLayout) {
+          ++nodeLayouts;
+        } else if (type == E::LayoutPassStart) {
+          ++layoutPasses;
+        } else if (type == E::LayoutPassEnd) {
+          const auto* d = data.get<E::LayoutPassEnd>().layoutData;
+          layouts += d->layouts;
+          cachedLayouts += d->cachedLayouts;
+          measureCallbacks += d->measureCallbacks;
+        } else if (type == E::MeasureCallbackEnd) {
+          ++measureEnds;
+        }
+      });
+  const SurfaceId surface = 95;
+  LoomBinding::setSurfaceConstraints(surface, 1000, 1000000, 1000, 1000000, false, 0, 0);
+  const auto token = Access::tokenFor(*binding_, surface);
+  Tag nextTag = surface * 100000 + 2;
+  uint64_t identity = surface * 100000;
+  auto grid = Access::draft(
+      surface, token->generation, ++identity, nextTag++, "View",
+      folly::dynamic::object("flexDirection", "row")("flexWrap", "wrap")(
+          "collapsable", false));
+  std::vector<std::shared_ptr<Access::Draft>> views, paragraphs, texts;
+  for (int cell = 0; cell < cells; ++cell) {
+    auto view = Access::draft(
+        surface, token->generation, ++identity, nextTag++, "View",
+        folly::dynamic::object("width", 48.0)("height", 24.0)("margin", 1.0)(
+            "borderWidth", 1.0)("backgroundColor", 0xffeeeeee)(
+            "collapsable", false));
+    auto paragraph = Access::draft(
+        surface, token->generation, ++identity, nextTag++, "Paragraph",
+        folly::dynamic::object("fontSize", 12.0)("color", 0xff000000)(
+            "numberOfLines", 1));
+    auto text = std::make_shared<Access::Draft>();
+    text->surfaceId = surface;
+    text->surfaceGeneration = token->generation;
+    text->identity = ++identity;
+    text->tag = nextTag++;
+    text->componentName = std::make_shared<const std::string>("RawText");
+    text->roles = LoomPlatformTraits::current().components.classify("RawText");
+    text->initialRawText =
+        std::make_shared<const std::string>("cell " + std::to_string(cell));
+    text->hasInitialProps = true;
+    paragraph->children->push_back(text);
+    view->children->push_back(paragraph);
+    grid->children->push_back(view);
+    views.push_back(view);
+    paragraphs.push_back(paragraph);
+    texts.push_back(text);
+  }
+  const auto commit = [&](const std::shared_ptr<Access::Draft>& root) {
+    nodeLayouts = layoutPasses = layouts = cachedLayouts = measureCallbacks =
+        measureEnds = 0;
+    const auto start = std::chrono::steady_clock::now();
+    Access::publishAsync(*binding_, surface, root);
+    LoomBinding::synchronizeWorkerForUIManager(*uiManager_);
+    host_->drainUIQueue();
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
+    size_t ops = 0;
+    for (const auto& recorded : host_->takeBatches()) {
+      ops += recorded.batch.operations.size();
+    }
+    return std::make_pair(static_cast<long long>(micros), ops);
+  };
+  const auto fresh = [](const std::shared_ptr<Access::Draft>& source) {
+    auto next = std::make_shared<Access::Draft>(*source);
+    next->published = false;
+    next->workerCommitted = false;
+    next->frozenCommit = 0;
+    next->freezeFacts = {};
+    return next;
+  };
+  const auto mountTime = commit(grid);
+  printf("[probe] update-cost: %d cells mounted in %lld us, %zu ops, %d yoga layouts, %d measures\n",
+         cells, mountTime.first, mountTime.second, nodeLayouts.load(), measureEnds.load());
+  // Each scenario clones the path root > view > paragraph > text for one cell.
+  const int rounds = std::getenv("LOOM_PROBE_ROUNDS") ? std::atoi(std::getenv("LOOM_PROBE_ROUNDS")) : 5;
+  const auto scenario = [&](const char* name, int kind) {
+    std::vector<long long> times;
+    for (int round = 0; round < rounds; ++round) {
+      const size_t at = static_cast<size_t>(cells / 2 + round % 20);
+      auto nextGrid = fresh(grid);
+      nextGrid->children =
+          std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>(
+              *grid->children);
+      if (kind != 3) {
+        auto view = fresh(views[at]);
+        std::shared_ptr<Access::Draft> paragraph = paragraphs[at];
+        if (kind == 0) {
+          auto text = fresh(texts[at]);
+          auto textPatch = std::make_shared<Access::Patch>();
+          textPatch->previous = texts[at]->propsTail;
+          textPatch->rawText =
+              std::string("changed ") + std::to_string(round) + name;
+          text->propsTail = textPatch;
+          paragraph = fresh(paragraphs[at]);
+          paragraph->children =
+              std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>(
+                  std::vector<std::shared_ptr<Access::Draft>>{text});
+          view->children =
+              std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>(
+                  std::vector<std::shared_ptr<Access::Draft>>{paragraph});
+        } else {
+          auto patch = std::make_shared<Access::Patch>();
+          patch->previous = views[at]->propsTail;
+          patch->props = kind == 1
+              ? folly::dynamic::object("backgroundColor", 0xff112233 + round)
+              : folly::dynamic::object("width", 40.0 + round);
+          view->propsTail = patch;
+        }
+        (*nextGrid->children)[at] = view;
+      }
+      const auto result = commit(nextGrid);
+      times.push_back(result.first);
+      printf("[probe] update-cost %-9s round %d: %6lld us, %zu ops | yoga: %d node layouts, %d cached, %d measure callbacks, %d passes\n",
+             name, round, result.first, result.second, nodeLayouts.load(),
+             cachedLayouts.load(), measureCallbacks.load(), layoutPasses.load());
+      grid = nextGrid;
+      if (kind != 3) {
+        views[at] = (*nextGrid->children)[at];
+        paragraphs[at] = views[at]->children->front();
+        texts[at] = paragraphs[at]->children->front();
+      }
+    }
+    std::sort(times.begin(), times.end());
+    printf("[probe] update-cost %-9s median %lld us\n", name, times[times.size() / 2]);
+  };
+  scenario("text", 0);
+  scenario("paint", 1);
+  scenario("width", 2);
+  scenario("noop", 3);
+  if (const char* loops = std::getenv("LOOM_PROBE_NOOP_LOOPS")) {
+    for (int i = 0; i < std::atoi(loops); ++i) {
+      auto nextGrid = fresh(grid);
+      nextGrid->children =
+          std::make_shared<std::vector<std::shared_ptr<Access::Draft>>>(
+              *grid->children);
+      commit(nextGrid);
+      grid = nextGrid;
+    }
+  }
+  EXPECT_TRUE(host_->takeFailures().empty());
 }
 
 /**
