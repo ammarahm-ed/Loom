@@ -20,6 +20,8 @@ const config = {
   watchFolders: [__dirname, path.resolve(__dirname, '../../packages/react-native-loom'), exampleLibrary],
   resolver: {
     extraNodeModules: {'react-native-loom-example-library': exampleLibrary},
+    // The stock benchmark skips withLoom, so the example library's react-native imports need the app's node_modules.
+    nodeModulesPaths: [path.join(__dirname, 'node_modules')],
   },
 };
 
