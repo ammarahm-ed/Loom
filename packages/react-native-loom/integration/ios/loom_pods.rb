@@ -103,16 +103,6 @@ module Loom
         + (void)load
         {
           BOOL onUIThread = #{on_main ? 'YES' : 'NO'};
-        #if DEBUG || TARGET_OS_SIMULATOR
-          // Development override, so one installed binary can run both modes:
-          // `xcrun simctl launch <device> <bundle id> -LoomJSThread main|background`.
-          NSString *override = [[NSUserDefaults standardUserDefaults] stringForKey:@"LoomJSThread"];
-          if ([override isEqualToString:@"main"]) {
-            onUIThread = YES;
-          } else if ([override isEqualToString:@"background"]) {
-            onUIThread = NO;
-          }
-        #endif
           LoomSetJavaScriptOnUIThread(onUIThread);
         }
         @end
