@@ -546,6 +546,10 @@ LoomBinding::selectCommitDrafts(
 
   std::function<void(const std::shared_ptr<DraftNode>&)> selectDraft;
   std::function<void(Tag)> retainLiveSubtree;
+  // Set by the root loop for the draft it is about to select: root children
+  // stay selected even when unchanged; only a changed parent's unchanged
+  // children are skipped.
+  bool selectingRoot = false;
   // A retained child is unchanged live structure: recording its root is
   // enough. Its subtree is not walked - that walk made every commit cost the
   // whole tree, and nothing below an unchanged node can be added, removed or
@@ -567,6 +571,7 @@ LoomBinding::selectCommitDrafts(
         draft->surfaceGeneration != surfaceToken.generation) {
       throw std::logic_error("Invalid or stale UI-thread renderer draft");
     }
+    const bool isRoot = std::exchange(selectingRoot, false);
     auto& record = selectionByTag[draft->tag];
     if (record.visit == SelectionRecord::Visit::Active) {
       throw std::logic_error("Cycle in UI-thread renderer draft tree");
@@ -594,6 +599,21 @@ LoomBinding::selectCommitDrafts(
     const bool useLiveChildren = sameLiveIdentity &&
         ((draft->committedSnapshot && !draft->childrenExplicit) ||
          (draft->workerCommitted && draft->retainedLiveChildren == nullptr));
+    // A draft the live node already reflects contributes nothing to the commit:
+    // no pending patch, no compat props, and the same identity, instance handle
+    // and hidden state as the live node. Like a retained live child it is
+    // recorded and not walked, so a commit costs the changed drafts and not
+    // every unchanged sibling React re-listed. Nothing below it can change
+    // without React cloning it, which would make it a different draft.
+    if (!isRoot && useLiveChildren && draft->compatProps == nullptr &&
+        (draft->propsTail == nullptr || draft->propsTail->applied) &&
+        liveRenderer.offscreenHidden(draft->tag) == draft->offscreenHidden &&
+        (draft->roles.isRawText() ||
+         liveRenderer.hasSameInstanceHandle(
+             draft->tag, draft->instanceHandle))) {
+      record.visit = SelectionRecord::Visit::Done;
+      return;
+    }
     record.selectedIndex = selected.size();
     selected.push_back({draft, {}, !useLiveChildren});
     if (!useLiveChildren) {
@@ -653,6 +673,7 @@ LoomBinding::selectCommitDrafts(
     if (++selectionByTag[draft->tag].parentCount > 1) {
       throw std::logic_error("A selected root draft appears more than once");
     }
+    selectingRoot = true;
     selectDraft(draft);
   }
   selection.rootTag =
