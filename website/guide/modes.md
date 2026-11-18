@@ -222,8 +222,7 @@ lays out, and workers do the rest.
 app's lifetime; see [Configuration](/reference/configuration). One prebuilt Loom serves both
 modes, so switching recompiles no React Native or Loom code: change `loom.js` in
 `ios/Podfile.properties.json` or `android/gradle.properties`, then run `pod install` or rebuild
-the app. Debug builds can also switch at launch without a rebuild (`-LoomJSThread main` on
-iOS, `adb shell setprop debug.loom.js main` on Android). Desktop and custom hosts call
+the app. It is a build-time setting: nothing in a built or running app can change it. Desktop and custom hosts call
 `LoomHost::setJavaScriptOnUIThread()` once before the first surface starts. The same
 JavaScript runs in both modes.
 
