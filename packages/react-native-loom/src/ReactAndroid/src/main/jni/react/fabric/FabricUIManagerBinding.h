@@ -133,6 +133,10 @@ class FabricUIManagerBinding : public jni::HybridClass<FabricUIManagerBinding>,
       const Size& minimumSize,
       const Size& maximumSize);
   std::pair<float, float> loomGetScrollOffset(SurfaceId, Tag);
+  LoomLiveReads loomGetLiveReads(
+      SurfaceId,
+      const std::vector<Tag>& scrollTags,
+      Tag locationTag);
   std::optional<std::pair<float, float>>
   loomGetViewLocationInSurface(SurfaceId, Tag);
   void loomReportUnsupportedInlineAttachment(SurfaceId, Tag);

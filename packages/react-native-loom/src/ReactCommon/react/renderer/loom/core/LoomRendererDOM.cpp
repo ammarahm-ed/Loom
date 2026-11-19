@@ -352,6 +352,12 @@ jsi::Value LoomBinding::getDirectDOM(
     if (ref != nullptr && owner != nullptr) {
       requireNativeMetrics(owner, ref->tag);
     }
+    // Pressability measures on every press-in. The metrics below all read the
+    // same live view state; read it from the UI thread once, not once each.
+    std::optional<LoomRenderer::LiveReadScope> liveReads;
+    if (ref != nullptr && owner != nullptr) {
+      liveReads.emplace(*owner, ref->tag, method != "measureLayout");
+    }
     LoomRenderer::Metrics metrics;
     LoomRenderer::Metrics pageMetrics;
     const Tag relativeTag = relativeRef == nullptr ? 0 : tagFor(relativeRef);

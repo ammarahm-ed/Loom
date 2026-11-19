@@ -112,6 +112,10 @@ class LoomAndroidHost final : public LoomHost {
   void setIsJSResponder(SurfaceId, Tag, bool, bool) override;
   void reportUnsupportedInlineAttachment(SurfaceId, Tag) override;
   std::pair<float, float> getScrollOffset(SurfaceId, Tag) override;
+  LoomLiveReads getLiveReads(
+      SurfaceId,
+      const std::vector<Tag>& scrollTags,
+      Tag locationTag) override;
   std::optional<std::pair<float, float>> getViewLocationInSurface(
       SurfaceId,
       Tag) override;

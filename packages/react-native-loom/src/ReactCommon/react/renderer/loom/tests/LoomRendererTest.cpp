@@ -2540,6 +2540,116 @@ TEST(LoomRendererTest, MetricsUseLiveNativeScrollOffsets) {
   EXPECT_FLOAT_EQ(metrics.y, 16);
 }
 
+namespace {
+struct LiveReadCounts {
+  int batches{0};
+  int singleScrolls{0};
+  int singleLocations{0};
+  std::vector<Tag> lastScrollTags;
+  Tag lastLocationTag{0};
+};
+
+// A renderer whose live reads are counted: tag 2 is scrolled by (7, 9) and
+// every view sits at (50, 60) in its surface. Root 1 > scroll view 2 >
+// view 4 > view 3.
+std::unique_ptr<LoomRenderer> makeLiveReadRenderer(LiveReadCounts& counts) {
+  auto operations = testOperations();
+  operations.getScrollOffset = [&counts](SurfaceId, Tag) {
+    ++counts.singleScrolls;
+    return std::pair<float, float>{0, 0};
+  };
+  operations.getViewLocationInSurface =
+      [&counts](SurfaceId, Tag) -> std::optional<std::pair<float, float>> {
+    ++counts.singleLocations;
+    return std::pair<float, float>{50, 60};
+  };
+  operations.readLive = [&counts](
+                            SurfaceId,
+                            const std::vector<Tag>& scrollTags,
+                            Tag locationTag) {
+    ++counts.batches;
+    counts.lastScrollTags = scrollTags;
+    counts.lastLocationTag = locationTag;
+    LoomLiveReads reads;
+    for (const Tag tag : scrollTags) {
+      reads.scrollOffsets.push_back(
+          tag == 2 ? std::pair<float, float>{7, 9}
+                   : std::pair<float, float>{0, 0});
+    }
+    if (locationTag != 0) {
+      reads.location = std::pair<float, float>{50, 60};
+    }
+    return reads;
+  };
+  auto renderer = std::make_unique<LoomRenderer>(1, std::move(operations));
+  makeRoot(*renderer, 100, 100);
+  renderer->createNode(2, "RCTScrollView", sizedProps(80));
+  renderer->createNode(4, "RCTView", sizedProps(70));
+  renderer->createNode(
+      3,
+      "RCTView",
+      folly::dynamic::object("width", 20.0)("height", 20.0)("marginLeft", 30.0)(
+          "marginTop", 25.0));
+  renderer->setChildren(4, {3});
+  renderer->setChildren(2, {4});
+  renderer->completeRoot(1, {2});
+  return renderer;
+}
+} // namespace
+
+TEST(LoomRendererTest, MetricsReadEveryAncestorScrollOffsetInOneBatch) {
+  LiveReadCounts counts;
+  auto renderer = makeLiveReadRenderer(counts);
+
+  LoomRenderer::Metrics metrics;
+  ASSERT_TRUE(renderer->metricsRelativeTo(3, 0, metrics, false, true));
+  // The same answer as reading each ancestor on its own...
+  EXPECT_FLOAT_EQ(metrics.x, 23);
+  EXPECT_FLOAT_EQ(metrics.y, 16);
+  // ...but every ancestor (4, 2 and the root) is read in a single call.
+  EXPECT_EQ(counts.batches, 1);
+  EXPECT_EQ(counts.singleScrolls, 0);
+  EXPECT_EQ(counts.lastScrollTags.size(), 3u);
+  EXPECT_EQ(counts.lastLocationTag, 0);
+}
+
+TEST(LoomRendererTest, LiveReadScopeAnswersEveryMetricFromOneRead) {
+  LiveReadCounts counts;
+  auto renderer = makeLiveReadRenderer(counts);
+
+  {
+    LoomRenderer::LiveReadScope scope(*renderer, 3, true);
+    EXPECT_EQ(counts.batches, 1);
+    EXPECT_EQ(counts.lastLocationTag, 3);
+
+    // What `measure` computes for a view: its size relative to the root, its
+    // origin relative to its parent, and its live location in the surface.
+    LoomRenderer::Metrics fromRoot;
+    LoomRenderer::Metrics fromParent;
+    ASSERT_TRUE(renderer->metricsRelativeTo(3, 0, fromRoot));
+    ASSERT_TRUE(renderer->metricsRelativeTo(3, 4, fromParent));
+    ASSERT_TRUE(renderer->metricsRelativeTo(3, 0, fromRoot, false, true));
+    EXPECT_FLOAT_EQ(fromRoot.x, 23);
+    const auto location = renderer->viewLocationInSurface(3);
+    ASSERT_TRUE(location.has_value());
+    EXPECT_FLOAT_EQ(location->first, 50);
+    EXPECT_FLOAT_EQ(location->second, 60);
+
+    // Nothing above went back to the host.
+    EXPECT_EQ(counts.batches, 1);
+    EXPECT_EQ(counts.singleScrolls, 0);
+    EXPECT_EQ(counts.singleLocations, 0);
+  }
+
+  // Outside the scope every read is live again.
+  const auto before = counts.batches;
+  LoomRenderer::Metrics metrics;
+  ASSERT_TRUE(renderer->metricsRelativeTo(3, 0, metrics, false, true));
+  EXPECT_EQ(counts.batches, before + 1);
+  (void)renderer->viewLocationInSurface(3);
+  EXPECT_EQ(counts.singleLocations, 1);
+}
+
 TEST(LoomRendererTest, ScrollContentBoundsUseLaidOutContentChild) {
   Rect reportedBounds{};
   int scrollBoundsUpdates = 0;

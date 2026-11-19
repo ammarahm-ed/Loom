@@ -19,6 +19,7 @@
 #include <react/renderer/attributedstring/ParagraphAttributes.h>
 #include <react/renderer/mapbuffer/MapBuffer.h>
 #include <react/renderer/mounting/ShadowView.h>
+#include <react/renderer/loom/host/LoomLiveReads.h>
 #include <react/renderer/loom/mounting/LoomMountBatch.h>
 #include <react/renderer/loom/text/LoomTextMeasurement.h>
 #include <react/renderer/uimanager/primitives.h>
@@ -94,6 +95,15 @@ class FabricMountingManager final {
       Tag tag,
       const std::shared_ptr<const State>& state);
   std::pair<float, float> directGetScrollOffset(SurfaceId surfaceId, Tag tag);
+  /**
+   * The scroll positions of `scrollTags` and, when `locationTag` is not zero,
+   * that view's location, in one call to Java. Without a location it is safe
+   * on any thread; the location needs the UI thread.
+   */
+  LoomLiveReads directGetLiveReads(
+      SurfaceId surfaceId,
+      const std::vector<Tag>& scrollTags,
+      Tag locationTag);
   std::optional<std::pair<float, float>> directGetViewLocationInSurface(
       SurfaceId surfaceId,
       Tag tag);

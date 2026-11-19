@@ -73,7 +73,7 @@ struct LoomBindingTestAccess {
       LoomBinding& binding,
       SurfaceId surfaceId,
       Tag tag) {
-    return binding.readOnUIThread(
+    return binding.readOnUIThread<std::pair<float, float>>(
         [surfaceId, tag](LoomHost& host)
             -> std::optional<std::pair<float, float>> {
           return host.getScrollOffset(surfaceId, tag);

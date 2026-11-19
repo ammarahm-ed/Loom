@@ -185,6 +185,7 @@ LoomPlatformTraits LoomAndroidHost::platformTraits() {
   traits.components = loomViewManagerComponentTable();
   traits.sendsPropDiffs = loomSendsPropDiffs;
   traits.hasPreparedTextLayout = true;
+  traits.liveScrollOffsetsOnAnyThread = true;
   traits.log = loomLogToLogcat;
   traits.isUIThread = loomIsUIThread;
   traits.withWorkerScope = loomWithWorkerScope;
@@ -383,6 +384,19 @@ std::pair<float, float> LoomAndroidHost::getScrollOffset(SurfaceId surfaceId, Ta
   auto* binding = binding_.load();
   return binding == nullptr ? std::pair<float, float>{0, 0}
                             : binding->loomGetScrollOffset(surfaceId, tag);
+}
+
+LoomLiveReads LoomAndroidHost::getLiveReads(
+    SurfaceId surfaceId,
+    const std::vector<Tag>& scrollTags,
+    Tag locationTag) {
+  auto* binding = binding_.load();
+  if (binding == nullptr) {
+    LoomLiveReads reads;
+    reads.scrollOffsets.assign(scrollTags.size(), {0, 0});
+    return reads;
+  }
+  return binding->loomGetLiveReads(surfaceId, scrollTags, locationTag);
 }
 
 std::optional<std::pair<float, float>> LoomAndroidHost::getViewLocationInSurface(

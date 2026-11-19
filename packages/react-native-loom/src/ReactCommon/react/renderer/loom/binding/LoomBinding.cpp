@@ -741,17 +741,61 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
       };
   operations.getScrollOffset = [this](SurfaceId surface, Tag tag) {
     // Live view state belongs to the UI thread; a JS-thread reader asks it.
-    return readOnUIThread(
-               [surface, tag](LoomHost& h)
-                   -> std::optional<std::pair<float, float>> {
+    using Offset = std::pair<float, float>;
+    return readOnUIThread<Offset>(
+               [surface, tag](LoomHost& h) -> std::optional<Offset> {
                  return h.getScrollOffset(surface, tag);
                },
-               std::pair<float, float>{0, 0})
-        .value_or(std::pair<float, float>{0, 0});
+               Offset{0, 0})
+        .value_or(Offset{0, 0});
+  };
+  operations.readLive = [this](
+                            SurfaceId surface,
+                            const std::vector<Tag>& scrollTags,
+                            Tag locationTag) {
+    // One trip to the UI thread for all of it: a JS-thread reader pays a wake
+    // and a wait on the UI thread for every trip.
+    const auto empty = [&scrollTags] {
+      LoomLiveReads reads;
+      reads.scrollOffsets.assign(scrollTags.size(), {0, 0});
+      return reads;
+    };
+    const auto& traits = LoomPlatformTraits::current();
+    if (!worker_->onUIThread() && !traits.liveReadsOnAnyThread &&
+        traits.liveScrollOffsetsOnAnyThread) {
+      // The scroll positions are plain reads: answer them here. Only the
+      // view's location needs the UI thread.
+      auto reads = empty();
+      try {
+        reads = host_->getLiveReads(surface, scrollTags, 0);
+      } catch (...) {
+        reads = empty();
+      }
+      if (locationTag != 0) {
+        reads.location =
+            readOnUIThread<LoomLiveReads>(
+                [surface, locationTag](
+                    LoomHost& h) -> std::optional<LoomLiveReads> {
+                  return h.getLiveReads(surface, {}, locationTag);
+                },
+                LoomLiveReads{})
+                .value_or(LoomLiveReads{})
+                .location;
+      }
+      return reads;
+    }
+    return readOnUIThread<LoomLiveReads>(
+               [surface, scrollTags, locationTag](
+                   LoomHost& h) -> std::optional<LoomLiveReads> {
+                 return h.getLiveReads(surface, scrollTags, locationTag);
+               },
+               empty())
+        .value_or(empty());
   };
   operations.getViewLocationInSurface = [this](SurfaceId surface, Tag tag)
       -> std::optional<std::pair<float, float>> {
-    return readOnUIThread(
+    using Location = std::pair<float, float>;
+    return readOnUIThread<Location>(
         [surface, tag](LoomHost& h) {
           return h.getViewLocationInSurface(
               surface, tag);
@@ -906,9 +950,10 @@ void LoomBinding::refreshCanMeasureTextOnWorker() {
     canMeasureTextOnWorker_ = t->canMeasureOnWorker() ? 1 : 0;
 }
 
-std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
-    std::function<std::optional<std::pair<float, float>>(LoomHost&)> read,
-    std::optional<std::pair<float, float>> fallback) {
+template <typename T>
+std::optional<T> LoomBinding::readOnUIThread(
+    std::function<std::optional<T>(LoomHost&)> read,
+    std::optional<T> fallback) {
   if (worker_->onUIThread())
     return read(*host_);
   // A host whose live state is thread-safe answers on the calling thread.
@@ -926,12 +971,12 @@ std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
     std::mutex mutex;
     std::condition_variable ready;
     bool done{false};
-    std::optional<std::pair<float, float>> value;
+    std::optional<T> value;
   };
   auto reply = std::make_shared<Reply>();
   const std::weak_ptr<Lifetime> weakLifetime = lifetime_;
   uiExecutor([weakLifetime, reply, read = std::move(read)] {
-    std::optional<std::pair<float, float>> value;
+    std::optional<T> value;
     if (auto lifetime = weakLifetime.lock()) {
       std::shared_lock held(lifetime->gate);
       if (auto* binding = lifetime->binding) {
@@ -963,6 +1008,12 @@ std::optional<std::pair<float, float>> LoomBinding::readOnUIThread(
   }
   return reply->value;
 }
+
+// The headless binding test calls this from another translation unit.
+template std::optional<std::pair<float, float>>
+LoomBinding::readOnUIThread<std::pair<float, float>>(
+    std::function<std::optional<std::pair<float, float>>(LoomHost&)>,
+    std::optional<std::pair<float, float>>);
 
 } // namespace facebook::react
 #endif // LOOM_RENDERER

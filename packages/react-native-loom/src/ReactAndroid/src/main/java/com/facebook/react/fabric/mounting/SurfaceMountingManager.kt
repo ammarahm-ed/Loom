@@ -1311,8 +1311,13 @@ internal constructor(
         )
   }
 
-  /** Live scroll position for Loom renderer measurement; zero means no mounted view yet. */
-  @UiThread
+  /**
+   * Live scroll position for Loom renderer measurement; zero means no mounted view yet.
+   *
+   * Safe on any thread: the view comes from the registry under its read lock and the position is
+   * two int fields, so a reader on another thread sees a value the UI thread held a moment ago,
+   * exactly as if its own read had been queued just before the UI thread's next scroll.
+   */
   internal fun getLiveScrollOffset(reactTag: Int): Long {
     val view = getNullableViewState(reactTag)?.view ?: return 0L
     // Yoga layout metrics are in DIP, while Android View scroll positions are
