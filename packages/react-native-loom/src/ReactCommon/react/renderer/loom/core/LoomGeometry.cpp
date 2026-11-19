@@ -538,6 +538,32 @@ bool LoomRenderer::metricsRelativeTo(
   const auto ownHeight = YGNodeLayoutGetHeight(node->yogaNode);
   DirectTransform accumulated;
 
+  // Every ancestor's live scroll offset, read together. Each separate read of
+  // live view state makes a JavaScript thread wait for the UI thread, and
+  // Pressability measures on every press-in.
+  std::vector<std::pair<float, float>> liveScrolls;
+  size_t nextScroll = 0;
+  if (includeScroll && operations_.readLive) {
+    std::vector<Tag> scrollTags;
+    for (const auto* current = node; current != nullptr;) {
+      if (ancestorTag != 0 && current->tag == ancestorTag) {
+        break;
+      }
+      if (current->parent == 0) {
+        break;
+      }
+      const auto* parent = find(current->parent);
+      if (parent == nullptr) {
+        break;
+      }
+      scrollTags.push_back(parent->tag);
+      current = parent;
+    }
+    if (!scrollTags.empty()) {
+      liveScrolls = liveScrollOffsets(scrollTags);
+    }
+  }
+
   // Build one local-to-ancestor matrix. In particular, zero means “surface
   // root”, not “stop after the first parent”. The old implementation did the
   // latter, which made nested measureInWindow/bounding-rect calls wrong.
@@ -579,8 +605,12 @@ bool LoomRenderer::metricsRelativeTo(
       return false;
     }
     if (includeScroll) {
-      const auto scroll = liveScrollOffsetOf(
-          operations_, surfaceId_, parent->tag, parent->props);
+      const auto scroll = nextScroll < liveScrolls.size()
+          ? DirectScrollOffset{liveScrolls[nextScroll].first,
+                               liveScrolls[nextScroll].second}
+          : liveScrollOffsetOf(
+                operations_, surfaceId_, parent->tag, parent->props);
+      nextScroll += 1;
 #if LOOM_PROFILE
       std::fprintf(
           stderr,
@@ -608,8 +638,87 @@ bool LoomRenderer::metricsRelativeTo(
   return true;
 }
 
+thread_local LoomRenderer::LiveReadScope* LoomRenderer::activeLiveReads_ =
+    nullptr;
+
+LoomRenderer::LiveReadScope::LiveReadScope(
+    const LoomRenderer& renderer,
+    Tag tag,
+    bool withLocation)
+    : renderer_(&renderer), previous_(activeLiveReads_) {
+  if (renderer.operations_.readLive) {
+    std::vector<Tag> scrollTags;
+    for (const auto* node = renderer.find(tag); node != nullptr;) {
+      if (node->parent == 0) {
+        break;
+      }
+      const auto* parent = renderer.find(node->parent);
+      if (parent == nullptr) {
+        break;
+      }
+      scrollTags.push_back(parent->tag);
+      node = parent;
+    }
+    if (withLocation) {
+      locationTag_ = tag;
+    }
+    if (!scrollTags.empty() || withLocation) {
+      auto reads = renderer.operations_.readLive(
+          renderer.surfaceId_, scrollTags, locationTag_);
+      for (size_t index = 0;
+           index < scrollTags.size() && index < reads.scrollOffsets.size();
+           ++index) {
+        scroll_[scrollTags[index]] = reads.scrollOffsets[index];
+      }
+      location_ = reads.location;
+    }
+  }
+  activeLiveReads_ = this;
+}
+
+LoomRenderer::LiveReadScope::~LiveReadScope() {
+  activeLiveReads_ = previous_;
+}
+
+std::vector<std::pair<float, float>> LoomRenderer::liveScrollOffsets(
+    const std::vector<Tag>& tags) const {
+  auto* scope = activeLiveReads_ != nullptr && activeLiveReads_->renderer_ == this
+      ? activeLiveReads_
+      : nullptr;
+  std::vector<std::pair<float, float>> offsets(tags.size(), {0, 0});
+  std::vector<Tag> missing;
+  std::vector<size_t> missingIndex;
+  for (size_t index = 0; index < tags.size(); ++index) {
+    if (scope != nullptr) {
+      const auto known = scope->scroll_.find(tags[index]);
+      if (known != scope->scroll_.end()) {
+        offsets[index] = known->second;
+        continue;
+      }
+    }
+    missing.push_back(tags[index]);
+    missingIndex.push_back(index);
+  }
+  if (!missing.empty()) {
+    const auto reads = operations_.readLive(surfaceId_, missing, 0);
+    for (size_t index = 0;
+         index < missing.size() && index < reads.scrollOffsets.size();
+         ++index) {
+      offsets[missingIndex[index]] = reads.scrollOffsets[index];
+      if (scope != nullptr) {
+        scope->scroll_[missing[index]] = reads.scrollOffsets[index];
+      }
+    }
+  }
+  return offsets;
+}
+
 std::optional<std::pair<float, float>> LoomRenderer::viewLocationInSurface(
     Tag tag) const {
+  if (activeLiveReads_ != nullptr && activeLiveReads_->renderer_ == this &&
+      activeLiveReads_->locationTag_ == tag) {
+    return activeLiveReads_->location_;
+  }
   if (!operations_.getViewLocationInSurface) {
     return std::nullopt;
   }

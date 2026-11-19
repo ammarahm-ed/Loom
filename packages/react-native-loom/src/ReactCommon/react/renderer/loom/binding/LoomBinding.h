@@ -528,9 +528,10 @@ class LoomBinding final : public UIManagerBinding {
    * and a stalled UI thread yields `fallback` after a logged timeout. With
    * `LoomPlatformTraits::liveReadsOnAnyThread` it is a direct call everywhere.
    */
-  std::optional<std::pair<float, float>> readOnUIThread(
-      std::function<std::optional<std::pair<float, float>>(LoomHost&)> read,
-      std::optional<std::pair<float, float>> fallback);
+  template <typename T>
+  std::optional<T> readOnUIThread(
+      std::function<std::optional<T>(LoomHost&)> read,
+      std::optional<T> fallback);
   bool forceNextCommitSync_{false};
   Tag replayingNativePropsTag_{0};
   const folly::dynamic* replayingNativeProps_{nullptr};

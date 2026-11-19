@@ -1047,6 +1047,18 @@ std::pair<float, float> FabricUIManagerBinding::loomGetScrollOffset(
   return {0, 0};
 }
 
+LoomLiveReads FabricUIManagerBinding::loomGetLiveReads(
+    SurfaceId surfaceId,
+    const std::vector<Tag>& scrollTags,
+    Tag locationTag) {
+  if (auto manager = getMountingManager("loomGetLiveReads")) {
+    return manager->directGetLiveReads(surfaceId, scrollTags, locationTag);
+  }
+  LoomLiveReads reads;
+  reads.scrollOffsets.assign(scrollTags.size(), {0, 0});
+  return reads;
+}
+
 std::optional<std::pair<float, float>>
 FabricUIManagerBinding::loomGetViewLocationInSurface(
     SurfaceId surfaceId,

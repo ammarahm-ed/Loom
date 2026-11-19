@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <folly/dynamic.h>
+#include <react/renderer/loom/host/LoomLiveReads.h>
 #include <react/renderer/attributedstring/AttributedString.h>
 #include <react/renderer/attributedstring/ParagraphAttributes.h>
 #include <react/renderer/attributedstring/TextAttributes.h>
@@ -316,6 +317,27 @@ class LoomHost {
   /** The live scroll position of a mounted scroll view, in DIP. */
   virtual std::pair<float, float> getScrollOffset(SurfaceId, Tag) {
     return {0, 0};
+  }
+
+  /**
+   * The scroll positions of `scrollTags`, in the order given, and the origin
+   * of `locationTag` (when not zero). A measurement reads every ancestor of the
+   * measured view and the view's own location; answering them together lets a
+   * JS-thread caller cross to the UI thread once for all of them.
+   */
+  virtual LoomLiveReads getLiveReads(
+      SurfaceId surfaceId,
+      const std::vector<Tag>& scrollTags,
+      Tag locationTag) {
+    LoomLiveReads reads;
+    reads.scrollOffsets.reserve(scrollTags.size());
+    for (const Tag tag : scrollTags) {
+      reads.scrollOffsets.push_back(getScrollOffset(surfaceId, tag));
+    }
+    if (locationTag != 0) {
+      reads.location = getViewLocationInSurface(surfaceId, locationTag);
+    }
+    return reads;
   }
 
   /**
