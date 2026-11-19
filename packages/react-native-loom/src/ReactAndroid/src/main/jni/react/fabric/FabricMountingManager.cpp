@@ -584,6 +584,51 @@ std::pair<float, float> FabricMountingManager::directGetScrollOffset(
   return {std::bit_cast<float>(xBits), std::bit_cast<float>(yBits)};
 }
 
+LoomLiveReads FabricMountingManager::directGetLiveReads(
+    SurfaceId surfaceId,
+    const std::vector<Tag>& scrollTags,
+    Tag locationTag) {
+  static auto method = JFabricUIManager::javaClassStatic()->getMethod<
+      jni::JArrayLong::javaobject(jint, jni::JArrayInt::javaobject, jint)>(
+      "loomDirectGetLiveReads");
+  auto tags = jni::JArrayInt::newArray(scrollTags.size());
+  if (!scrollTags.empty()) {
+    tags->setRegion(
+        0,
+        static_cast<jsize>(scrollTags.size()),
+        reinterpret_cast<const jint*>(scrollTags.data()));
+  }
+  auto packed = method(
+      javaUIManager_,
+      static_cast<jint>(surfaceId),
+      tags.get(),
+      static_cast<jint>(locationTag));
+  const auto unpack = [](jlong value) {
+    const auto xBits =
+        static_cast<uint32_t>(static_cast<uint64_t>(value) >> 32);
+    const auto yBits = static_cast<uint32_t>(value);
+    return std::pair<float, float>{
+        std::bit_cast<float>(xBits), std::bit_cast<float>(yBits)};
+  };
+  LoomLiveReads reads;
+  reads.scrollOffsets.assign(scrollTags.size(), {0, 0});
+  if (packed == nullptr) {
+    return reads;
+  }
+  const auto length = static_cast<size_t>(packed->size());
+  const auto values = packed->getRegion(0, static_cast<jsize>(length));
+  for (size_t index = 0; index < scrollTags.size() && index < length; ++index) {
+    reads.scrollOffsets[index] = unpack(values[index]);
+  }
+  if (locationTag != 0 && length > scrollTags.size()) {
+    const auto location = unpack(values[scrollTags.size()]);
+    if (std::isfinite(location.first) && std::isfinite(location.second)) {
+      reads.location = location;
+    }
+  }
+  return reads;
+}
+
 std::optional<std::pair<float, float>>
 FabricMountingManager::directGetViewLocationInSurface(
     SurfaceId surfaceId,

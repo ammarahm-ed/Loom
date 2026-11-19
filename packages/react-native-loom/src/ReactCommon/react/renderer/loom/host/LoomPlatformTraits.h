@@ -219,6 +219,16 @@ struct LoomPlatformTraits {
   bool liveReadsOnAnyThread{false};
 
   /**
+   * `LoomHost::getLiveReads` with no `locationTag` (scroll positions only) is
+   * safe to call from any thread, and cheap: the host reads plain view
+   * fields, not state that only the UI thread may touch. A JavaScript-thread
+   * measurement then reads the scroll positions on its own thread, and only a
+   * view's location (which walks the view hierarchy) goes to the UI thread.
+   * Android sets it, where a scroll position is `View.getScrollX()`.
+   */
+  bool liveScrollOffsetsOnAnyThread{false};
+
+  /**
    * Opt-in, for hosts that would rather receive a new view's first frame with
    * its insert, as Fabric's Insert mutation carries the view's layout metrics.
    * For a node created in the batch (in this commit, or in its early-create

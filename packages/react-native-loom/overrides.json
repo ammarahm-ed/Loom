@@ -807,6 +807,12 @@
     },
     {
       "type": "platform",
+      "file": "ReactCommon/react/renderer/loom/host/LoomLiveReads.h",
+      "area": "renderer-core",
+      "layer": "core"
+    },
+    {
+      "type": "platform",
       "file": "ReactCommon/react/renderer/loom/host/LoomPlatformTraits.h",
       "area": "renderer-core",
       "layer": "core"

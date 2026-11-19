@@ -387,6 +387,17 @@ public class FabricUIManager
     return mLoomViewApplier.getScrollOffsetPacked(surfaceId, reactTag);
   }
 
+  /**
+   * The scroll positions of {@code scrollTags} and, when {@code locationTag} is not zero, that
+   * view's location, packed like {@link #loomDirectGetScrollOffset}; the last element is the
+   * location. Without a location it may run on any thread, which lets a JavaScript-thread
+   * measurement read scroll positions without waiting for the UI thread.
+   */
+  @DoNotStrip
+  public long[] loomDirectGetLiveReads(int surfaceId, int[] scrollTags, int locationTag) {
+    return mLoomViewApplier.getLiveReadsPacked(surfaceId, scrollTags, locationTag);
+  }
+
   @UiThread
   @DoNotStrip
   public long loomDirectGetViewLocationInSurface(int surfaceId, int reactTag) {

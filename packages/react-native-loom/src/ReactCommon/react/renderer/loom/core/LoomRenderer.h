@@ -35,6 +35,7 @@
 #include <react/renderer/loom/core/LoomNodeArena.h>
 #include <react/renderer/loom/mounting/LoomMountBatch.h>
 #include <react/renderer/loom/binding/LoomEventManager.h>
+#include <react/renderer/loom/host/LoomLiveReads.h>
 #include <react/renderer/loom/host/LoomPlatformTraits.h>
 #include <react/renderer/loom/worker/LoomWorkerProfile.h>
 #include <react/renderer/loom/text/LoomTextMeasurement.h>
@@ -431,6 +432,13 @@ class LoomRenderer final {
     bool prepareTextForMountProvidesLayout{true};
     /** Reads the host view's current scroll position, not just its props. */
     std::function<std::pair<float, float>(SurfaceId, Tag)> getScrollOffset;
+    /**
+     * The live scroll positions of `scrollTags` and the origin of
+     * `locationTag` (when not zero), read together.
+     */
+    std::function<
+        LoomLiveReads(SurfaceId, const std::vector<Tag>&, Tag)>
+        readLive;
     /** Reads a mounted view's live origin relative to its surface root. */
     std::function<std::optional<std::pair<float, float>>(SurfaceId, Tag)>
         getViewLocationInSurface;
@@ -689,6 +697,30 @@ class LoomRenderer final {
   unsigned compareDocumentPosition(Tag tag, Tag otherTag) const;
 
   /**
+   * While one is alive on a thread, the live scroll offsets of `tag`'s
+   * ancestors and (optionally) `tag`'s own origin are read from the host once,
+   * when it is constructed, and every later read of them on this thread for
+   * this renderer is answered from that. A measurement computes several
+   * metrics for one view; without a scope each of them is its own trip to the
+   * UI thread for a JS-thread caller.
+   */
+  class LiveReadScope {
+   public:
+    LiveReadScope(const LoomRenderer& renderer, Tag tag, bool withLocation);
+    ~LiveReadScope();
+    LiveReadScope(const LiveReadScope&) = delete;
+    LiveReadScope& operator=(const LiveReadScope&) = delete;
+
+   private:
+    friend class LoomRenderer;
+    const LoomRenderer* renderer_;
+    LiveReadScope* previous_;
+    std::unordered_map<Tag, std::pair<float, float>> scroll_;
+    Tag locationTag_{0};
+    std::optional<std::pair<float, float>> location_;
+  };
+
+  /**
    * `tag`'s size and its origin relative to `ancestorTag`, which has to be an
    * ancestor of `tag` (`ancestorTag == 0` means the surface root). False when
    * `tag` is unknown, has no frame of its own, or `ancestorTag` is not an
@@ -701,6 +733,14 @@ class LoomRenderer final {
       bool includeTransform = true,
       bool includeScroll = true) const;
   std::optional<std::pair<float, float>> viewLocationInSurface(Tag tag) const;
+
+ private:
+  /** The live scroll offsets of `tags`, in order, from one host read at most. */
+  std::vector<std::pair<float, float>> liveScrollOffsets(
+      const std::vector<Tag>& tags) const;
+  static thread_local LiveReadScope* activeLiveReads_;
+
+ public:
 
   /**
    * Fabric compatibility layer: what a Fabric node of `tag` is built from when

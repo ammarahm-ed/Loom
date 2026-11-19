@@ -166,6 +166,28 @@ internal class LoomViewApplier(
     return surface(surfaceId).getLiveScrollOffset(reactTag)
   }
 
+  /**
+   * The live scroll position of each of [scrollTags] and, when [locationTag] is not zero, that
+   * view's location, packed as [getScrollOffsetPacked] packs them; the last element is the
+   * location (zero when none was asked for).
+   *
+   * Scroll positions are plain reads of the views' scroll fields, so they may be read from any
+   * thread: a JavaScript thread that measures a view then does not wait for the UI thread. A
+   * location walks the view hierarchy and must run on the UI thread.
+   */
+  fun getLiveReadsPacked(surfaceId: Int, scrollTags: IntArray, locationTag: Int): LongArray {
+    val surface = mountingManager.getSurfaceManagerEnforced(surfaceId, "LoomViewApplier")
+    val reads = LongArray(scrollTags.size + 1)
+    for (index in scrollTags.indices) {
+      reads[index] = surface.getLiveScrollOffset(scrollTags[index])
+    }
+    if (locationTag != 0) {
+      check(UiThreadUtil.isOnUiThread()) { "A live view location must be read on the UI thread" }
+      reads[scrollTags.size] = surface.getLiveViewLocationInSurfacePacked(locationTag)
+    }
+    return reads
+  }
+
   fun getViewLocationInSurfacePacked(surfaceId: Int, reactTag: Int): Long {
     check(UiThreadUtil.isOnUiThread()) { "Direct Fabric measurement must run on the UI thread" }
     return surface(surfaceId).getLiveViewLocationInSurfacePacked(reactTag)
