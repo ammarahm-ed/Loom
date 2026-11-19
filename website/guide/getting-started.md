@@ -29,6 +29,27 @@ coming.
 npm install react-native-loom
 ```
 
+## Expo
+
+For Expo SDK 58 (React Native 0.88) projects that use `expo prebuild`, add the config plugin
+instead of editing the native files by hand. Loom needs a native build, so it does not run in Expo Go.
+
+```sh
+npx expo install react-native-loom
+```
+
+`app.json`:
+
+```json
+{ "expo": { "plugins": [["react-native-loom", { "js": "main" }]] } }
+```
+
+The plugin makes the Android, iOS and Metro edits described below on every `npx expo prebuild`
+(they are idempotent) and writes the switches to `android/gradle.properties` and
+`ios/Podfile.properties.json`. Options, all optional: `renderer` (default `true`), `js`
+(`"main"` or `"background"`, default `"background"`), `compileFromSource` (default `false`) and
+`releaseProfiling` (default `false`). Run `prebuild` again after changing one.
+
 ## Android
 
 `android/settings.gradle`:

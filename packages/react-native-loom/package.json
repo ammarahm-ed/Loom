@@ -37,6 +37,8 @@
     "src",
     "android-tests",
     "integration",
+    "plugin",
+    "app.plugin.js",
     "overrides.json",
     "react-native.config.js",
     "RNLoomReanimated.podspec"
@@ -45,9 +47,15 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "react-native": ">=0.88.0 <0.89.0"
+    "react-native": ">=0.88.0 <0.89.0",
+    "expo": ">=58.0.0 <59.0.0"
   },
   "devDependencies": {
     "react-native": "0.88.1"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
   }
 }
