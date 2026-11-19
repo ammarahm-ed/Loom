@@ -464,6 +464,22 @@ void LoomRenderer::refreshStyle(Node& node) {
     next.values[size_t(entry.key)] = styleValue;
     next.autoFlags[size_t(entry.key)] = parsed.isAuto;
   }
+  if (node.cold != nullptr && node.cold->measured.has_value()) {
+    // The host measured these axes: they replace the style's, whatever React sends.
+    const auto measure = [&next](LoomStyleKey key, const std::optional<float>& value) {
+      if (!value.has_value()) {
+        return;
+      }
+      StyleValue styleValue;
+      styleValue.value = *value;
+      styleValue.unit = StyleValue::Unit::Point;
+      next.values[size_t(key)] = styleValue;
+      next.autoFlags[size_t(key)] = false;
+    };
+    measure(LoomStyleKey::Width, node.cold->measured->width);
+    measure(LoomStyleKey::Height, node.cold->measured->height);
+    measure(LoomStyleKey::MinWidth, node.cold->measured->minWidth);
+  }
   if (*node.style != next) {
     node.style = next == *emptyLayoutStyle()
         ? emptyLayoutStyle()
@@ -525,7 +541,10 @@ constexpr size_t kLayoutShapeCacheLimit = 256;
  * props cannot be summarised cheaply falls back to the plain path.
  */
 void LoomRenderer::refreshStyleCached(Node& node) {
-  if (node.hostOwned || !node.props->isObject()) {
+  if (node.hostOwned || !node.props->isObject() ||
+      (node.cold != nullptr && node.cold->measured.has_value())) {
+    // A measured size makes the style node-specific, so it cannot share a layout shape.
+    node.shape.reset();
     refreshStyle(node);
     return;
   }

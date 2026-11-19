@@ -264,6 +264,16 @@ void LoomRenderer::createNode(
   // Offscreen hiding belongs to a version of the node it replaces; a new
   // version starts visible, and the refresh below recomputes displayNone.
   node->offscreenHidden = false;
+  // A re-created tag is a different node: what the host measured for the old one does not carry over.
+  if (node->cold != nullptr) {
+    node->cold->measured.reset();
+  }
+  if (operations_.initialMeasuredSize && !node->hostOwned) {
+    if (auto initial = operations_.initialMeasuredSize(componentName, props);
+        initial.has_value() && !initial->empty()) {
+      node->ensureCold().measured = std::move(initial);
+    }
+  }
   refreshStyleCached(*node);
 
   node->instanceHandle = instanceHandle;
@@ -729,6 +739,28 @@ void LoomRenderer::applyAnimationFrame(
     if (node == nullptr) {
       continue;
     }
+    if (patch.isObject() && patch.count(kMeasuredSizeKey) != 0) {
+      // A host-measured size lives on the node, apart from its props: React's commits cannot undo it.
+      const auto& measured = patch[kMeasuredSizeKey];
+      LoomMeasuredSize size;
+      const auto read = [&measured](const char* key) -> std::optional<float> {
+        const auto it = measured.find(key);
+        return it != measured.items().end() && it->second.isNumber()
+            ? std::optional<float>(static_cast<float>(it->second.asDouble()))
+            : std::nullopt;
+      };
+      size.width = read("width");
+      size.height = read("height");
+      size.minWidth = read("minWidth");
+      setMeasuredSize(tag, size);
+      if (patch.size() == 1) {
+        continue;
+      }
+      folly::dynamic rest = patch;
+      rest.erase(kMeasuredSizeKey);
+      patchProps(*node, rest);
+      continue;
+    }
     // A layout key needs the style rebuild and the text invalidation every
     // other prop write gets, and `commit()` coalesces the layout of every node
     // it reaches into a single batch — which is what makes this one commit per
@@ -739,6 +771,40 @@ void LoomRenderer::applyAnimationFrame(
   animationFrameCommit_ = true;
   commit();
   animationFrameCommit_ = false;
+}
+
+folly::dynamic LoomRenderer::measuredSizeToPatch(const LoomMeasuredSize& size) {
+  folly::dynamic measured = folly::dynamic::object();
+  if (size.width) {
+    measured["width"] = *size.width;
+  }
+  if (size.height) {
+    measured["height"] = *size.height;
+  }
+  if (size.minWidth) {
+    measured["minWidth"] = *size.minWidth;
+  }
+  return folly::dynamic::object(kMeasuredSizeKey, std::move(measured));
+}
+
+bool LoomRenderer::setMeasuredSize(Tag tag, const LoomMeasuredSize& size) {
+  auto* node = find(tag);
+  if (node == nullptr || node->virtualNode) {
+    return false;
+  }
+  const auto current = node->cold != nullptr ? node->cold->measured : std::nullopt;
+  if (current == (size.empty() ? std::nullopt : std::optional(size))) {
+    return true;
+  }
+  if (size.empty()) {
+    node->cold->measured.reset();
+  } else {
+    node->ensureCold().measured = size;
+  }
+  node->shape.reset();
+  refreshStyle(*node);
+  markNeedsPrepare(*node);
+  return true;
 }
 
 bool LoomRenderer::tryCommitPaintOnlyProps(

@@ -83,6 +83,18 @@ namespace facebook::react::loom {
  */
 using AnimatedPropBag = facebook::react::AnimatedProps;
 
+/**
+ * A size the host measured natively (a native view tree laid out on the UI thread, for instance).
+ * Loom keeps it on the node, apart from the style and from React's props: a React commit that carries
+ * the same key does not replace it. An axis that is set replaces that axis of the style; an axis that
+ * is not set falls back to the style. Sizes are in DIP.
+ */
+struct MeasuredSize {
+  std::optional<float> width;
+  std::optional<float> height;
+  std::optional<float> minWidth;
+};
+
 /** What `onFrameApplied` reports. */
 struct FrameInfo {
   SurfaceId surfaceId{0};
@@ -209,8 +221,31 @@ class Runtime {
    * bag makes Loom lay the node out, a paint-only bag is written to the view directly.
    */
   void updateAnimatedProps(SurfaceId surfaceId, Tag tag, AnimatedPropBag props) const;
-  /** Native lane, any thread: applied to the view and remembered, so the next commit does not undo it. */
-  void updateNativeProps(SurfaceId surfaceId, Tag tag, folly::dynamic props) const;
+  /**
+   * Native lane, any thread: paint props are applied to the view and remembered, so the next commit does
+   * not undo it. Layout props are applied once (like `updateAnimatedProps`): a later React commit that
+   * carries the same key replaces them. For a size that must survive commits use `setMeasuredSize`.
+   * Writes of one UI frame are laid out together, in one pass and one batch.
+   *
+   * Accepted for a mounted node and for one a submitted commit created that is not mounted yet (paint
+   * waits for the view; layout is applied at the next layout). Returns false when the surface has no such
+   * node, so the caller knows to retry.
+   */
+  bool updateNativeProps(SurfaceId surfaceId, Tag tag, folly::dynamic props) const;
+  /**
+   * Sets the node's host-measured size (see `MeasuredSize`); an empty size clears it. Native lane, any
+   * thread, with the same acceptance and the same one-pass-per-frame batching as `updateNativeProps`.
+   * Returns false when the surface has no such node.
+   */
+  bool setMeasuredSize(SurfaceId surfaceId, Tag tag, const MeasuredSize& size) const;
+  /**
+   * Asks `provider` for the starting size of every node of `componentName` when it is created, from its
+   * props, before its first layout (the way a component's adopt() applies a hint under Fabric). Nullopt
+   * leaves the style in charge. Called on the commit thread: do not call back into Loom or touch views.
+   * Replaces an earlier provider of the same component; destroy the subscription to remove it.
+   */
+  using MeasuredSizeProvider = std::function<std::optional<MeasuredSize>(const folly::dynamic& props)>;
+  Subscription setInitialMeasuredSize(std::string componentName, MeasuredSizeProvider provider) const;
 
   // ---- Frames --------------------------------------------------------------------------------------
   using FrameListener = std::function<void(const FrameInfo&)>;

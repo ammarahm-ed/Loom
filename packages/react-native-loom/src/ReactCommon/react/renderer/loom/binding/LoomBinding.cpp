@@ -536,6 +536,11 @@ LoomRenderer& LoomBinding::renderer(SurfaceId surfaceId) {
   LoomRenderer::NativeOperations operations;
   operations.prepareTextForMountProvidesLayout =
       LoomPlatformTraits::current().hasPreparedTextLayout;
+  operations.initialMeasuredSize =
+      [this](const std::string& componentName, const folly::dynamic& props)
+      -> std::optional<LoomMeasuredSize> {
+    return loom::internal::initialMeasuredSize(*apiInstance_, componentName, props);
+  };
   operations.isSurfaceActive = [weakRendererToken](SurfaceId surface) {
     auto token = weakRendererToken.lock();
     return token != nullptr && token->active && token->surfaceId == surface;
