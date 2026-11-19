@@ -18,6 +18,8 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <optional>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -60,6 +62,8 @@ struct Instance {
   std::unordered_map<uint64_t, Runtime::FrameListener> frame;
   std::unordered_map<SurfaceId, std::unordered_set<Tag>> changedSinceFrame;
   std::unordered_map<SurfaceId, std::vector<std::function<void()>>> beforeFrame;
+  std::unordered_map<std::string, Runtime::MeasuredSizeProvider> measuredSizeProviders;
+  std::atomic<int> measuredSizeProviderCount{0};
   std::atomic<int> commitCount{0};
   std::atomic<int> frameCount{0};
   std::atomic<int> beforeCount{0};
@@ -82,6 +86,12 @@ void runBeforeFrame(Instance& instance, SurfaceId surfaceId);
 
 /** A frame's batch of `surfaceId` was applied (UI thread). */
 void notifyFrameApplied(Instance& instance, SurfaceId surfaceId);
+
+/** The size a library asked a node of `componentName` to start with, if one did (commit thread). */
+std::optional<LoomMeasuredSize> initialMeasuredSize(
+    Instance& instance,
+    const std::string& componentName,
+    const folly::dynamic& props);
 
 /** The surface was released: drop its pending callbacks and change sets. */
 void releaseSurface(Instance& instance, SurfaceId surfaceId);

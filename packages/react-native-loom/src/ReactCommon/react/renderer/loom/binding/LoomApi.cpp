@@ -55,6 +55,33 @@ void Instance::detach(const LoomBinding::Lifetime* lifetime) {
   }
 }
 
+std::optional<LoomMeasuredSize> initialMeasuredSize(
+    Instance& instance,
+    const std::string& componentName,
+    const folly::dynamic& props) {
+  if (instance.measuredSizeProviderCount.load(std::memory_order_relaxed) == 0) {
+    return std::nullopt;
+  }
+  Runtime::MeasuredSizeProvider provider;
+  {
+    std::lock_guard lock(instance.mutex);
+    const auto it = instance.measuredSizeProviders.find(componentName);
+    if (it == instance.measuredSizeProviders.end()) {
+      return std::nullopt;
+    }
+    provider = it->second;
+  }
+  const auto size = provider(props);
+  if (!size.has_value()) {
+    return std::nullopt;
+  }
+  LoomMeasuredSize measured;
+  measured.width = size->width;
+  measured.height = size->height;
+  measured.minWidth = size->minWidth;
+  return measured;
+}
+
 bool Instance::withBinding(const std::function<void(LoomBinding&)>& body) const {
   std::shared_ptr<LoomBinding::Lifetime> lifetime;
   {
@@ -351,9 +378,39 @@ void Runtime::updateAnimatedProps(SurfaceId surfaceId, Tag tag, AnimatedPropBag 
   });
 }
 
-void Runtime::updateNativeProps(SurfaceId surfaceId, Tag tag, folly::dynamic props) const {
+bool Runtime::updateNativeProps(SurfaceId surfaceId, Tag tag, folly::dynamic props) const {
+  bool accepted = false;
   instance_->withBinding([&](LoomBinding& binding) {
-    binding.apiRecordNativeProps(surfaceId, tag, std::move(props), /*knownPaint=*/false, /*viewApplied=*/false);
+    accepted = binding.apiRecordNativeProps(surfaceId, tag, std::move(props), /*knownPaint=*/false, /*viewApplied=*/false);
+  });
+  return accepted;
+}
+
+bool Runtime::setMeasuredSize(SurfaceId surfaceId, Tag tag, const MeasuredSize& size) const {
+  bool accepted = false;
+  LoomMeasuredSize measured;
+  measured.width = size.width;
+  measured.height = size.height;
+  measured.minWidth = size.minWidth;
+  instance_->withBinding([&](LoomBinding& binding) { accepted = binding.apiSetMeasuredSize(surfaceId, tag, measured); });
+  return accepted;
+}
+
+Subscription Runtime::setInitialMeasuredSize(std::string componentName, MeasuredSizeProvider provider) const {
+  auto& instance = *instance_;
+  {
+    std::lock_guard lock(instance.mutex);
+    if (instance.measuredSizeProviders.insert_or_assign(componentName, std::move(provider)).second) {
+      instance.measuredSizeProviderCount.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+  return Subscription([weak = std::weak_ptr<internal::Instance>(instance_), componentName = std::move(componentName)] {
+    if (auto instance = weak.lock()) {
+      std::lock_guard lock(instance->mutex);
+      if (instance->measuredSizeProviders.erase(componentName) != 0) {
+        instance->measuredSizeProviderCount.fetch_sub(1, std::memory_order_relaxed);
+      }
+    }
   });
 }
 

@@ -3498,6 +3498,97 @@ TEST(LoomRendererTest, ReconcilerCompactsOnlyWhenAsked) {
       << "the worker path must keep the draft chain for its host";
 }
 
+// A size the host measured lives on the node, apart from its props: a React commit that sends the same
+// key does not replace it, and an axis it leaves unset still follows the style.
+TEST(LoomRendererTest, MeasuredSizeSurvivesPropsThatCarryTheSameKey) {
+  LoomMountBatch batch;
+  auto operations = testOperations();
+  operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
+    batch = std::move(next);
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer);
+  renderer.createNode(
+      2,
+      "View",
+      folly::dynamic::object("width", 10)("height", 10)("collapsable", false));
+  renderer.completeRoot(1, {2});
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 10);
+
+  LoomMeasuredSize measured;
+  measured.width = 40;
+  batch = {};
+  renderer.applyAnimationFrame(
+      {}, {{2, LoomRenderer::measuredSizeToPatch(measured)}});
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 40);
+
+  // React resends width: the measured axis still wins; the unset axis follows the style.
+  batch = {};
+  renderer.setNativeProps(
+      2, folly::dynamic::object("width", 12)("height", 30));
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 40);
+
+  // Clearing hands the axis back to the style.
+  batch = {};
+  renderer.applyAnimationFrame(
+      {}, {{2, LoomRenderer::measuredSizeToPatch(LoomMeasuredSize{})}});
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 12);
+}
+
+// The animation frame carries a measured size beside other layout keys, in one commit.
+TEST(LoomRendererTest, MeasuredSizeRidesTheAnimationFrameWithOtherLayoutKeys) {
+  LoomMountBatch batch;
+  auto operations = testOperations();
+  operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
+    batch = std::move(next);
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer);
+  renderer.createNode(
+      2, "View", folly::dynamic::object("width", 10)("collapsable", false));
+  renderer.createNode(
+      3, "View", folly::dynamic::object("width", 10)("collapsable", false));
+  renderer.completeRoot(1, {2, 3});
+
+  LoomMeasuredSize measured;
+  measured.width = 25;
+  auto first = LoomRenderer::measuredSizeToPatch(measured);
+  batch = {};
+  renderer.applyAnimationFrame(
+      {},
+      {{2, first},
+       {3, folly::dynamic::object("width", 33)}});
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 25);
+  EXPECT_EQ(lastLayoutWidth(batch, 3), 33);
+}
+
+// A component's starting size applies at creation, so the first layout is already right.
+TEST(LoomRendererTest, InitialMeasuredSizeApplyAtCreation) {
+  LoomMountBatch batch;
+  auto operations = testOperations();
+  operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
+    batch = std::move(next);
+  };
+  operations.initialMeasuredSize =
+      [](const std::string& name,
+         const folly::dynamic& props) -> std::optional<LoomMeasuredSize> {
+    if (name != "View" || props.find("hintWidth") == props.items().end()) {
+      return std::nullopt;
+    }
+    LoomMeasuredSize size;
+    size.width = static_cast<float>(props["hintWidth"].asDouble());
+    return size;
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer);
+  renderer.createNode(2, "View", folly::dynamic::object("hintWidth", 77));
+  renderer.createNode(
+      3, "View", folly::dynamic::object("width", 5)("collapsable", false));
+  renderer.completeRoot(1, {2, 3});
+  EXPECT_EQ(lastLayoutWidth(batch, 2), 77);
+  EXPECT_EQ(lastLayoutWidth(batch, 3), 5);
+}
+
 TEST(LoomRendererTest, ReconcilerRejectsAStaleDraft) {
   // The reconciler is the only thing standing between a stale host draft and the
   // live tree, so its rejection path is worth pinning down.

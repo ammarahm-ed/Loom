@@ -44,6 +44,21 @@
 namespace facebook::react {
 
 /**
+ * A size the host measured natively, kept apart from the node's style and props.
+ * An axis that is set replaces that axis of the style; an unset one falls back
+ * to the style. No React commit can overwrite it.
+ */
+struct LoomMeasuredSize {
+  std::optional<float> width;
+  std::optional<float> height;
+  std::optional<float> minWidth;
+  bool empty() const {
+    return !width && !height && !minWidth;
+  }
+  bool operator==(const LoomMeasuredSize&) const = default;
+};
+
+/**
  * The layout-relevant style props this renderer understands, keyed so that the
  * Yoga style can be reset for every key a revision does not set.
  */
@@ -361,6 +376,12 @@ class LoomRenderer final {
   struct NativeOperations {
     /** True only while this renderer's surface generation is still current. */
     std::function<bool(SurfaceId)> isSurfaceActive;
+    /**
+     * The size a library wants a node of this component to start with, asked when the node is created
+     * (before its first layout). Null, or an empty result, means the style decides.
+     */
+    std::function<std::optional<LoomMeasuredSize>(const std::string&, const folly::dynamic&)>
+        initialMeasuredSize;
     /** Invalidates a surface whose synchronous commit failed part-way through.
      */
     std::function<void(SurfaceId, const std::string&)> failSurface;
@@ -631,6 +652,16 @@ class LoomRenderer final {
   void applyAnimationFrame(
       const std::vector<std::pair<Tag, folly::dynamic>>& paintPatches,
       const std::vector<std::pair<Tag, folly::dynamic>>& layoutPatches);
+
+  /** The reserved layout-patch key that carries a measured size through the animation frame. */
+  static constexpr const char* kMeasuredSizeKey = "__loomMeasuredSize";
+  static folly::dynamic measuredSizeToPatch(const LoomMeasuredSize& size);
+
+  /**
+   * Sets (or, with an empty size, clears) the node's measured size and schedules its layout. The next
+   * commit lays it out; nothing is committed here. False when the node does not exist.
+   */
+  bool setMeasuredSize(Tag tag, const LoomMeasuredSize& size);
 
   void dispatchCommand(
       Tag tag,
@@ -1216,6 +1247,8 @@ class LoomRenderer final {
       uint64_t compatPropsGeneration{0};
       bool hasScrollContentBounds{false};
       Rect mountedScrollContentBounds{};
+      /** The host-measured size (`setMeasuredSize`); survives prop updates. */
+      std::optional<LoomMeasuredSize> measured;
     };
     std::unique_ptr<ColdData> cold;
     ColdData& ensureCold() {
