@@ -209,7 +209,13 @@ class LoomBinding final : public UIManagerBinding {
   /** A JS-lane props write of a node of the surface (any thread). */
   void apiUpdateProps(SurfaceId surfaceId, Tag tag, folly::dynamic props);
   /** A native-lane (`viewApplied` false) or animation-lane write of a node of the surface. */
-  void apiRecordNativeProps(SurfaceId surfaceId, Tag tag, folly::dynamic props, bool knownPaint, bool viewApplied);
+  bool apiRecordNativeProps(SurfaceId surfaceId, Tag tag, folly::dynamic props, bool knownPaint, bool viewApplied);
+  /**
+   * Sets (empty size: clears) the host-measured size of a node that is mounted or that a submitted
+   * commit created. It rides the animation frame, so writes of one UI frame are laid out together.
+   * False when the surface has no such node.
+   */
+  bool apiSetMeasuredSize(SurfaceId surfaceId, Tag tag, const LoomMeasuredSize& size);
   /** A native state update for a node of the surface. */
   bool apiUpdateState(SurfaceId surfaceId, const StateUpdate& update) {
     return submitComponentState(surfaceId, update);

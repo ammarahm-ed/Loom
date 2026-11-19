@@ -69,13 +69,47 @@ void LoomBinding::recordNativePropsImpl(
   }
 }
 
-void LoomBinding::apiRecordNativeProps(
+bool LoomBinding::apiRecordNativeProps(
     SurfaceId surfaceId,
     Tag tag,
     folly::dynamic props,
     bool knownPaint,
     bool viewApplied) {
-  recordNativePropsHere(surfaceId, tag, props, knownPaint, viewApplied);
+  return recordNativePropsHere(surfaceId, tag, props, knownPaint, viewApplied);
+}
+
+bool LoomBinding::apiSetMeasuredSize(
+    SurfaceId surfaceId,
+    Tag tag,
+    const LoomMeasuredSize& size) {
+  uint64_t identity = 0;
+  {
+    std::lock_guard state(stateMutex_);
+    if (const auto mounted = mounted_.find(tag);
+        mounted != mounted_.end() && mounted->second.token->active &&
+        mounted->second.token->surfaceId == surfaceId) {
+      identity = mounted->second.identity;
+    } else if (const auto surface = submittedIdentities_.find(surfaceId);
+               surface != submittedIdentities_.end()) {
+      const auto submitted = surface->second.find(tag);
+      if (submitted == surface->second.end()) {
+        return false;
+      }
+      identity = submitted->second;
+    } else {
+      return false;
+    }
+  }
+  ClassifiedAnimatedProps classified;
+  classified.layout = LoomRenderer::measuredSizeToPatch(size);
+  writeAnimatedProps(
+      surfaceId,
+      tag,
+      identity,
+      std::move(classified),
+      /*applyPaintToView=*/false,
+      /*viewAlreadyApplied=*/true);
+  return true;
 }
 
 bool LoomBinding::recordNativePropsHere(
@@ -92,12 +126,32 @@ bool LoomBinding::recordNativePropsHere(
   // The UI thread reaches this while JS may be writing the same maps.
   std::lock_guard state(stateMutex_);
   const auto mounted = mounted_.find(tag);
-  if (mounted == mounted_.end() || !mounted->second.token->active) {
-    return false;
-  }
-  auto token = mounted->second.token;
-  const auto identity = mounted->second.identity;
-  if (surfaceId.has_value() && token->surfaceId != *surfaceId) {
+  std::shared_ptr<SurfaceToken> token;
+  uint64_t identity = 0;
+  bool pending = false;
+  if (mounted != mounted_.end() && mounted->second.token->active) {
+    token = mounted->second.token;
+    identity = mounted->second.identity;
+    if (surfaceId.has_value() && token->surfaceId != *surfaceId) {
+      return false;
+    }
+  } else if (surfaceId.has_value()) {
+    // A node a submitted commit created is not mounted yet: its write is kept for it rather than
+    // dropped, so the caller does not have to retry on every frame.
+    const auto surface = submittedIdentities_.find(*surfaceId);
+    const auto tokenIt = surfaceTokens_.find(*surfaceId);
+    if (surface == submittedIdentities_.end() || tokenIt == surfaceTokens_.end() ||
+        !tokenIt->second->active) {
+      return false;
+    }
+    const auto submitted = surface->second.find(tag);
+    if (submitted == surface->second.end()) {
+      return false;
+    }
+    token = tokenIt->second;
+    identity = submitted->second;
+    pending = true;
+  } else {
     return false;
   }
   auto owner = renderers_.find(token->surfaceId);
@@ -120,6 +174,28 @@ bool LoomBinding::recordNativePropsHere(
     // keeps the ordinary per-call path (design §3.2, "Text").
     stageNativeProps(tag, identity, token, std::move(props));
     return true;
+  }
+  if (pending) {
+    // Layout keys reach the node through the frame; paint keys wait as an overlay that the first
+    // batch to create the view replays (nothing may write a view that does not exist yet).
+    if (!classified.paint.empty()) {
+      const auto surface = token->surfaceId;
+      auto& overlay = nativePropsOverlays_[surface][tag];
+      if (overlay.identity != identity || !overlay.props.isObject()) {
+        overlay.props = folly::dynamic::object();
+      }
+      for (const auto& item : classified.paint.items()) {
+        overlay.props[item.first] = item.second;
+      }
+      overlay.surfaceId = surface;
+      overlay.identity = identity;
+      // Not zero: the animation lane erases zero-sequence overlays when a frame it carried is applied.
+      overlay.sequence = ++nativePropsSequence_;
+      classified.paint = folly::dynamic::object();
+    }
+    if (classified.layout.empty()) {
+      return true;
+    }
   }
   // The platform's synchronous update has already put these values on the
   // view, or (`!viewApplied`) the lane writes them itself.
@@ -500,8 +576,18 @@ void LoomBinding::flushAnimationFrame(SurfaceId surfaceId) {
   for (auto& entry : writes) {
     auto& write = entry.second;
     const auto mounted = mounted_.find(entry.first);
-    if (mounted == mounted_.end() ||
-        mounted->second.identity != write.identity) {
+    bool current = mounted != mounted_.end() &&
+        mounted->second.identity == write.identity;
+    if (!current) {
+      // A node a submitted commit created and the UI has not mounted yet.
+      if (const auto surface = submittedIdentities_.find(surfaceId);
+          surface != submittedIdentities_.end()) {
+        const auto submitted = surface->second.find(entry.first);
+        current = submitted != surface->second.end() &&
+            submitted->second == write.identity;
+      }
+    }
+    if (!current) {
       continue; // The node is gone or the tag was reused: this write is stale.
     }
     needsAsync = needsAsync || write.text;
