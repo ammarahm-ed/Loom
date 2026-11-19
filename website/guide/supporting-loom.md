@@ -186,8 +186,16 @@ The API (all in `facebook::react::loom`, value types are React Native's own):
     both read the commit being reported, at once.
 - **Prop writes, three lanes:** `updateProps` (the JS lane, like a React commit),
   `updateAnimatedProps` (the animation lane, a typed `AnimatedPropBag`, coalesced per frame; a layout
-  prop makes Loom lay the node out), `updateNativeProps(surfaceId, tag, props)` (applied to the view and remembered so the
-  next commit does not undo it).
+  prop makes Loom lay the node out), `updateNativeProps(surfaceId, tag, props)` (paint props are applied to the view and
+  remembered so the next commit does not undo it; layout props apply once, like the animation lane, so a later React
+  commit that sends the same key replaces them). It returns `false` when the surface has no such node, and it accepts a
+  node a submitted commit created that is not mounted yet. Writes of one UI frame are laid out together, in one pass and
+  one batch.
+- **Native-measured size:** when a view's size comes from native code (a native tree laid out on the UI thread),
+  `setMeasuredSize(surfaceId, tag, {width, height, minWidth})` keeps it on the node, apart from the style and React's props:
+  a commit that sends the same key does not replace it, and an axis left unset follows the style. An empty size clears
+  it. `setInitialMeasuredSize(componentName, provider)` supplies a starting size from the props when a node of that
+  component is created, so the first layout is already right (what `adopt()` does under Fabric).
 - **Frames:** `onFrameApplied` (UI thread), `onLayoutCommitted` (commit thread),
   `beforeNextFrame(surfaceId, callback)` (runs on the UI thread right before that surface's next
   batch). Subscriptions are RAII: destroying the handle unsubscribes.
