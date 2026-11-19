@@ -269,7 +269,7 @@ jobs:
       - name: Restore the compiler cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ github.workspace }}/../ccache
+          path: ${{ runner.workspace }}/ccache
           key: ccache-ios-${{ matrix.flavor }}-${{ github.run_id }}
           restore-keys: ccache-ios-${{ matrix.flavor }}-
       - name: React Native baseline tarballs
@@ -301,12 +301,12 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: ${{ github.workspace }}/../ccache
+          path: ${{ runner.workspace }}/ccache
           key: ccache-ios-${{ matrix.flavor }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         with:
           name: ios-${{ matrix.flavor }}-${{ needs.meta.outputs.version }}-${{ github.sha }}
-          path: ${{ github.workspace }}/../cs/ios-out/
+          path: ${{ runner.workspace }}/cs/ios-out/
           if-no-files-found: error
           retention-days: 7
 
