@@ -804,8 +804,15 @@ void LoomRenderer::finishCommitAfterLayout() {
       }
       emitRemovals(*commitNodes_[index], stationaryChildren);
     }
-    for (size_t traversalIndex = 0; traversalIndex < commitTraversal_.size();
-         ++traversalIndex) {
+    // Children first, then their parent: a node is attached to its own parent
+    // only after its subtree is assembled, as Fabric's differ orders a new
+    // subtree's mutations (its `downwardMutations` precede the parent-level
+    // inserts). Native containers observe this: they run attach-time logic
+    // (react-native-screens' tabs container looks up its tabs when it attaches
+    // to the window) that needs the children to be there already. The
+    // traversal is pre-order, so walking it backwards visits descendants first.
+    for (size_t traversalIndex = commitTraversal_.size();
+         traversalIndex-- > 0;) {
       if (childOrderUnchanged[traversalIndex] != 0) {
         continue;
       }

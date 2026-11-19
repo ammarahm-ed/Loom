@@ -2232,7 +2232,7 @@ TEST(LoomRendererTest, LiveTreeMovesRetainedChildWithoutDeletingIt) {
   EXPECT_EQ(
       structureOperations(batch),
       (std::vector<std::tuple<int, int, int, int>>{
-          {3, 2, 3, 0}, {2, 1, 4, 1}, {2, 4, 3, 0}}));
+          {3, 2, 3, 0}, {2, 4, 3, 0}, {2, 1, 4, 1}}));
   EXPECT_TRUE(renderer.exists(3));
   EXPECT_EQ(renderer.childrenOf(2), std::vector<Tag>{});
   EXPECT_EQ(renderer.childrenOf(4), (std::vector<Tag>{3}));
@@ -2314,7 +2314,7 @@ TEST(LoomRendererTest, RemovedParentDetachesButDoesNotDeleteMovedChild) {
   EXPECT_EQ(deletedTags(batch), (std::vector<Tag>{2}));
   const auto structure = structureOperations(batch);
   const std::vector<std::tuple<int, int, int, int>> expected{
-      {3, 2, 3, 0}, {3, 1, 2, 0}, {2, 1, 4, 0}, {2, 4, 3, 0}};
+      {3, 2, 3, 0}, {3, 1, 2, 0}, {2, 4, 3, 0}, {2, 1, 4, 0}};
   EXPECT_EQ(structure, expected);
 }
 
@@ -3533,6 +3533,89 @@ TEST(LoomRendererTest, MeasuredSizeSurvivesPropsThatCarryTheSameKey) {
   renderer.applyAnimationFrame(
       {}, {{2, LoomRenderer::measuredSizeToPatch(LoomMeasuredSize{})}});
   EXPECT_EQ(lastLayoutWidth(batch, 2), 12);
+}
+
+// A new subtree is assembled before it is attached, as Fabric's differ orders it: a node's
+// children are inserted into it before it is inserted into its own parent. Native containers
+// that attach to the window on insert (react-native-screens' tabs container) rely on this.
+TEST(LoomRendererTest, NewSubtreeChildrenAreInsertedBeforeTheirParent) {
+  LoomMountBatch batch;
+  auto operations = testOperations();
+  operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
+    batch = std::move(next);
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer);
+  for (Tag tag : {2, 3, 4}) {
+    renderer.createNode(
+        tag,
+        "View",
+        folly::dynamic::object("width", 50)("height", 50)("collapsable", false));
+  }
+  renderer.setChildren(2, {3});
+  renderer.setChildren(3, {4});
+  renderer.completeRoot(1, {2});
+
+  std::vector<std::pair<Tag, Tag>> inserts;
+  for (const auto& operation : batch.operations) {
+    if (const auto* insert = std::get_if<DirectInsertOperation>(&operation)) {
+      inserts.emplace_back(insert->parentTag, insert->tag);
+    }
+  }
+  // root > A(2) > B(3) > C(4): deepest edge first, the root edge last.
+  EXPECT_EQ(
+      inserts,
+      (std::vector<std::pair<Tag, Tag>>{{3, 4}, {2, 3}, {1, 2}}));
+}
+
+TEST(LoomRendererTest, NewSubtreeSiblingsKeepTheirOrderInsideTheirParent) {
+  LoomMountBatch batch;
+  auto operations = testOperations();
+  operations.applyBatch = [&batch](SurfaceId, LoomMountBatch next) {
+    batch = std::move(next);
+  };
+  LoomRenderer renderer(1, std::move(operations));
+  makeRoot(renderer);
+  for (Tag tag : {2, 3, 4, 5}) {
+    renderer.createNode(
+        tag,
+        "View",
+        folly::dynamic::object("width", 50)("height", 50)("collapsable", false));
+  }
+  renderer.setChildren(2, {3, 4});
+  renderer.setChildren(3, {5});
+  renderer.completeRoot(1, {2});
+
+  struct Edge {
+    Tag parent;
+    Tag child;
+    size_t index;
+    bool operator==(const Edge&) const = default;
+  };
+  std::vector<Edge> inserts;
+  for (const auto& operation : batch.operations) {
+    if (const auto* insert = std::get_if<DirectInsertOperation>(&operation)) {
+      inserts.push_back({insert->parentTag, insert->tag, insert->index});
+    }
+  }
+  auto position = [&](Tag parent, Tag child) {
+    for (size_t i = 0; i < inserts.size(); ++i) {
+      if (inserts[i].parent == parent && inserts[i].child == child) {
+        return static_cast<int>(i);
+      }
+    }
+    return -1;
+  };
+  // Both children of A carry their own index, and every child edge of A precedes A's own edge.
+  ASSERT_NE(position(2, 3), -1);
+  ASSERT_NE(position(2, 4), -1);
+  ASSERT_NE(position(1, 2), -1);
+  ASSERT_NE(position(3, 5), -1);
+  EXPECT_EQ(inserts[position(2, 3)].index, 0u);
+  EXPECT_EQ(inserts[position(2, 4)].index, 1u);
+  EXPECT_LT(position(2, 3), position(1, 2));
+  EXPECT_LT(position(2, 4), position(1, 2));
+  EXPECT_LT(position(3, 5), position(2, 3));
 }
 
 // The animation frame carries a measured size beside other layout keys, in one commit.
