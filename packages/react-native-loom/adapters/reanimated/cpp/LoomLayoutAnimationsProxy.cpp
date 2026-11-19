@@ -49,7 +49,7 @@ bool isScreenComponent(const std::string &name) {
   return name == "RNSScreen" || name == "RNSModalScreen";
 }
 
-bool isStructuralComponent(const std::string &name) {
+[[maybe_unused]] bool isStructuralComponent(const std::string &name) {
   return name == kBoundaryComponent || isScreenComponent(name);
 }
 
